@@ -99,18 +99,18 @@
       "sequence_number": 1,
       "title": "The History of Synthetic Materials",
       "subtitle": "How polymers revolutionized modern industrial production",
-      "narrative_text": "Synthetic polymers were first engineered during the twentieth century...",
+      "narrative_text": "Synthetic polymers were first engineered during the early twentieth century as laboratory curiosities before transforming global industrial manufacturing and material science. Early researchers synthesized bakelite and nylon, establishing molecular bonding principles that enabled durable consumer goods. By mid-century, polymer manufacturing expanded rapidly across packaging, aerospace, and biomedical applications, fundamentally altering consumer goods design and production economics.",
       "paragraphs": [
         {
           "label": "A",
           "sequence_index": 0,
           "char_start": 0,
-          "char_end": 72,
-          "text": "Synthetic polymers were first engineered during the twentieth century..."
+          "char_end": 488,
+          "text": "Synthetic polymers were first engineered during the early twentieth century as laboratory curiosities before transforming global industrial manufacturing and material science. Early researchers synthesized bakelite and nylon, establishing molecular bonding principles that enabled durable consumer goods. By mid-century, polymer manufacturing expanded rapidly across packaging, aerospace, and biomedical applications, fundamentally altering consumer goods design and production economics."
         }
       ],
       "audio_track_ref": null,
-      "word_count": 680,
+      "word_count": 56,
       "quality_profile": {
         "lifecycle_status": "reviewed",
         "extraction_quality": "complete_clean",

@@ -74,9 +74,10 @@ erDiagram
 
 #### 3.1.1 `SourceDocument`
 - **Definition:** Physical or digital file asset tracked in V0.1 inventory (`private/raw/`).
-- **Primary Key:** `file_id` (format: `FILE-[a-f0-9]{12}`, e.g. `FILE-3a7f8090a786`).
+- **Primary Key:** `file_id` (format: `FILE-[a-f0-9]{12}`, e.g. `FILE-5a2cce4d0793`).
 - **Legacy Reference:** `legacy_id` (format: `SRC-\d{3,4}`, e.g. `SRC-138`).
 - **Key Attributes:** `file_path`, `content_sha256`, `size_bytes`, `extension`, `detected_type`, `collection`, `relocated_from`, `relocated_to`.
+- **Relocation Mechanics:** When a file moves in `private/raw/`, its relative path changes, minting a new `file_id`. V0.1 `sync_inventory_to_db` matches identical `content_sha256`, transfers the `legacy_id` (`SRC-XXX`) to the new source record, sets `new_src.relocated_from = old_src.file_id`, marks the old record as `accessibility_status = 'relocated'` with `relocated_to = new_src.file_id`, and migrates `processing_checkpoints` foreign keys. Downstream validity checks in V0.1 accept either current or `relocated_from` file IDs as valid roots.
 - **Role:** Immutable root of provenance. All downstream learning objects maintain backward traceability to `source_file_id` and `source_legacy_id`.
 
 #### 3.1.2 `SourceReference`
@@ -86,12 +87,12 @@ erDiagram
 
 #### 3.1.3 `ExtractionUnit`
 - **Definition:** Discrete partition processed by V0.1 adapters.
-- **Primary Key:** `unit_id` (e.g., `FILE-7dbc16204945:page_0001`, `FILE-3a7f8090a786:raw_document`).
+- **Primary Key:** `unit_id` (e.g., `FILE-7dbc16204945:page_0001`, `FILE-5a2cce4d0793:raw_document`).
 - **Key Attributes:** `source_file_id`, `unit_type` (`page`, `document`, `sheets`, `audio_metadata`), `unit_identifier` (`page_0001`), `adapter_name`, `adapter_version`.
 
 #### 3.1.4 `ContentBlock`
 - **Definition:** Atomic structural element of extracted text or media (paragraph, heading, table row, list item, dialogue segment).
-- **Primary Key:** `block_id` (e.g., `BLK-FILE3a7f8090a786-000309`).
+- **Primary Key:** `block_id` (e.g., `BLK-FILE5a2cce4d0793-000309`).
 - **Key Attributes:** `unit_id`, `block_type`, `block_index`, `raw_text`, `sanitized_text`, `bounding_box`.
 
 ---

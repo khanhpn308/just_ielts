@@ -1,31 +1,42 @@
 """Design-level validation test suite for IELTS Data Harness Phase V0.2-A.
 
-Tests:
+Standards-compliant testing using JSON Schema Draft 2020-12 (jsonschema + referencing):
 1. Load and parse all V0.2 JSON schemas.
-2. Validate every embedded synthetic example against its schema.
+2. Validate Draft 2020-12 meta-schema conformance (check_schema).
 3. Resolve local $ref schema dependencies (provenance.schema.json, quality_profile.schema.json).
-4. Reject invalid ID patterns across core entities.
-5. Verify 100% compatibility with V0.1 source identity (FILE-<hash> and SRC-XXX).
-6. Validate all existing Markdown principles in principles/ against principle_metadata schema.
-7. Test orphan and missing-data handling (nullable fields, NOT GIVEN evidence).
-8. Test deterministic canonical hashing invariant across run timestamps.
-9. Verify joined question segmentation algorithm against regression fixtures.
+4. Validate every embedded synthetic example against its schema via Draft202012Validator.
+5. Verify boundary constraints: minLength/maxLength, minimum/maximum, minItems/maxItems.
+6. Verify additionalProperties: false rejects undeclared properties.
+7. Verify required and nullable field constraints.
+8. Verify 100% compatibility with V0.1 source identity (FILE-<hash> and SRC-XXX).
+9. Verify real source ID mappings locally against SQLite database when present.
+10. Reject invalid ID patterns across core entities.
+11. Validate all existing Markdown principles in principles/ against principle_metadata schema.
+12. Test orphan and missing-data handling (nullable fields, NOT GIVEN evidence).
+13. Test deterministic canonical hashing invariant across run timestamps.
+14. Verify joined question segmentation algorithm against regression fixtures.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Tuple
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 import pytest
+from referencing import Registry, Resource
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "v02"
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "v02"
 PRINCIPLES_DIR = REPO_ROOT / "principles"
+HARNESS_DB_PATH = REPO_ROOT / "harness" / "state" / "harness.db"
 
 
 def load_all_schemas() -> Dict[str, Dict[str, Any]]:
@@ -38,6 +49,25 @@ def load_all_schemas() -> Dict[str, Dict[str, Any]]:
 
 
 ALL_SCHEMAS = load_all_schemas()
+
+
+def build_schema_registry(schemas: Dict[str, Dict[str, Any]]) -> Registry:
+    """Builds a referencing.Registry to resolve local $ref pointers across schemas."""
+    registry = Registry()
+    for name, schema_dict in schemas.items():
+        res = Resource.from_contents(schema_dict)
+        registry = registry.with_resource(name, res)
+        if "$id" in schema_dict:
+            registry = registry.with_resource(schema_dict["$id"], res)
+    return registry
+
+
+SCHEMA_REGISTRY = build_schema_registry(ALL_SCHEMAS)
+
+
+def get_validator(schema_name: str) -> Draft202012Validator:
+    """Returns a Draft202012Validator bound to the shared schema registry."""
+    return Draft202012Validator(ALL_SCHEMAS[schema_name], registry=SCHEMA_REGISTRY)
 
 
 def test_schema_inventory():
@@ -62,10 +92,15 @@ def test_schema_inventory():
     assert len(loaded_names) == 13
 
 
-def test_resolve_local_schema_refs():
-    """Verify that all local $ref pointers resolve to existing files and valid schemas."""
+def test_schema_draft_2020_12_conformance():
+    """Verify that all 13 schemas conform strictly to JSON Schema Draft 2020-12 meta-schema."""
     for schema_name, schema_data in ALL_SCHEMAS.items():
-        # Inspect properties and definitions for $ref
+        Draft202012Validator.check_schema(schema_data)
+
+
+def test_resolve_local_schema_refs():
+    """Verify that all local $ref pointers resolve to existing files and schemas."""
+    for schema_name, schema_data in ALL_SCHEMAS.items():
         def find_refs(node: Any, path: str = ""):
             if isinstance(node, dict):
                 for k, v in node.items():
@@ -84,90 +119,114 @@ def test_resolve_local_schema_refs():
         find_refs(schema_data)
 
 
-def validate_object_against_schema(instance: Dict[str, Any], schema: Dict[str, Any]) -> None:
-    """
-    Lightweight, robust schema validator supporting:
-    - type checks (including nullable union ['string', 'null'])
-    - required fields
-    - pattern (regex)
-    - enum
-    - local $ref resolution
-    - nested object / array validation
-    """
-    # 1. Check required fields
-    required = schema.get("required", [])
-    for req in required:
-        assert req in instance, f"Missing required property: '{req}'"
-
-    properties = schema.get("properties", {})
-    for prop_name, val in instance.items():
-        if prop_name not in properties:
-            if schema.get("additionalProperties") is False:
-                pytest.fail(f"Unexpected additional property '{prop_name}' in instance")
-            continue
-
-        prop_schema = properties[prop_name]
-
-        # Handle $ref
-        if "$ref" in prop_schema:
-            ref_file = prop_schema["$ref"].split("#")[0]
-            ref_schema = ALL_SCHEMAS[ref_file]
-            assert isinstance(val, dict), f"Property '{prop_name}' should be dict for $ref {ref_file}"
-            validate_object_against_schema(val, ref_schema)
-            continue
-
-        # Handle type
-        expected_type = prop_schema.get("type")
-        if expected_type:
-            if isinstance(expected_type, list):
-                # e.g. ["string", "null"]
-                allowed_types = expected_type
-            else:
-                allowed_types = [expected_type]
-
-            type_match = False
-            for t in allowed_types:
-                if t == "string" and isinstance(val, str):
-                    type_match = True
-                elif t == "integer" and isinstance(val, int) and not isinstance(val, bool):
-                    type_match = True
-                elif t == "number" and isinstance(val, (int, float)) and not isinstance(val, bool):
-                    type_match = True
-                elif t == "boolean" and isinstance(val, bool):
-                    type_match = True
-                elif t == "object" and isinstance(val, dict):
-                    type_match = True
-                elif t == "array" and isinstance(val, list):
-                    type_match = True
-                elif t == "null" and val is None:
-                    type_match = True
-
-            assert type_match, (
-                f"Property '{prop_name}' value {repr(val)} does not match allowed types {allowed_types}"
-            )
-
-        # Handle regex pattern
-        if isinstance(val, str) and "pattern" in prop_schema:
-            pattern = prop_schema["pattern"]
-            assert re.search(pattern, val), (
-                f"Property '{prop_name}' value '{val}' does not match regex pattern '{pattern}'"
-            )
-
-        # Handle enum
-        if val is not None and "enum" in prop_schema:
-            allowed_enums = prop_schema["enum"]
-            assert val in allowed_enums, (
-                f"Property '{prop_name}' value '{val}' not in allowed enum {allowed_enums}"
-            )
-
-
-def test_validate_all_embedded_synthetic_examples():
-    """Verify that every synthetic example in each schema validates cleanly."""
+def test_validate_all_embedded_synthetic_examples_standard():
+    """Verify every synthetic example in each schema validates cleanly with Draft202012Validator."""
     for schema_name, schema_data in ALL_SCHEMAS.items():
+        validator = get_validator(schema_name)
         examples = schema_data.get("examples", [])
         assert len(examples) > 0, f"Schema {schema_name} should contain at least one synthetic example"
         for idx, example in enumerate(examples):
-            validate_object_against_schema(example, schema_data)
+            validator.validate(example)
+
+
+def test_schema_constraints_min_max_length():
+    """Verify Draft 2020-12 validator enforces minLength and maxLength constraints."""
+    passage_val = get_validator("passage_section.schema.json")
+    passage_ex = copy.deepcopy(ALL_SCHEMAS["passage_section.schema.json"]["examples"][0])
+
+    # Valid passage passes
+    passage_val.validate(passage_ex)
+
+    # Narrative text < 100 characters must fail minLength: 100
+    passage_short = copy.deepcopy(passage_ex)
+    passage_short["narrative_text"] = "Too short text under 100 characters."
+    with pytest.raises(ValidationError):
+        passage_val.validate(passage_short)
+
+    # Test title < 3 characters must fail minLength: 3
+    test_val = get_validator("test.schema.json")
+    test_ex = copy.deepcopy(ALL_SCHEMAS["test.schema.json"]["examples"][0])
+    test_ex["title"] = "AB"
+    with pytest.raises(ValidationError):
+        test_val.validate(test_ex)
+
+
+def test_schema_constraints_min_max_numerical():
+    """Verify Draft 2020-12 validator enforces minimum and maximum integer constraints."""
+    q_val = get_validator("question.schema.json")
+    q_ex = copy.deepcopy(ALL_SCHEMAS["question.schema.json"]["examples"][0])
+
+    # Minimum: 1 (0 is invalid)
+    q_0 = copy.deepcopy(q_ex)
+    q_0["question_number"] = 0
+    with pytest.raises(ValidationError):
+        q_val.validate(q_0)
+
+    # Maximum: 40 (41 is invalid)
+    q_41 = copy.deepcopy(q_ex)
+    q_41["question_number"] = 41
+    with pytest.raises(ValidationError):
+        q_val.validate(q_41)
+
+    # In range 1..40 passes
+    for n in (1, 20, 40):
+        q_valid = copy.deepcopy(q_ex)
+        q_valid["question_number"] = n
+        q_val.validate(q_valid)
+
+
+def test_schema_constraints_min_items():
+    """Verify Draft 2020-12 validator enforces minItems array constraints."""
+    qg_val = get_validator("question_group.schema.json")
+    qg_ex = copy.deepcopy(ALL_SCHEMAS["question_group.schema.json"]["examples"][0])
+
+    # shared_options minItems: 2. Single item must fail
+    qg_single = copy.deepcopy(qg_ex)
+    qg_single["shared_options"] = ["A. Only one option"]
+    with pytest.raises(ValidationError):
+        qg_val.validate(qg_single)
+
+
+def test_schema_constraints_additional_properties_false():
+    """Verify Draft 2020-12 validator rejects undeclared properties when additionalProperties is false."""
+    for schema_name in ["question.schema.json", "answer.schema.json", "evidence.schema.json"]:
+        val = get_validator(schema_name)
+        ex = copy.deepcopy(ALL_SCHEMAS[schema_name]["examples"][0])
+        ex["undeclared_injected_property_123"] = "prohibited"
+        with pytest.raises(ValidationError):
+            val.validate(ex)
+
+
+def test_schema_constraints_required_and_nullable():
+    """Verify required vs nullable field enforcement."""
+    # Required field missing
+    t_val = get_validator("test.schema.json")
+    t_ex = copy.deepcopy(ALL_SCHEMAS["test.schema.json"]["examples"][0])
+    del t_ex["test_id"]
+    with pytest.raises(ValidationError):
+        t_val.validate(t_ex)
+
+    # Non-nullable required field set to null
+    t_ex_null = copy.deepcopy(ALL_SCHEMAS["test.schema.json"]["examples"][0])
+    t_ex_null["test_id"] = None
+    with pytest.raises(ValidationError):
+        t_val.validate(t_ex_null)
+
+    # Nullable question_id in answer.schema.json (orphan answer key) passes
+    ans_val = get_validator("answer.schema.json")
+    ans_ex = copy.deepcopy(ALL_SCHEMAS["answer.schema.json"]["examples"][0])
+    ans_ex["question_id"] = None
+    ans_val.validate(ans_ex)
+
+    # Nullable verbatim_quote in evidence.schema.json for NOT GIVEN passes
+    evid_val = get_validator("evidence.schema.json")
+    evid_ex = copy.deepcopy(ALL_SCHEMAS["evidence.schema.json"]["examples"][0])
+    evid_ex["verbatim_quote"] = None
+    evid_ex["char_start"] = None
+    evid_ex["char_end"] = None
+    evid_ex["evidence_type"] = "insufficient_information_not_given"
+    evid_ex["missing_information_rationale"] = "Information not found in passage."
+    evid_val.validate(evid_ex)
 
 
 def test_v01_source_identity_pattern_compatibility():
@@ -179,7 +238,7 @@ def test_v01_source_identity_pattern_compatibility():
     # Valid V0.1 identifiers
     assert re.match(file_id_pattern, "FILE-7dbc16204945")
     assert re.match(file_id_pattern, "FILE-26aa282ad1f6")
-    assert re.match(file_id_pattern, "FILE-3a7f8090a786")
+    assert re.match(file_id_pattern, "FILE-5a2cce4d0793")
     assert re.match(legacy_id_pattern, "SRC-004")
     assert re.match(legacy_id_pattern, "SRC-138")
     assert re.match(legacy_id_pattern, "UNKNOWN")
@@ -190,6 +249,45 @@ def test_v01_source_identity_pattern_compatibility():
     assert not re.match(file_id_pattern, "FILE-7dbc16204945extra")
     assert not re.match(legacy_id_pattern, "FILE-7dbc16204945")
     assert not re.match(legacy_id_pattern, "INVALID_SRC")
+
+
+def test_local_sqlite_source_id_mappings():
+    """Verify real source ID mappings locally against SQLite database when present."""
+    if not HARNESS_DB_PATH.exists():
+        pytest.skip(f"Local harness database not present at {HARNESS_DB_PATH}")
+
+    import sqlite3
+    from harness.inventory import compute_file_id
+
+    conn = sqlite3.connect(HARNESS_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    pilot_legacy_ids = [
+        "SRC-004", "SRC-008", "SRC-011", "SRC-012",
+        "SRC-077", "SRC-079", "SRC-137", "SRC-138", "SRC-151",
+    ]
+    cur.execute(
+        "SELECT file_id, legacy_id, relative_path, content_sha256 FROM sources WHERE legacy_id IN ({})".format(
+            ",".join("?" for _ in pilot_legacy_ids)
+        ),
+        pilot_legacy_ids,
+    )
+    rows = {r["legacy_id"]: dict(r) for r in cur.fetchall()}
+
+    for leg_id in pilot_legacy_ids:
+        assert leg_id in rows, f"Legacy source {leg_id} missing from SQLite sources table"
+        rec = rows[leg_id]
+        expected_file_id = compute_file_id(rec["relative_path"])
+        assert rec["file_id"] == expected_file_id, (
+            f"file_id mismatch for {leg_id}: db={rec['file_id']}, expected={expected_file_id}"
+        )
+        assert re.match(r"^FILE-[a-f0-9]{12}$", rec["file_id"]), f"Invalid file_id pattern: {rec['file_id']}"
+        assert re.match(r"^SRC-\d{3,4}$", rec["legacy_id"]), f"Invalid legacy_id pattern: {rec['legacy_id']}"
+        assert len(rec["content_sha256"]) == 64, f"Invalid SHA-256 length for {leg_id}"
+        assert re.match(r"^[a-f0-9]{64}$", rec["content_sha256"]), f"Invalid SHA-256 hex for {leg_id}"
+
+    conn.close()
 
 
 def test_reject_invalid_entity_id_patterns():
@@ -218,8 +316,8 @@ def test_reject_invalid_entity_id_patterns():
 
 
 def test_existing_principles_frontmatter_compatibility():
-    """Verify that all existing principle Markdown files pass principle_metadata schema."""
-    principle_schema = ALL_SCHEMAS["principle_metadata.schema.json"]
+    """Verify that all existing principle Markdown files pass principle_metadata schema with Draft202012Validator."""
+    principle_val = get_validator("principle_metadata.schema.json")
     principle_files = [p for p in PRINCIPLES_DIR.rglob("*.md") if p.name not in {"README.md", "INDEX.md"}]
     assert len(principle_files) >= 7, "Expected at least 7 atomic principle files"
 
@@ -230,11 +328,11 @@ def test_existing_principles_frontmatter_compatibility():
         meta = yaml.safe_load(parts[1])
 
         # Validate against principle_metadata schema
-        validate_object_against_schema(meta, principle_schema)
+        principle_val.validate(meta)
 
 
 def test_orphan_and_missing_data_fixtures():
-    """Verify that orphan answer keys and missing-answer questions validate against schemas."""
+    """Verify that orphan answer keys and missing-answer questions validate against schemas with Draft202012Validator."""
     fixture_path = FIXTURES_DIR / "orphan_and_missing_synthetic.json"
     with open(fixture_path, "r", encoding="utf-8") as f:
         fixtures = json.load(f)["fixtures"]
@@ -242,18 +340,18 @@ def test_orphan_and_missing_data_fixtures():
     # 1. Orphan answer key (no question booklet)
     orphan_ans = fixtures["orphan_answer_key"]
     assert orphan_ans["question_id"] is None
-    validate_object_against_schema(orphan_ans, ALL_SCHEMAS["answer.schema.json"])
+    get_validator("answer.schema.json").validate(orphan_ans)
 
     # 2. Question with missing answer key
     q_missing = fixtures["question_missing_answer_key"]
-    validate_object_against_schema(q_missing, ALL_SCHEMAS["question.schema.json"])
+    get_validator("question.schema.json").validate(q_missing)
 
     # 3. NOT GIVEN evidence without forced verbatim quote
     ng_evidence = fixtures["not_given_evidence"]
     assert ng_evidence["verbatim_quote"] is None
     assert ng_evidence["char_start"] is None
     assert ng_evidence["missing_information_rationale"] is not None
-    validate_object_against_schema(ng_evidence, ALL_SCHEMAS["evidence.schema.json"])
+    get_validator("evidence.schema.json").validate(ng_evidence)
 
 
 def compute_canonical_content_hash(payload: Dict[str, Any]) -> str:
@@ -261,7 +359,6 @@ def compute_canonical_content_hash(payload: Dict[str, Any]) -> str:
     Computes deterministic SHA-256 hash over canonical payload fields,
     explicitly excluding volatile execution timestamps (e.g. normalized_at).
     """
-    # Deep copy or filter out ephemeral fields
     def filter_canonical(node: Any) -> Any:
         if isinstance(node, dict):
             filtered = {}

@@ -11,7 +11,7 @@
 In an IELTS data engineering pipeline, random UUIDs or simple integer counters break provenance and relational integrity:
 1. **Lack of Domain Semantics:** UUIDs obscure the volume, test number, skill, and question sequence.
 2. **Fragility Under Re-runs:** Ephemeral IDs cause spurious diffs across normalization re-runs.
-3. **Conflation of Physical vs. Logical Layers:** A physical file (e.g. `FILE-3a7f8090a786`, `VOL 6.docx`) contains multiple logical tests. Conversely, binary clones (same SHA-256) may exist across multiple folders.
+3. **Conflation of Physical vs. Logical Layers:** A physical file (e.g. `FILE-5a2cce4d0793`, `VOL 6.docx` with SHA-256 `772566bcc5c7...`) contains multiple logical tests. Conversely, binary clones (same content SHA-256) may exist across multiple folders with different physical `file_id`s.
 
 Phase V0.2 establishes a **strictly deterministic, hierarchical, human-readable, and stable identification system** aligning 100% with Phase V0.1 source inventory.
 
@@ -81,12 +81,23 @@ Phase V0.2 establishes a **strictly deterministic, hierarchical, human-readable,
 
 ## 3. ID Minting Rules & Syntax Specifications
 
-### 3.1 Tier 1: Physical File ID & Legacy Mapping
-- **Physical File ID:** `^FILE-[a-f0-9]{12}$`
+### 3.1 Tier 1: Physical File ID, Content SHA-256 & Legacy Mapping
+- **Physical File ID (`file_id`):** `^FILE-[a-f0-9]{12}$`
   - Minted in V0.1 via: `f"FILE-{hashlib.sha256(relative_path.encode()).hexdigest()[:12]}"`.
-  - Immutable primary key in `sources` table.
-- **Legacy Source ID:** `^SRC-\d{3,4}$` (or `"UNKNOWN"`).
+  - Immutable primary key in `sources` table scoped to the physical relative path.
+- **Content Cryptographic Digest (`content_sha256`):**
+  - Full 64-character hex SHA-256 computed directly over the raw binary content of the file.
+  - Distinguishes content identity from path identity: identical duplicate files have identical `content_sha256` but distinct `file_id`s.
+- **Legacy Source ID (`legacy_id`):** `^SRC-\d{3,4}$` (or `"UNKNOWN"`).
   - Authoritative reference matching Phase 0 discovery reports and inventory tables.
+- **Relocation Preservation Protocol:**
+  - When a source file is moved or renamed within `private/raw/`, its `relative_path` changes, producing a new `file_id`.
+  - V0.1 `sync_inventory_to_db` reconciles moved files by matching `content_sha256`:
+    1. Transference: Inherits `legacy_id` (`SRC-XXX`) to the new source record.
+    2. Backward Pointer: Sets `new_record.relocated_from = old_record.file_id`.
+    3. Forward Pointer: Marks old record as `accessibility_status = 'relocated'` with `relocated_to = new_record.file_id`.
+    4. Lineage Migration: Updates `processing_checkpoints.file_id` to point to `new_record.file_id`.
+    5. Provenance Validity: V0.1 `check_checkpoint_validity` explicitly accepts checkpoints where `provenance.file_id` matches either the current `file_id` or `relocated_from`, ensuring full historical continuity without breaking provenance.
 
 ### 3.2 Tier 2: Logical Document ID (`doc_id`)
 - **Format:** `DOC-[A-Z0-9]+(-[A-Z0-9]+)*`
@@ -134,10 +145,10 @@ Phase V0.2 establishes a **strictly deterministic, hierarchical, human-readable,
 {
   "_provenance": {
     "schema_version": "v0.2.0-normalized",
-    "source_file_id": "FILE-3a7f8090a786",
+    "source_file_id": "FILE-5a2cce4d0793",
     "source_legacy_id": "SRC-138",
     "relative_path": "private/raw/VOL 6/READING/VOL 6.docx",
-    "source_sha256": "3a7f8090a7864f1c95697241cfb26ad0ffcf56a7c36a6ec65cf1f3c3a9f061b1",
+    "source_sha256": "772566bcc5c721c0b31efb796677f3a8b43f4347719ab29471f54cf211c47ea4",
     "processing_unit": "document",
     "unit_identifier": "raw_document",
     "raw_block_locator": "para_index:309",

@@ -16,10 +16,10 @@ Aligned with Phase V0.1 inventory and extraction outputs:
 | Field Name | Type | Constraint | Description | Example |
 |---|---|---|---|---|
 | `schema_version` | `string` | Const: `"v0.2.0-normalized"` | Normalized schema version | `"v0.2.0-normalized"` |
-| `source_file_id` | `string` | Required, Pattern: `^FILE-[a-f0-9]{12}$` | Physical file ID from V0.1 `sources.file_id` | `"FILE-3a7f8090a786"` |
+| `source_file_id` | `string` | Required, Pattern: `^FILE-[a-f0-9]{12}$` | Physical file ID from V0.1 `sources.file_id` | `"FILE-5a2cce4d0793"` |
 | `source_legacy_id` | `string` | Required, Pattern: `^(SRC-\d{3,4}\|UNKNOWN)$` | Authoritative legacy ID from V0.1 `sources.legacy_id` | `"SRC-138"` |
 | `relative_path` | `string` | Required | Relative path under `private/raw/` | `"private/raw/VOL 6/READING/VOL 6.docx"` |
-| `source_sha256` | `string` | Required, 64-char Hex | Cryptographic SHA-256 of raw file bytes | `"3a7f8...b1"` |
+| `source_sha256` | `string` | Required, 64-char Hex | Cryptographic SHA-256 of raw file bytes | `"77256...ea4"` |
 | `processing_unit` | `string` | Required, Enum | Partition type (`document`, `page`, `sheets`, `audio_metadata`) | `"document"` |
 | `unit_identifier` | `string` | Required | Partition identifier (`raw_document`, `page_0001`, `raw_sheets`) | `"raw_document"` |
 | `raw_block_locator` | `string` | Required | Locator within raw block (`para_index:309`, `cell:B3`, `line:12`) | `"para_index:309"` |

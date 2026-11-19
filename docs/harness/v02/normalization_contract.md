@@ -8,7 +8,7 @@
 
 ## 1. Overview & Architectural Invariants
 
-The Normalization Contract defines the formal processing guarantees, schema transitions, data integrity rules, and error handling protocols between staged raw extraction artifacts (`private/staging/raw_extracted/`) and canonical normalized entities (`data/normalized/`).
+The Normalization Contract defines the formal processing guarantees, schema transitions, data integrity rules, and error handling protocols between staged raw extraction artifacts (`private/staging/raw_extracted/`) and canonical normalized entities (`private/staging/normalized/` for copyrighted data, and `data/normalized/synthetic/` for public test fixtures).
 
 ### 1.1 Invariant Principles
 1. **Zero Guessing (No Hallucination or Imputation):**
@@ -72,11 +72,32 @@ Evidence entities must explicitly distinguish between three epistemic conditions
 
 ## 4. Deterministic Output & Serialization Contract
 
-### 4.1 Canonical Hash Calculation
-The canonical content hash (`canonical_content_sha256`) is computed as:
-$$\text{SHA-256}\Big(\text{JSON\_DUMP}\big(\text{Filter}(\text{entity}, \text{exclude}=\{\text{"normalized\_at"}, \text{"canonical\_content\_sha256"}\}), \text{sort\_keys}=\text{True}, \text{indent}=2\big)\Big)$$
+To prevent spurious Git diffs and ensure rigorous verifiable data engineering across environments, Phase V0.2 strictly separates content identity, physical serialization, and runtime execution metadata.
 
-### 4.2 Idempotency Invariant
-For any source document $D$, re-running normalization at timestamp $T_2 > T_1$ produces:
-$$\text{canonical\_content\_sha256}(D, T_1) \equiv \text{canonical\_content\_sha256}(D, T_2)$$
-Execution timestamps are recorded strictly in the checkpoint database and execution manifests (`manifest.json`), preserving clean Git diffs for canonical data.
+### 4.1 Tri-Layer Determinism Framework
+
+1. **Canonical Content Hash Stability (`canonical_content_sha256`):**
+   - Represents the mathematical identity of the pedagogical content.
+   - Calculated strictly over semantic payload fields (identifiers, text, options, target answers, coordinates, relationships).
+   - Volatile execution timestamps (`normalized_at`) and the hash self-reference (`canonical_content_sha256`) are filtered out prior to serialization.
+   - Computed as:
+     $$\text{canonical\_content\_sha256} = \text{SHA-256}\Big(\text{JSON\_DUMP}\big(\text{Filter}(\text{entity}, \text{exclude}=\{\text{"normalized\_at"}, \text{"canonical\_content\_sha256"}\}), \text{sort\_keys}=\text{True}, \text{indent}=2\big)\Big)$$
+   - Invariant: Re-running normalization at timestamp $T_2 > T_1$ over identical input guaranteed:
+     $$\text{canonical\_content\_sha256}(D, T_1) \equiv \text{canonical\_content\_sha256}(D, T_2)$$
+
+2. **Byte-Identical Serialized Output:**
+   - Disk artifacts written to `private/staging/normalized/` or public repositories must be byte-for-byte identical across runs.
+   - Enforced serialization parameters:
+     - Encoding: UTF-8 without Byte Order Mark (BOM).
+     - Indentation: Exactly 2 spaces (`indent=2`).
+     - Key Sorting: Lexicographical order (`sort_keys=True`).
+     - Line Endings: Unix standard line feed (`\n`).
+     - Trailing Newline: Single trailing `\n` at end of file.
+   - When canonical entity records are written to persistent storage, `normalized_at` is set to `null` (or omitted), guaranteeing bit-identical files on disk and zero spurious Git diffs.
+
+3. **Volatile Execution Timestamps (`normalized_at`):**
+   - Reflects the physical execution time (ISO 8601 UTC string, e.g. `"2026-11-19T12:00:00Z"`).
+   - In production runtimes, execution timestamps and performance metrics belong to:
+     - SQLite checkpoint ledger (`harness/state/harness.db` table `processing_checkpoints.created_at`).
+     - Execution run manifests (`private/staging/normalized/manifest.json`).
+   - If populated within an entity instance during ad-hoc debugging, the field is explicitly excluded from canonical hashing so integrity verification remains uncompromised.

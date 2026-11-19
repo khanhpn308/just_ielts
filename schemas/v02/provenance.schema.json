@@ -80,13 +80,13 @@
   "examples": [
     {
       "schema_version": "v0.2.0-normalized",
-      "source_file_id": "FILE-3a7f8090a786",
-      "source_legacy_id": "SRC-138",
-      "relative_path": "private/raw/VOL 6/READING/VOL 6.docx",
-      "source_sha256": "3a7f8090a7864f1c95697241cfb26ad0ffcf56a7c36a6ec65cf1f3c3a9f061b1",
+      "source_file_id": "FILE-000000000001",
+      "source_legacy_id": "SRC-999",
+      "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "processing_unit": "document",
       "unit_identifier": "raw_document",
-      "raw_block_locator": "para_index:309",
+      "raw_block_locator": "para_index:12",
       "extractor_adapter": "docx",
       "extractor_version": "0.1.0-lxml-docx",
       "normalizer_version": "0.2.0-alpha",

@@ -1,35 +1,35 @@
 {
-  "description": "Synthetic regression fixtures for joined DOCX question segmentation.",
+  "description": "Synthetic regression fixtures for joined DOCX question segmentation without proprietary source text.",
   "fixtures": [
     {
       "test_case_id": "JOINED_NO_SPACE_AFTER_PERIOD",
       "expected_range": [1, 6],
-      "input_text": " 1 Applicants to the department must have previously studied art history.2 Students can choose two optional courses instead of the Theory and Methods course.3 The course organisers had more problems collecting art objects from some historical periods than others.4 The Theory and Methods course focuses on the way art is made and perceived.5 Students will be able to do any of the optional courses that are listed.6 Students may be able to take an unlisted course if they get the appropriate approval.",
+      "input_text": " 1 Tidal stream turbines operate under principles analogous to underwater wind generators.2 Commercial developers must secure maritime environmental impact permits before offshore construction.3 Wave energy converters experienced higher maintenance downtime during winter operations than coastal solar arrays.4 The engineering consortium focused on deepwater anchoring systems and hydrodynamic efficiency5 Research institutes will be permitted to access open ocean test berths next season.6 Specialized maintenance vessels may deploy autonomous submersibles provided harbor authorities grant tidal navigation clearances.",
       "expected_count": 6,
       "expected_items": [
         {
           "number": 1,
-          "prompt": "Applicants to the department must have previously studied art history."
+          "prompt": "Tidal stream turbines operate under principles analogous to underwater wind generators."
         },
         {
           "number": 2,
-          "prompt": "Students can choose two optional courses instead of the Theory and Methods course."
+          "prompt": "Commercial developers must secure maritime environmental impact permits before offshore construction."
         },
         {
           "number": 3,
-          "prompt": "The course organisers had more problems collecting art objects from some historical periods than others."
+          "prompt": "Wave energy converters experienced higher maintenance downtime during winter operations than coastal solar arrays."
         },
         {
           "number": 4,
-          "prompt": "The Theory and Methods course focuses on the way art is made and perceived."
+          "prompt": "The engineering consortium focused on deepwater anchoring systems and hydrodynamic efficiency"
         },
         {
           "number": 5,
-          "prompt": "Students will be able to do any of the optional courses that are listed."
+          "prompt": "Research institutes will be permitted to access open ocean test berths next season."
         },
         {
           "number": 6,
-          "prompt": "Students may be able to take an unlisted course if they get the appropriate approval."
+          "prompt": "Specialized maintenance vessels may deploy autonomous submersibles provided harbor authorities grant tidal navigation clearances."
         }
       ]
     },
