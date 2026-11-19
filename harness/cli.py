@@ -1,6 +1,7 @@
 """Command-line interface (CLI) for IELTS Data Harness V0.1."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -261,6 +262,127 @@ def cmd_check_env(args):
         sys.exit(1)
 
 
+def cmd_normalize(args):
+    """Executes V0.2 normalization pipeline with checkpointing and quality gates."""
+    from harness.orchestrator import NormalizationOrchestrator
+
+    print(">>> Starting V0.2 Normalization Pipeline...")
+    output_dir = Path(args.output_dir) if getattr(args, "output_dir", None) else None
+    orch = NormalizationOrchestrator(output_dir=output_dir) if output_dir else NormalizationOrchestrator()
+
+    if getattr(args, "pilot", False) or getattr(args, "source_id", None) in {"SRC-138", None}:
+        print(f"Target: Reading Pilot (SRC-138 + SRC-137), Test {args.test_number}, Passage {args.passage_number}")
+        res = orch.run_pilot(
+            dry_run=getattr(args, "dry_run", False),
+            force=getattr(args, "force", False),
+            test_number=args.test_number,
+            passage_number=args.passage_number,
+        )
+        print("\n=== NORMALIZATION RESULT ===")
+        print(f"Test ID: {res['test_id']}")
+        print(f"Passage ID: {res['passage_id']}")
+        print(f"Total entities processed: {res['total_entities']}")
+        print(f"  - Written: {res['written_count']}")
+        print(f"  - Skipped (Valid Checkpoint): {res['skipped_count']}")
+        print(f"  - Dry-run: {res['dry_run']}")
+        print(f"Output Directory: {res['output_dir']}")
+        print(f"Entity Breakdown: {res['stats']}")
+    else:
+        print(f"Processing source {args.source_id}...")
+        res = orch.normalize_reading_pilot(
+            doc_legacy_id=args.source_id,
+            key_legacy_id=getattr(args, "key_source_id", "SRC-137"),
+            test_number=args.test_number,
+            passage_number=args.passage_number,
+            dry_run=getattr(args, "dry_run", False),
+            force=getattr(args, "force", False),
+        )
+        print(f"Completed normalization for {args.source_id}: {res['total_entities']} entities.")
+
+
+def cmd_verify(args):
+    """Verifies normalized entities against Quality Gates G1 through G7."""
+    from harness.verifier import QualityGateRunner
+    from harness.config import REPO_ROOT
+
+    norm_dir = Path(args.normalized_dir) if getattr(args, "normalized_dir", None) else REPO_ROOT / "private" / "staging" / "normalized"
+    test_id = getattr(args, "test_id", None) or "TEST-IELTS-VOL06-05-ACAD"
+
+    print(f">>> Running Quality Gates G1-G7 Verification on {test_id}...")
+    print(f"Directory: {norm_dir}")
+
+    runner = QualityGateRunner()
+    entities = runner.load_entities_for_test(norm_dir, test_id)
+
+    total_loaded = sum(len(v) for v in entities.values())
+    if total_loaded == 0:
+        print(f"[ERROR] No normalized entities found for test {test_id} in {norm_dir}.")
+        sys.exit(1)
+
+    print(f"Loaded {total_loaded} entity files across categories.")
+    report = runner.verify_all_gates(entities)
+
+    print("\n=== QUALITY GATES RESULTS ===")
+    for gate_name, gate_info in report["gates"].items():
+        status_tag = "PASS" if gate_info.get("passed") else "FAIL"
+        print(f"  [{status_tag:<4}] {gate_name}")
+        if not gate_info.get("passed") and gate_info.get("errors"):
+            for err in gate_info["errors"]:
+                print(f"         Error: {err}")
+
+    print("\n=== STATISTICS ===")
+    for k, v in report["statistics"].items():
+        print(f"  - {k}: {v}")
+
+    if report["warnings"]:
+        print("\n=== WARNINGS / DIAGNOSTICS ===")
+        for w in report["warnings"]:
+            print(f"  [WARN] {w}")
+
+    if report["unresolved_items"]:
+        print("\n=== UNRESOLVED ITEMS ===")
+        for u in report["unresolved_items"]:
+            print(f"  [UNRESOLVED] {u['id']}: {u['note']}")
+
+    print(f"\nOverall Verification Status: {report['overall_status']}")
+
+    if getattr(args, "report", False):
+        report_dir = REPO_ROOT / "private" / "reports" / "v02b"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / f"quality_report_{test_id}.json"
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+        print(f"Saved local quality report to: {report_path}")
+
+    if report["overall_status"] == "FAIL":
+        sys.exit(1)
+
+
+def cmd_normalization_status(args):
+    """Displays V0.2 normalization status and checkpoints."""
+    from harness.db import get_db_connection, list_normalization_checkpoints, count_normalization_by_lifecycle
+
+    conn = get_db_connection()
+    checkpoints = list_normalization_checkpoints(conn)
+    lifecycle_counts = count_normalization_by_lifecycle(conn)
+
+    print("=== HARNESS V0.2 NORMALIZATION STATUS ===")
+    print(f"Total Normalized Checkpoints: {len(checkpoints)}")
+
+    cur = conn.execute("SELECT entity_type, COUNT(*) FROM normalization_checkpoints GROUP BY entity_type")
+    type_counts = dict(cur.fetchall())
+    print("\nEntities by Type:")
+    for et, cnt in sorted(type_counts.items()):
+        print(f"  - {et:<18}: {cnt}")
+
+    print("\nEntities by Lifecycle Status:")
+    for st in ["extracted", "review_required", "reviewed", "verified", "rejected"]:
+        cnt = lifecycle_counts.get(st, 0)
+        print(f"  - {st:<18}: {cnt}")
+
+    conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="harness",
@@ -302,6 +424,27 @@ def main():
     # check-env
     subparsers.add_parser("check-env", help="Diagnose Python virtual environment and system dependencies")
 
+    # normalize
+    parser_norm = subparsers.add_parser("normalize", help="Run V0.2 normalization pipeline")
+    parser_norm.add_argument("--pilot", action="store_true", help="Run approved Reading Pilot (SRC-138 + SRC-137)")
+    parser_norm.add_argument("--source-id", type=str, help="Specific source ID to normalize (e.g. SRC-138)")
+    parser_norm.add_argument("--key-source-id", type=str, help="Answer key source ID (e.g. SRC-137)")
+    parser_norm.add_argument("--test-number", type=int, default=5, help="Test number to normalize (default 5)")
+    parser_norm.add_argument("--passage-number", type=int, default=1, help="Passage number to normalize (default 1)")
+    parser_norm.add_argument("--dry-run", action="store_true", help="Run normalizer without writing to disk")
+    parser_norm.add_argument("--force", action="store_true", help="Force reprocessing, bypassing checkpoints")
+    parser_norm.add_argument("--resume", action="store_true", help="Resume from existing valid checkpoints")
+    parser_norm.add_argument("--output-dir", type=str, help="Custom output directory")
+
+    # verify
+    parser_ver = subparsers.add_parser("verify", help="Run Quality Gates G1-G7 verification")
+    parser_ver.add_argument("--test-id", type=str, default="TEST-IELTS-VOL06-05-ACAD", help="Target test ID to verify")
+    parser_ver.add_argument("--normalized-dir", type=str, help="Directory containing normalized JSONs")
+    parser_ver.add_argument("--report", action="store_true", help="Write quality report to private/reports/v02b/")
+
+    # normalization-status
+    subparsers.add_parser("normalization-status", help="Show V0.2 normalization checkpoint status")
+
     args = parser.parse_args()
 
     if args.subcommand == "inventory":
@@ -318,6 +461,12 @@ def main():
         cmd_validate(args)
     elif args.subcommand == "check-env":
         cmd_check_env(args)
+    elif args.subcommand == "normalize":
+        cmd_normalize(args)
+    elif args.subcommand == "verify":
+        cmd_verify(args)
+    elif args.subcommand == "normalization-status":
+        cmd_normalization_status(args)
     else:
         parser.print_help()
 
