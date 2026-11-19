@@ -1,0 +1,11 @@
+{
+  "_template": true,
+  "id": "Q-EXAMPLE-001",
+  "skill": "reading",
+  "question_type": "true-false-not-given",
+  "prompt": null,
+  "answer": null,
+  "evidence_reference": null,
+  "source_id": null,
+  "verification_status": "unverified"
+}

@@ -1,0 +1,22 @@
+# Local/private study material
+private/
+.env
+.env.*
+!.env.example
+
+# Generated databases and local runtime
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+.vscode/
+
+# Keep copyrighted/unreviewed raw source files locally
+sources/raw/

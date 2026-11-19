@@ -1,0 +1,11 @@
+{
+  "_template": true,
+  "id": "COL-EXAMPLE-001",
+  "expression": "make progress",
+  "level": "intermediate",
+  "meaning_vi": "tiến bộ",
+  "example_en": "The team made steady progress.",
+  "source_id": null,
+  "unit": null,
+  "verification_status": "unverified"
+}
