@@ -305,6 +305,23 @@ def test_cli_verify_synthetic_entities(tmp_path: Path):
     expl_dict = BaseNormalizer.finalize_and_hash_entity(expl_data)
     (tmp_path / "EXPL-VOL99-01-RD-001.json").write_text(json.dumps(expl_dict, indent=2))
 
+    # Write authoritative manifest for verification runner
+    manifest = {
+        "pipeline": "synthetic_test",
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 7,
+        "entities": [
+            {"entity_id": "TEST-IELTS-VOL99-01-ACAD", "output_filename": "TEST-IELTS-VOL99-01-ACAD.json"},
+            {"entity_id": "PASSAGE-VOL99-01-RD01", "output_filename": "PASSAGE-VOL99-01-RD01.json"},
+            {"entity_id": "QG-VOL99-01-RD01-G01", "output_filename": "QG-VOL99-01-RD01-G01.json"},
+            {"entity_id": "Q-VOL99-01-RD-001", "output_filename": "Q-VOL99-01-RD-001.json"},
+            {"entity_id": "ANS-VOL99-01-RD-001-KEY", "output_filename": "ANS-VOL99-01-RD-001-KEY.json"},
+            {"entity_id": "EVID-VOL99-01-RD-001-01", "output_filename": "EVID-VOL99-01-RD-001-01.json"},
+            {"entity_id": "EXPL-VOL99-01-RD-001", "output_filename": "EXPL-VOL99-01-RD-001.json"},
+        ],
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
     db_path = tmp_path / "test.db"
     init_db(db_path)
     with patch("harness.config.DB_PATH", db_path), \

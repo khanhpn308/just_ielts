@@ -1223,3 +1223,168 @@ def test_quality_gate_rejects_epistemic_integrity_violations(tmp_path: Path):
     assert any("claims expert_verified despite MACHINE_DRAFTED_UNVERIFIED" in err for err in res2["errors"])
 
 
+def test_verifier_fails_closed_on_missing_or_corrupted_manifest(tmp_path: Path):
+    """Verify that QualityGateRunner fails closed (raising FileNotFoundError or ValueError) when manifest is missing or corrupted."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    # 1. Missing manifest.json must fail closed with FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="Authoritative manifest missing"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+    # 2. Corrupted manifest.json (malformed JSON) must fail closed with ValueError
+    manifest_path = norm_dir / "manifest.json"
+    manifest_path.write_text("{malformed json", encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupted"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+    # 3. Invalid manifest structure (missing 'entities' list) must fail closed with ValueError
+    manifest_path.write_text(json.dumps({"pipeline": "test"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="missing required 'entities' list"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_human_review_truthy_strings_rejected_and_structured_event_required(synthetic_env):
+    """Verify that truthy strings ('false', 'pending', 'unreviewed') do NOT trigger expert_verified, while structured review events do."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    # 1. Truthy strings ('false', 'pending') must be rejected and result in machine_drafted_unverified
+    ann_file = synthetic_env["raw_dir"] / "truthy_string_ann.json"
+    ann_payload = {
+        "pilot_id": "PILOT-TEST",
+        "annotations": [
+            {
+                "question_number": 3,
+                "evidence_type": "insufficient_information_not_given",
+                "missing_rationale": "Missing rationale.",
+                "rationale_en": "Ungrounded rationale text.",
+                "reviewed_by_expert": "false",  # Truthy string!
+                "expert_reviewer": "pending",   # Bare truthy string!
+                "review_event": "unreviewed",   # String not dict!
+            }
+        ]
+    }
+    ann_file.write_text(json.dumps(ann_payload), encoding="utf-8")
+
+    orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=ann_file,
+        force=True,
+    )
+    expl_file = synthetic_env["output_dir"] / "EXPL-VOL99-01-RD-003.json"
+    expl_data = json.loads(expl_file.read_text(encoding="utf-8"))
+    assert expl_data["author_type"] == "machine_drafted"
+    assert expl_data["quality_profile"]["explanation_verification"] == "machine_drafted_unverified"
+
+    # 2. Structured review event with valid reviewer and approved status succeeds
+    ann_structured = {
+        "pilot_id": "PILOT-TEST",
+        "annotations": [
+            {
+                "question_number": 3,
+                "evidence_type": "insufficient_information_not_given",
+                "missing_rationale": "Missing rationale.",
+                "rationale_en": "Ungrounded rationale text.",
+                "review_event": {
+                    "reviewer_id": "EXP-IELTS-001",
+                    "decision": "approved",
+                    "timestamp": "2026-11-20T06:00:00Z",
+                }
+            }
+        ]
+    }
+    ann_file.write_text(json.dumps(ann_structured), encoding="utf-8")
+
+    orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=ann_file,
+        force=True,
+    )
+    expl_data_approved = json.loads(expl_file.read_text(encoding="utf-8"))
+    assert expl_data_approved["author_type"] == "expert_teacher"
+    assert expl_data_approved["quality_profile"]["explanation_verification"] == "expert_verified"
+
+
+def test_annotation_validation_rejects_invalid_inputs_without_swallowing_exceptions(synthetic_env):
+    """Verify that invalid annotations (missing evidence_type, invalid types, invalid keys) raise ValueError and are not swallowed."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    # 1. Missing evidence_type in dictionary format must raise ValueError (must not be swallowed by try/except)
+    ann_bad_dict = synthetic_env["raw_dir"] / "ann_missing_ev_type.json"
+    ann_bad_dict.write_text(json.dumps({
+        "pilot_id": "PILOT-TEST",
+        "3": {
+            "quote": "some quote",
+            "rationale_en": "some rationale",
+            # missing evidence_type!
+        }
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing required 'evidence_type'"):
+        orch.normalize_reading_pilot(
+            doc_legacy_id="SRC-999",
+            key_legacy_id="SRC-998",
+            annotations_path=ann_bad_dict,
+            force=True,
+        )
+
+    # 2. Invalid evidence_type must raise ValueError
+    ann_bad_type = synthetic_env["raw_dir"] / "ann_bad_type.json"
+    ann_bad_type.write_text(json.dumps({
+        "pilot_id": "PILOT-TEST",
+        "3": {
+            "evidence_type": "bogus_unsupported_evidence_type",
+            "quote": "some quote",
+        }
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid evidence_type"):
+        orch.normalize_reading_pilot(
+            doc_legacy_id="SRC-999",
+            key_legacy_id="SRC-998",
+            annotations_path=ann_bad_type,
+            force=True,
+        )
+
+    # 3. Invalid annotation key (not int and not metadata key) must raise ValueError
+    ann_bad_key = synthetic_env["raw_dir"] / "ann_bad_key.json"
+    ann_bad_key.write_text(json.dumps({
+        "pilot_id": "PILOT-TEST",
+        "invalid_key_name": {
+            "evidence_type": "direct_support",
+            "quote": "some quote",
+        }
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid annotation key"):
+        orch.normalize_reading_pilot(
+            doc_legacy_id="SRC-999",
+            key_legacy_id="SRC-998",
+            annotations_path=ann_bad_key,
+            force=True,
+        )
+
+
+

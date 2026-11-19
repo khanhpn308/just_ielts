@@ -21,6 +21,7 @@ from harness.normalizers.base import (
     NORMALIZER_VERSION,
     SCHEMA_VERSION,
     BaseNormalizer,
+    atomic_write_json,
     compute_canonical_content_hash,
     validate_output_privacy,
 )
@@ -29,6 +30,138 @@ from harness.normalizers.reading_docx import DocxReadingNormalizer
 
 STAGING_NORMALIZED_DIR = REPO_ROOT / "private" / "staging" / "normalized"
 STAGING_RAW_DIR = REPO_ROOT / "private" / "staging" / "raw_extracted"
+
+VALID_EVIDENCE_TYPES = {
+    "direct_support",
+    "contradictory_evidence",
+    "insufficient_information_not_given",
+}
+
+ANNOTATION_METADATA_KEYS = {
+    "pilot_id",
+    "volume_code",
+    "test_number",
+    "passage_number",
+    "source_legacy_id",
+    "description",
+    "version",
+    "created_at",
+    "updated_at",
+    "notes",
+}
+
+
+def is_authenticated_human_review(ev_info: Dict[str, Any]) -> bool:
+    """Validates whether an annotation item has documented, authenticated human expert review.
+
+    Prevents truthy string injections (e.g. 'false', 'pending', 'unreviewed') from
+    falsely triggering expert_verified.
+
+    Requires EITHER:
+    1. ev_info['reviewed_by_expert'] is strictly boolean True.
+    2. A structured review_event dictionary with non-empty reviewer identity,
+       an approved decision ('approved', 'verified', 'accepted'), and timestamp.
+    """
+    # 1. Strict boolean check (reject truthy strings like 'false', 'pending', etc.)
+    rev_flag = ev_info.get("reviewed_by_expert")
+    if rev_flag is True:
+        return True
+
+    # 2. Structured review event dictionary
+    rev_event = ev_info.get("review_event")
+    if isinstance(rev_event, dict):
+        reviewer = str(
+            rev_event.get("reviewer_id")
+            or rev_event.get("expert_id")
+            or rev_event.get("expert_reviewer")
+            or ""
+        ).strip()
+        invalid_reviewers = {"", "none", "null", "placeholder", "unassigned", "pending", "unknown"}
+        if reviewer.lower() in invalid_reviewers:
+            return False
+
+        decision = str(rev_event.get("decision") or rev_event.get("status") or "").strip().lower()
+        if decision not in {"approved", "verified", "accepted"}:
+            return False
+
+        return True
+
+    return False
+
+
+def parse_and_validate_annotations(ann_data: Any) -> Dict[int, Dict[str, Any]]:
+    """Strictly parses and validates raw annotations data without swallowing exceptions.
+
+    Rejects invalid formats, missing fields, and unapproved evidence types.
+    """
+    if not isinstance(ann_data, dict):
+        raise ValueError(f"Annotations payload must be a JSON object, got {type(ann_data).__name__}")
+
+    known_evidence: Dict[int, Dict[str, Any]] = {}
+
+    if "annotations" in ann_data:
+        items = ann_data["annotations"]
+        if not isinstance(items, list):
+            raise ValueError(f"'annotations' field must be a list, got {type(items).__name__}")
+
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError(f"Annotation item at index {idx} must be a JSON object, got {type(item).__name__}")
+
+            raw_qn = item.get("question_number")
+            if raw_qn is None:
+                raise ValueError(f"Annotation item at index {idx} missing required 'question_number'")
+            try:
+                qn = int(raw_qn)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid 'question_number' {raw_qn!r} at index {idx}: must be an integer") from e
+
+            if qn < 1 or qn > 40:
+                raise ValueError(f"Question number {qn} out of range [1, 40] at index {idx}")
+
+            if "evidence_type" not in item:
+                raise ValueError(f"Annotation for question {qn} missing required 'evidence_type'")
+
+            ev_type = item.get("evidence_type")
+            if ev_type not in VALID_EVIDENCE_TYPES:
+                raise ValueError(
+                    f"Invalid evidence_type {ev_type!r} for question {qn}. "
+                    f"Must be one of {sorted(VALID_EVIDENCE_TYPES)}"
+                )
+
+            known_evidence[qn] = item
+    else:
+        # Dictionary format: { "3": { ... }, "4": { ... } }
+        for k, item in ann_data.items():
+            if k in ANNOTATION_METADATA_KEYS:
+                continue
+
+            try:
+                qn = int(k)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid annotation key {k!r}: must be an integer question number or recognized metadata key"
+                ) from e
+
+            if qn < 1 or qn > 40:
+                raise ValueError(f"Question number {qn} out of range [1, 40] for key {k!r}")
+
+            if not isinstance(item, dict):
+                raise ValueError(f"Annotation entry for question {qn} must be a dictionary, got {type(item).__name__}")
+
+            if "evidence_type" not in item:
+                raise ValueError(f"Annotation for question {qn} missing required 'evidence_type'")
+
+            ev_type = item.get("evidence_type")
+            if ev_type not in VALID_EVIDENCE_TYPES:
+                raise ValueError(
+                    f"Invalid evidence_type {ev_type!r} for question {qn}. "
+                    f"Must be one of {sorted(VALID_EVIDENCE_TYPES)}"
+                )
+
+            known_evidence[qn] = item
+
+    return known_evidence
 
 
 class NormalizationOrchestrator:
@@ -203,34 +336,11 @@ class NormalizationOrchestrator:
                 conn.close()
                 raise ValueError(f"Malformed JSON in annotations file {ann_path}: {e}") from e
 
-            if not isinstance(ann_data, dict):
+            try:
+                known_evidence = parse_and_validate_annotations(ann_data)
+            except Exception as e:
                 conn.close()
-                raise ValueError(f"Annotations file must contain a JSON object, got {type(ann_data).__name__}")
-
-            if "annotations" in ann_data and isinstance(ann_data["annotations"], list):
-                for item in ann_data["annotations"]:
-                    if not isinstance(item, dict):
-                        conn.close()
-                        raise ValueError("Each item in 'annotations' list must be a JSON object")
-                    qn = item.get("question_number")
-                    if qn is None:
-                        conn.close()
-                        raise ValueError("Annotation item missing 'question_number'")
-                    if "evidence_type" not in item:
-                        conn.close()
-                        raise ValueError(f"Annotation for question {qn} missing 'evidence_type'")
-                    known_evidence[int(qn)] = item
-            else:
-                for k, item in ann_data.items():
-                    try:
-                        qn = int(k)
-                        if isinstance(item, dict):
-                            if "evidence_type" not in item:
-                                conn.close()
-                                raise ValueError(f"Annotation for question {qn} missing 'evidence_type'")
-                            known_evidence[qn] = item
-                    except (ValueError, TypeError):
-                        pass
+                raise
 
         for q_num, ev_info in known_evidence.items():
             q_ent = q_map.get(q_num)
@@ -257,12 +367,8 @@ class NormalizationOrchestrator:
                     matched_offset = f"offset:{idx}-{idx + len(search_term)}"
                     break
 
-            # Documented human review event check
-            has_human_review = bool(
-                ev_info.get("reviewed_by_expert")
-                or ev_info.get("expert_reviewer")
-                or ev_info.get("review_event")
-            )
+            # Structured, authenticated human expert review event check
+            has_human_review = is_authenticated_human_review(ev_info)
 
             if verified_in_source:
                 author_type = "source_published"
@@ -465,23 +571,19 @@ class NormalizationOrchestrator:
                 except Exception:
                     pass
 
-            # Write authoritative execution run manifest
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "pipeline": "harness_v02b_reading_pilot",
-                        "normalizer_version": self.normalizer_version,
-                        "schema_version": SCHEMA_VERSION,
-                        "test_id": test_entity.test_id,
-                        "total_entities": len(all_entities),
-                        "written_count": written_count,
-                        "skipped_count": skipped_count,
-                        "entities": manifest_entries,
-                        "stale_entities": stale_reconciled,
-                    },
-                    f,
-                    indent=2,
-                )
+            # Write authoritative execution run manifest atomically
+            manifest_payload = {
+                "pipeline": "harness_v02b_reading_pilot",
+                "normalizer_version": self.normalizer_version,
+                "schema_version": SCHEMA_VERSION,
+                "test_id": test_entity.test_id,
+                "total_entities": len(all_entities),
+                "written_count": written_count,
+                "skipped_count": skipped_count,
+                "entities": manifest_entries,
+                "stale_entities": stale_reconciled,
+            }
+            atomic_write_json(manifest_path, manifest_payload)
 
         conn.close()
 

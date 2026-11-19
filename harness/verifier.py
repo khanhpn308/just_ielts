@@ -58,15 +58,29 @@ class QualityGateRunner:
         test_slug = test_id.replace("TEST-IELTS-", "").rsplit("-", 1)[0]
         manifest_path = normalized_dir / "manifest.json"
 
-        active_filenames: Optional[set[str]] = None
-        if manifest_path.exists():
-            try:
-                m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-                active_filenames = {
-                    e["output_filename"] for e in m_data.get("entities", []) if e.get("output_filename")
-                }
-            except Exception:
-                active_filenames = None
+        # Authoritative manifest must exist and be valid: fail closed otherwise
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"Authoritative manifest missing at '{manifest_path}'. Verification must fail closed."
+            )
+
+        try:
+            m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise ValueError(
+                f"Authoritative manifest at '{manifest_path}' is corrupted: {e}"
+            ) from e
+
+        if not isinstance(m_data, dict) or "entities" not in m_data or not isinstance(m_data["entities"], list):
+            raise ValueError(
+                f"Authoritative manifest at '{manifest_path}' is invalid: missing required 'entities' list."
+            )
+
+        active_filenames: set[str] = {
+            e["output_filename"]
+            for e in m_data["entities"]
+            if isinstance(e, dict) and e.get("output_filename")
+        }
 
         for p in sorted(normalized_dir.glob("*.json")):
             if p.name == "manifest.json":
@@ -74,19 +88,19 @@ class QualityGateRunner:
             if test_slug not in p.name:
                 continue
 
-            # If manifest is present and authoritative, check if file is active
-            if active_filenames is not None and p.name not in active_filenames:
+            # Manifest is authoritative: check if file is active
+            if p.name not in active_filenames:
                 self.stale_entities_detected.append(p.name)
                 continue  # Exclude stale artifact from verification
 
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except Exception:
-                continue
+            except Exception as e:
+                raise ValueError(f"Corrupted normalized entity file at '{p}': {e}") from e
 
             if not isinstance(data, dict):
-                continue
+                raise ValueError(f"Normalized entity at '{p}' must be a JSON object, got {type(data).__name__}")
 
             if p.name.startswith("TEST-") and (data.get("test_id") == test_id or test_slug in p.name):
                 entities["test"].append(data)
