@@ -471,13 +471,38 @@ def test_verified_answer_provenance():
 
     # Q3 and Q4 must NOT be marked authoritative_official or authoritative_key
     assert ans_by_num[3].quality_profile.source_fidelity == "secondary_reputable"
-    assert ans_by_num[3].quality_profile.answer_verification == "consensus_key"
+    # Never label single-source secondary answers as consensus_key without independent corroboration
+    assert ans_by_num[3].quality_profile.answer_verification == "unverified"
+    assert "SINGLE_SOURCE_UNVERIFIED_KEY" in ans_by_num[3].quality_profile.validation_flags
     assert ans_by_num[3].provenance.unit_identifier == "page_0095"
     assert ans_by_num[3].provenance.raw_block_locator.startswith("offset:")
 
     assert ans_by_num[4].quality_profile.source_fidelity == "secondary_reputable"
-    assert ans_by_num[4].quality_profile.answer_verification == "consensus_key"
+    assert ans_by_num[4].quality_profile.answer_verification == "unverified"
     assert ans_by_num[4].provenance.unit_identifier == "page_0096"
+
+    # Test independent corroboration produces consensus_key
+    keys_corroborated = copy.deepcopy(keys)
+    keys_corroborated[3]["corroborated"] = True
+    ans_corr = reconciler.reconcile_answers(
+        questions=[q3],
+        raw_key_map=keys_corroborated,
+        source_record=src_record,
+        test_number=5,
+        volume_code="VOL06",
+    )
+    assert ans_corr[0].quality_profile.answer_verification == "consensus_key"
+
+    # Test official source produces authoritative_key
+    official_src = dict(src_record, collection="official_cambridge", source_fidelity="authoritative_official")
+    ans_off = reconciler.reconcile_answers(
+        questions=[q3],
+        raw_key_map=keys,
+        source_record=official_src,
+        test_number=5,
+        volume_code="VOL06",
+    )
+    assert ans_off[0].quality_profile.answer_verification == "authoritative_key"
 
 
 # ---------------------------------------------------------------------------
@@ -833,3 +858,225 @@ def test_missing_prompt_handling_does_not_emit_placeholder():
 
     # Unresolved question 2 is captured in unresolved_questions list
     assert any(uq["question_number"] == 2 for uq in res["unresolved_questions"])
+
+
+# ---------------------------------------------------------------------------
+# P0 Hardening: Verification Status, Stale Reconciliation, Pre-write Privacy
+# ---------------------------------------------------------------------------
+
+
+def test_failed_source_match_never_implies_expert_approval(tmp_path: Path):
+    """Verify that ungrounded explanations without documented human expert review
+
+    receive machine_drafted / machine_drafted_unverified, NEVER expert_verified.
+    """
+    resolver = EvidenceResolver()
+    prov = ProvenanceEnvelope(
+        schema_version=SCHEMA_VERSION,
+        source_file_id="FILE-000000000099",
+        source_legacy_id="SRC-999",
+        relative_path="synthetic/test.docx",
+        source_sha256="9" * 64,
+        processing_unit="document",
+        unit_identifier="raw_document",
+        raw_block_locator="para:0",
+        extractor_adapter="docx",
+        extractor_version="0.1.0",
+        normalizer_version="0.2.0-b",
+    )
+    qp = QualityProfile(
+        lifecycle_status="review_required",
+        extraction_quality="complete_clean",
+        source_fidelity="secondary_reputable",
+        answer_verification="unverified",
+        explanation_verification="missing_explanation",
+        publication_permission="public_synthetic",
+    )
+    question = IELTSQuestion(
+        question_id="Q-VOL99-01-RD-001",
+        group_id="QG-VOL99-01-RD01-G01",
+        passage_id="PASSAGE-VOL99-01-RD01",
+        question_number=1,
+        question_type="true-false-not-given",
+        prompt_text="Prompt text here.",
+        quality_profile=qp,
+        _provenance=prov,
+    )
+    answer = IELTSAnswer(
+        answer_id="ANS-VOL99-01-RD-001-KEY",
+        question_id="Q-VOL99-01-RD-001",
+        target_value="TRUE",
+        acceptable_alternates=["T"],
+        source_key_ref="Page 1",
+        quality_profile=qp,
+        _provenance=prov,
+    )
+
+    # 1. Failed source match without human expert review
+    expl_ungrounded = resolver.resolve_explanation(
+        explanation_id="EXPL-VOL99-01-RD-001",
+        question=question,
+        answer=answer,
+        evidence=None,
+        rationale_en="Ungrounded machine rationale.",
+        author_type="machine_drafted",
+        explanation_verification="machine_drafted_unverified",
+        publication_permission="public_synthetic",
+    )
+    assert expl_ungrounded.author_type == "machine_drafted"
+    assert expl_ungrounded.quality_profile.explanation_verification == "machine_drafted_unverified"
+    assert expl_ungrounded.quality_profile.lifecycle_status == "review_required"
+
+    # 2. Documented human expert review event
+    expl_reviewed = resolver.resolve_explanation(
+        explanation_id="EXPL-VOL99-01-RD-001",
+        question=question,
+        answer=answer,
+        evidence=None,
+        rationale_en="Human expert reviewed rationale.",
+        author_type="expert_teacher",
+        explanation_verification="expert_verified",
+        publication_permission="public_synthetic",
+    )
+    assert expl_reviewed.author_type == "expert_teacher"
+    assert expl_reviewed.quality_profile.explanation_verification == "expert_verified"
+
+
+def test_stale_entity_reconciliation_on_annotation_removal(synthetic_env):
+    """Verify active manifest authority and stale artifact archiving when an annotation is removed."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    # Run 1: with annotations for Q1, Q2, Q3
+    res1 = orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=synthetic_env["ann_file"],
+    )
+    manifest_file = synthetic_env["output_dir"] / "manifest.json"
+    m1 = json.loads(manifest_file.read_text(encoding="utf-8"))
+    q3_evid_filename = "EVID-VOL99-01-RD-003-01.json"
+    q3_expl_filename = "EXPL-VOL99-01-RD-003.json"
+    assert (synthetic_env["output_dir"] / q3_evid_filename).exists()
+    assert (synthetic_env["output_dir"] / q3_expl_filename).exists()
+    assert any(e["output_filename"] == q3_evid_filename for e in m1["entities"])
+
+    # Run 2: remove Q3 annotation
+    ann_data = json.loads(synthetic_env["ann_file"].read_text(encoding="utf-8"))
+    del ann_data["3"]
+    synthetic_env["ann_file"].write_text(json.dumps(ann_data), encoding="utf-8")
+
+    res2 = orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=synthetic_env["ann_file"],
+        force=True,
+    )
+
+    # Stale artifacts for Q3 must be removed from active output dir and archived in .historical
+    assert not (synthetic_env["output_dir"] / q3_evid_filename).exists()
+    assert not (synthetic_env["output_dir"] / q3_expl_filename).exists()
+    assert (synthetic_env["output_dir"] / ".historical" / q3_evid_filename).exists()
+    assert (synthetic_env["output_dir"] / ".historical" / q3_expl_filename).exists()
+
+    # Active manifest must NOT list Q3 evidence or explanation
+    m2 = json.loads(manifest_file.read_text(encoding="utf-8"))
+    assert not any(e["output_filename"] == q3_evid_filename for e in m2["entities"])
+    assert not any(e["output_filename"] == q3_expl_filename for e in m2["entities"])
+    assert any(s["entity_id"] == "EVID-VOL99-01-RD-003-01" for s in m2.get("stale_entities", []))
+
+    # Verifier loading entities must treat manifest as authoritative and exclude historical/stale files
+    runner = QualityGateRunner(db_path=synthetic_env["db_path"])
+    loaded = runner.load_entities_for_test(synthetic_env["output_dir"], "TEST-IELTS-VOL99-01-ACAD")
+    loaded_ev_ids = {e["evidence_id"] for e in loaded["evidence"]}
+    assert "EVID-VOL99-01-RD-003-01" not in loaded_ev_ids
+
+
+def test_pre_write_privacy_enforcement_rejects_unauthorized_destinations(tmp_path: Path):
+    """Verify that private_copyrighted entities are rejected before write if targeted outside authorized private storage."""
+    from harness.normalizers.base import BaseNormalizer, validate_output_privacy
+
+    prov = ProvenanceEnvelope(
+        schema_version=SCHEMA_VERSION,
+        source_file_id="FILE-000000000099",
+        source_legacy_id="SRC-999",
+        relative_path="sources/raw.docx",
+        source_sha256="0" * 64,
+        processing_unit="document",
+        unit_identifier="raw_document",
+        raw_block_locator="para:0",
+        extractor_adapter="docx",
+        extractor_version="0.1.0",
+        normalizer_version="0.2.0-b",
+    )
+    qp_private = QualityProfile(
+        lifecycle_status="reviewed",
+        extraction_quality="complete_clean",
+        source_fidelity="secondary_reputable",
+        answer_verification="unverified",
+        explanation_verification="source_provided",
+        publication_permission="private_copyrighted",
+    )
+    private_entity = IELTSAnswer(
+        answer_id="ANS-VOL99-01-RD-001-KEY",
+        question_id="Q-VOL99-01-RD-001",
+        target_value="TRUE",
+        acceptable_alternates=["T"],
+        source_key_ref="Page 1",
+        quality_profile=qp_private,
+        _provenance=prov,
+    )
+
+    # 1. Writing directly to public data/ must raise PermissionError
+    public_target = REPO_ROOT / "data" / "leak.json"
+    with pytest.raises(PermissionError, match="Privacy policy violation"):
+        BaseNormalizer.write_entity(public_target, private_entity)
+
+    # 2. Writing via path traversal (private/../data/leak.json) must raise PermissionError
+    traversal_target = REPO_ROOT / "private" / ".." / "data" / "leak.json"
+    with pytest.raises(PermissionError, match="Privacy policy violation"):
+        BaseNormalizer.write_entity(traversal_target, private_entity)
+
+    # 3. Writing to arbitrary external path without authorized root must raise PermissionError
+    external_leak = tmp_path / "leak.json"
+    with pytest.raises(PermissionError, match="Privacy policy violation"):
+        BaseNormalizer.write_entity(external_leak, private_entity)
+
+
+def test_invalid_annotations_file_fails_visibly(synthetic_env):
+    """Verify that malformed or non-existent annotation files fail with explicit errors."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    # 1. Non-existent file raises FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="Annotations file not found"):
+        orch.normalize_reading_pilot(
+            doc_legacy_id="SRC-999",
+            key_legacy_id="SRC-998",
+            annotations_path=synthetic_env["raw_dir"] / "nonexistent_annotations.json",
+        )
+
+    # 2. Malformed JSON raises ValueError
+    bad_json = synthetic_env["raw_dir"] / "bad_annotations.json"
+    bad_json.write_text("{malformed json content", encoding="utf-8")
+    with pytest.raises(ValueError, match="Malformed JSON"):
+        orch.normalize_reading_pilot(
+            doc_legacy_id="SRC-999",
+            key_legacy_id="SRC-998",
+            annotations_path=bad_json,
+        )
+

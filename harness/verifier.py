@@ -42,7 +42,7 @@ class QualityGateRunner:
         self.schemas, self.registry = load_validator_registry()
 
     def load_entities_for_test(self, normalized_dir: Path, test_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Loads all normalized JSON files associated with test_id from normalized_dir."""
+        """Loads normalized JSON entities for test_id, treating manifest.json as authoritative."""
         entities: Dict[str, List[Dict[str, Any]]] = {
             "test": [],
             "passages": [],
@@ -52,13 +52,33 @@ class QualityGateRunner:
             "evidence": [],
             "explanations": [],
         }
+        self.stale_entities_detected: List[str] = []
 
         # Substring key in filename e.g. VOL06-05
         test_slug = test_id.replace("TEST-IELTS-", "").rsplit("-", 1)[0]
+        manifest_path = normalized_dir / "manifest.json"
 
-        for p in normalized_dir.glob("*.json"):
+        active_filenames: Optional[set[str]] = None
+        if manifest_path.exists():
+            try:
+                m_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                active_filenames = {
+                    e["output_filename"] for e in m_data.get("entities", []) if e.get("output_filename")
+                }
+            except Exception:
+                active_filenames = None
+
+        for p in sorted(normalized_dir.glob("*.json")):
             if p.name == "manifest.json":
                 continue
+            if test_slug not in p.name:
+                continue
+
+            # If manifest is present and authoritative, check if file is active
+            if active_filenames is not None and p.name not in active_filenames:
+                self.stale_entities_detected.append(p.name)
+                continue  # Exclude stale artifact from verification
+
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -102,6 +122,7 @@ class QualityGateRunner:
                 "evidence_count": len(entities["evidence"]),
                 "explanations_count": len(entities["explanations"]),
             },
+            "stale_entities_detected": list(getattr(self, "stale_entities_detected", [])),
             "unresolved_items": [],
             "warnings": [],
             "errors": [],
@@ -364,8 +385,12 @@ class QualityGateRunner:
             else:
                 unresolved.append({"type": "orphan_answer", "id": a["answer_id"], "note": "Orphan key without question"})
 
-            if a.get("target_value") is None:
+            qp = a.get("quality_profile", {})
+            ans_verif = qp.get("answer_verification")
+            if a.get("target_value") is None or ans_verif == "missing_key":
                 unresolved.append({"type": "missing_answer_key", "id": a["answer_id"], "note": f"Missing key for {q_id}"})
+            elif ans_verif == "unverified":
+                unresolved.append({"type": "unverified_answer_key", "id": a["answer_id"], "note": f"Single-source unverified key for {q_id}"})
 
         # Evidence points to Answer and Passage
         for e in entities["evidence"]:

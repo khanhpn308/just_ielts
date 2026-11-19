@@ -75,6 +75,42 @@ def atomic_write_json(file_path: Path | str, data: Dict[str, Any]) -> None:
         raise
 
 
+def validate_output_privacy(
+    target_path: Path | str,
+    payload: Dict[str, Any],
+    authorized_private_roots: Optional[List[Path]] = None,
+) -> Path:
+    """Enforces strict repository privacy policy before writing to disk.
+
+    - Resolves target path to prevent traversal (..) and symlink escapes.
+    - Rejects private_copyrighted entities targeted outside authorized private storage.
+    """
+    from harness.config import REPO_ROOT
+
+    resolved = Path(target_path).resolve()
+    qp = payload.get("quality_profile", {})
+    permission = qp.get("publication_permission")
+
+    if permission == "private_copyrighted":
+        if authorized_private_roots:
+            allowed_roots = [r.resolve() for r in authorized_private_roots]
+        else:
+            allowed_roots = [(REPO_ROOT / "private").resolve()]
+
+        is_authorized = any(
+            resolved == r or r in resolved.parents or (hasattr(resolved, "is_relative_to") and resolved.is_relative_to(r))
+            for r in allowed_roots
+        )
+        if not is_authorized:
+            raise PermissionError(
+                f"Privacy policy violation: entity with publication_permission='{permission}' "
+                f"cannot be written to unauthorized path '{resolved}'. "
+                f"Authorized private roots: {[str(r) for r in allowed_roots]}"
+            )
+
+    return resolved
+
+
 class BaseNormalizer(abc.ABC):
     """Abstract base class for all V0.2 normalizers."""
 
@@ -104,9 +140,13 @@ class BaseNormalizer(abc.ABC):
         return payload
 
     @staticmethod
-    def write_entity(target_path: Path | str, entity: BaseModel | Dict[str, Any]) -> Path:
-        """Finalizes entity hashing and atomically writes to disk."""
-        target = Path(target_path).resolve()
+    def write_entity(
+        target_path: Path | str,
+        entity: BaseModel | Dict[str, Any],
+        authorized_private_roots: Optional[List[Path]] = None,
+    ) -> Path:
+        """Finalizes entity hashing, validates privacy policy, and atomically writes to disk."""
         payload = BaseNormalizer.finalize_and_hash_entity(entity)
+        target = validate_output_privacy(target_path, payload, authorized_private_roots)
         atomic_write_json(target, payload)
         return target

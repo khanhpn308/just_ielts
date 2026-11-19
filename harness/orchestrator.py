@@ -22,6 +22,7 @@ from harness.normalizers.base import (
     SCHEMA_VERSION,
     BaseNormalizer,
     compute_canonical_content_hash,
+    validate_output_privacy,
 )
 from harness.normalizers.evidence_resolver import EvidenceResolver
 from harness.normalizers.reading_docx import DocxReadingNormalizer
@@ -39,11 +40,15 @@ class NormalizationOrchestrator:
         raw_staging_dir: Path = STAGING_RAW_DIR,
         normalizer_version: str = NORMALIZER_VERSION,
         db_path: Optional[Path] = None,
+        authorized_private_roots: Optional[List[Path]] = None,
     ):
-        self.output_dir = output_dir
-        self.raw_staging_dir = raw_staging_dir
+        self.output_dir = Path(output_dir)
+        self.raw_staging_dir = Path(raw_staging_dir)
         self.normalizer_version = normalizer_version
         self.db_path = db_path
+        self.authorized_private_roots = [
+            p.resolve() for p in (authorized_private_roots or [REPO_ROOT / "private"])
+        ]
         self.docx_normalizer = DocxReadingNormalizer(normalizer_version=normalizer_version)
         self.answer_reconciler = AnswerReconciler(normalizer_version=normalizer_version)
         self.evidence_resolver = EvidenceResolver(normalizer_version=normalizer_version)
@@ -93,6 +98,16 @@ class NormalizationOrchestrator:
             conn.close()
             raise ValueError(f"Source {key_legacy_id} not found in database inventory.")
 
+        is_synthetic = doc_source.get("collection") == "synthetic"
+        pub_permission = "public_synthetic" if is_synthetic else "private_copyrighted"
+
+        # Enforce pre-write privacy policy validation on output directory
+        validate_output_privacy(
+            self.output_dir / "privacy_probe.json",
+            {"quality_profile": {"publication_permission": pub_permission}},
+            self.authorized_private_roots,
+        )
+
         # 1. Load raw extraction artifacts
         raw_doc_path = self.raw_staging_dir / doc_legacy_id / "raw_document.json"
         if not raw_doc_path.exists():
@@ -122,7 +137,7 @@ class NormalizationOrchestrator:
             test_number=test_number,
             passage_number=passage_number,
             volume_code=volume_code,
-            publication_permission="private_copyrighted",
+            publication_permission=pub_permission,
         )
 
         test_entity = reading_result["test"]
@@ -138,7 +153,7 @@ class NormalizationOrchestrator:
             source_record=key_source,
             volume_code=volume_code,
             test_number=test_number,
-            publication_permission="private_copyrighted",
+            publication_permission=pub_permission,
         )
 
         # 4. Resolve Evidence Spans and Explanations from private annotations
@@ -157,25 +172,34 @@ class NormalizationOrchestrator:
             if default_ann.exists():
                 ann_file = default_ann
 
-        if ann_file and Path(ann_file).exists():
-            ann_bytes = Path(ann_file).read_bytes()
+        if ann_file:
+            ann_path = Path(ann_file)
+            if not ann_path.exists():
+                conn.close()
+                raise FileNotFoundError(f"Annotations file not found: {ann_path}")
+            ann_bytes = ann_path.read_bytes()
             evidence_source_sha = hashlib.sha256(ann_bytes).hexdigest()
             try:
                 ann_data = json.loads(ann_bytes.decode("utf-8"))
-                if isinstance(ann_data, dict):
-                    if "annotations" in ann_data and isinstance(ann_data["annotations"], list):
-                        for item in ann_data["annotations"]:
-                            qn = item.get("question_number")
-                            if qn is not None:
-                                known_evidence[int(qn)] = item
-                    else:
-                        for k, item in ann_data.items():
-                            try:
-                                known_evidence[int(k)] = item
-                            except (ValueError, TypeError):
-                                pass
-            except Exception:
-                pass
+            except Exception as e:
+                conn.close()
+                raise ValueError(f"Malformed JSON in annotations file {ann_path}: {e}") from e
+
+            if not isinstance(ann_data, dict):
+                conn.close()
+                raise ValueError(f"Annotations file must contain a JSON object, got {type(ann_data).__name__}")
+
+            if "annotations" in ann_data and isinstance(ann_data["annotations"], list):
+                for item in ann_data["annotations"]:
+                    qn = item.get("question_number")
+                    if qn is not None:
+                        known_evidence[int(qn)] = item
+            else:
+                for k, item in ann_data.items():
+                    try:
+                        known_evidence[int(k)] = item
+                    except (ValueError, TypeError):
+                        pass
 
         for q_num, ev_info in known_evidence.items():
             q_ent = q_map.get(q_num)
@@ -202,6 +226,23 @@ class NormalizationOrchestrator:
                     matched_offset = f"offset:{idx}-{idx + len(search_term)}"
                     break
 
+            # Documented human review event check
+            has_human_review = bool(
+                ev_info.get("reviewed_by_expert")
+                or ev_info.get("expert_reviewer")
+                or ev_info.get("review_event")
+            )
+
+            if verified_in_source:
+                author_type = "source_published"
+                expl_verif = "source_provided"
+            elif has_human_review:
+                author_type = "expert_teacher"
+                expl_verif = "expert_verified"
+            else:
+                author_type = "machine_drafted"
+                expl_verif = "machine_drafted_unverified"
+
             ev_id = f"EVID-{volume_code}-{test_number:02d}-RD-{q_num:03d}-01"
             ev_entity = self.evidence_resolver.resolve_evidence(
                 evidence_id=ev_id,
@@ -212,7 +253,7 @@ class NormalizationOrchestrator:
                 paragraph_label=ev_info.get("paragraph_label"),
                 missing_information_rationale=ev_info.get("missing_rationale"),
                 source_record=key_source,
-                publication_permission="private_copyrighted",
+                publication_permission=pub_permission,
                 unit_identifier=source_unit,
                 raw_block_locator=matched_offset or f"evidence:{ev_id}",
             )
@@ -227,12 +268,12 @@ class NormalizationOrchestrator:
                 rationale_en=expl_text,
                 rationale_vi=ev_info.get("rationale_vi"),
                 paraphrase_map=ev_info.get("paraphrases"),
-                author_type="source_published" if verified_in_source else "expert_teacher",
+                author_type=author_type,
                 source_record=key_source,
-                publication_permission="private_copyrighted",
+                publication_permission=pub_permission,
                 unit_identifier=source_unit,
                 raw_block_locator=matched_offset or f"explanation:{expl_id}",
-                explanation_verification="source_provided" if verified_in_source else "expert_verified",
+                explanation_verification=expl_verif,
             )
             explanation_entities.append(expl_entity)
 
@@ -315,7 +356,7 @@ class NormalizationOrchestrator:
 
             if not dry_run:
                 self.output_dir.mkdir(parents=True, exist_ok=True)
-                BaseNormalizer.write_entity(out_path, final_dict)
+                BaseNormalizer.write_entity(out_path, final_dict, self.authorized_private_roots)
 
                 out_sha = hashlib.sha256(out_path.read_bytes()).hexdigest()
                 lifecycle = final_dict.get("quality_profile", {}).get("lifecycle_status", "extracted")
@@ -349,9 +390,50 @@ class NormalizationOrchestrator:
                 "output_filename": filename,
             })
 
-        # Write execution run manifest
+        # Stale Entity Reconciliation against active manifest
+        stale_reconciled: List[Dict[str, Any]] = []
         if not dry_run:
             manifest_path = self.output_dir / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    prev_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    prev_entities = prev_manifest.get("entities", [])
+                    test_slug = test_entity.test_id.replace("TEST-IELTS-", "").rsplit("-", 1)[0]
+
+                    prev_map = {
+                        e["entity_id"]: e
+                        for e in prev_entities
+                        if test_slug in e.get("entity_id", "") and e.get("output_filename")
+                    }
+                    current_entity_ids = {e[1] for e in all_entities}
+                    stale_ids = set(prev_map.keys()) - current_entity_ids
+
+                    for sid in stale_ids:
+                        s_info = prev_map[sid]
+                        s_filename = s_info.get("output_filename")
+                        s_file = self.output_dir / s_filename
+                        if s_file.exists():
+                            archive_dir = self.output_dir / ".historical"
+                            archive_dir.mkdir(parents=True, exist_ok=True)
+                            archived_path = archive_dir / s_filename
+                            s_file.rename(archived_path)
+                            stale_reconciled.append({
+                                "entity_id": sid,
+                                "entity_type": s_info.get("entity_type"),
+                                "archived_filename": s_filename,
+                                "archived_path": str(archived_path),
+                                "status": "deprecated_archived",
+                            })
+                        # Mark stale checkpoint as DEPRECATED
+                        conn.execute(
+                            "UPDATE normalization_checkpoints SET status = 'DEPRECATED' WHERE entity_id = ?",
+                            (sid,),
+                        )
+                    conn.commit()
+                except Exception:
+                    pass
+
+            # Write authoritative execution run manifest
             with open(manifest_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
@@ -363,6 +445,7 @@ class NormalizationOrchestrator:
                         "written_count": written_count,
                         "skipped_count": skipped_count,
                         "entities": manifest_entries,
+                        "stale_entities": stale_reconciled,
                     },
                     f,
                     indent=2,
@@ -384,5 +467,7 @@ class NormalizationOrchestrator:
                 "answers": len(answer_entities),
                 "evidence": len(evidence_entities),
                 "explanations": len(explanation_entities),
+                "stale_reconciled": len(stale_reconciled),
             },
+            "stale_entities": stale_reconciled,
         }

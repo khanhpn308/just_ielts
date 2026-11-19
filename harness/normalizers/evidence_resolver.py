@@ -155,7 +155,10 @@ class EvidenceResolver(BaseNormalizer):
             )
         )
         source_fidelity: SourceFidelity = "authoritative_official" if is_official else "secondary_reputable"
-        ans_verif: AnswerVerification = "authoritative_key" if is_official else "consensus_key"
+        if answer and hasattr(answer, "quality_profile"):
+            ans_verif: AnswerVerification = answer.quality_profile.answer_verification
+        else:
+            ans_verif = "authoritative_key" if is_official else "unverified"
 
         qp = QualityProfile(
             lifecycle_status=lifecycle_status,  # type: ignore[arg-type]
@@ -242,9 +245,16 @@ class EvidenceResolver(BaseNormalizer):
             expl_verif = "missing_explanation"
             lifecycle_status = "review_required"
             flags.append("MISSING_EXPLANATION_RATIONALE")
-        else:
-            expl_verif = "source_provided" if author_type == "source_published" else "expert_verified"
+        elif author_type == "source_published":
+            expl_verif = "source_provided"
             lifecycle_status = "reviewed"
+        elif author_type == "expert_teacher":
+            expl_verif = "expert_verified"
+            lifecycle_status = "reviewed"
+        else:
+            expl_verif = "machine_drafted_unverified"
+            lifecycle_status = "review_required"
+            flags.append("MACHINE_DRAFTED_UNVERIFIED")
 
         is_official = (
             source_record.get("collection") == "official_cambridge"
@@ -254,7 +264,15 @@ class EvidenceResolver(BaseNormalizer):
             )
         )
         source_fidelity: SourceFidelity = "authoritative_official" if is_official else "secondary_reputable"
-        ans_verif: AnswerVerification = "authoritative_key" if is_official else "consensus_key"
+        if answer and hasattr(answer, "quality_profile"):
+            ans_verif: AnswerVerification = answer.quality_profile.answer_verification
+        else:
+            ans_verif = "authoritative_key" if is_official else "unverified"
+
+        # If answer itself is unverified, human review of the explanation is mandatory
+        if ans_verif == "unverified" and lifecycle_status == "reviewed":
+            lifecycle_status = "review_required"
+            flags.append("UNVERIFIED_KEY_REQUIRES_REVIEW")
 
         qp = QualityProfile(
             lifecycle_status=lifecycle_status,

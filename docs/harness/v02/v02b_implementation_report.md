@@ -84,50 +84,75 @@ The normalizer segments this into 3 distinct `IELTSQuestion` entities:
 - **Target Scope:** VOL 6 — Reading Test 5 — Passage 1 (Questions 1–13)
 
 ### 4.2 Entity Summary
-- Total Normalized Entities: **38**
+- Total Normalized Entities: **62**
   - `IELTSTest`: 1 (`TEST-IELTS-VOL06-05-ACAD`)
   - `PassageOrSection`: 1 (`PASSAGE-VOL06-05-RD01`, 9 paragraphs, 891 words)
   - `QuestionGroup`: 2 (`QG-VOL06-05-RD01-G01` [Q1-6], `QG-VOL06-05-RD01-G02` [Q7-13])
   - `IELTSQuestion`: 13 (`Q-VOL06-05-RD-001` through `Q-VOL06-05-RD-013`)
-  - `IELTSAnswer`: 13 (`ANS-VOL06-05-RD-001-KEY` through `ANS-VOL06-05-RD-013-KEY`)
+  - `IELTSAnswer`: 37 (`ANS-VOL06-05-RD-001-KEY` through `ANS-VOL06-05-RD-013-KEY`, plus 24 extracted secondary keys for Passages 2 & 3)
   - `IELTSEvidence`: 4 (`EVID-VOL06-05-RD-003-01` through `EVID-VOL06-05-RD-006-01`)
   - `IELTSExplanation`: 4 (`EXPL-VOL06-05-RD-003` through `EXPL-VOL06-05-RD-006`)
 
-### 4.3 Lifecycle Breakdown
+### 4.3 Lifecycle & Verification Breakdown
 - `extracted`: 14 (1 passage + 13 questions)
-- `reviewed`: 19 (1 test + 2 question groups + 8 answers + 4 evidence + 4 explanations)
-- `review_required`: 5 (4 missing keys Q1, Q11, Q12, Q13 + 1 OCR typo Q7)
-- `verified`: **0** (Human expert review pending)
+- `review_required`: 40 (37 single-source secondary/missing answers, 1 test, 2 question groups)
+- `reviewed`: 8 (4 evidence + 4 explanations with verified source grounding)
+- `verified`: **0** (Human expert review strictly required; zero false claims)
 - `rejected`: 0
 
 ---
 
-## 5. Quality Gate Verification Audit (G1–G7)
+## 5. Epistemic Integrity & Hardening Safeguards
+
+Following Phase V0.2-B code review remediation and final hardening, the engine enforces strict epistemic, lifecycle, and privacy boundaries:
+
+### 5.1 Verification Status Separation
+Four distinct dimensions are tracked independently without conflation:
+1. **Source Authority:** Distinguishes official exam publishers (`official_cambridge`) from third-party guides (`secondary_guide`).
+2. **Answer Verification:** Single-source answers from secondary guides are strictly marked `unverified` with the `SINGLE_SOURCE_UNVERIFIED_KEY` flag. They are never elevated to `consensus_key` without independent multi-source corroboration, nor to `authoritative_key` without official publication.
+3. **Explanation Verification:** Explanations that fail verbatim source-text matching are never attributed to human experts; ungrounded items are assigned `author_type: "machine_drafted"` and `explanation_verification: "machine_drafted_unverified"`.
+4. **Human Review State:** The label `expert_verified` is strictly prohibited unless an authenticated human expert review record is present in annotation metadata (`reviewed_by_expert: true`).
+
+### 5.2 Authoritative Manifest & Stale Entity Reconciliation
+- **Active Manifest Invariant:** `manifest.json` is the sole source of truth for active entities. Verification and downstream indexing read only manifest-tracked records.
+- **Quarantine to `.historical/`:** When annotations or source passages are modified or removed, orphaned entity JSON files are moved to `<output_dir>/.historical/` and their SQLite checkpoint records are updated to `status = 'DEPRECATED'`.
+- **Reproducible Resumes:** Re-running unchanged pipelines results in 0 writes and 100% valid checkpoint skips while preserving the complete manifest.
+
+### 5.3 Pre-Write Privacy Path Enforcement
+- **Real-Time Validation:** Every entity payload is evaluated via `validate_output_privacy` before disk write.
+- **Path Resolution:** Target output paths are resolved via `Path.resolve()` to prevent path traversal (`..`) or symlink redirection outside authorized directories (`REPO_ROOT / "private"`).
+- **Flag Safety:** The `--output-dir` flag cannot redirect `private_copyrighted` content to public directories (such as `data/` or repository root).
+
+---
+
+## 6. Quality Gate Verification Audit (G1–G7)
 
 | Quality Gate | Description | Status | Verification Detail |
 |---|---|---|---|
 | **G1** | Source Integrity | **PASS** | Source file SHA-256 and legacy IDs match SQLite `sources` table exactly. |
 | **G2** | Structural Fidelity | **PASS** | Sequential numbering 1–13 verified; zero gaps and zero unaccounted text loss. |
-| **G3** | Schema Compliance | **PASS** | All 38 entities validate against Draft 2020-12 schemas via referencing registry. |
-| **G4** | Referential Integrity | **PASS** | Foreign keys resolve 100%. Missing keys cataloged as unresolved items. |
+| **G3** | Schema Compliance | **PASS** | All 62 entities validate against Draft 2020-12 schemas via referencing registry. |
+| **G4** | Referential Integrity | **PASS** | Foreign keys resolve. Missing/unverified keys cataloged as unresolved items. Overall status: `PASS_WITH_UNRESOLVED`. |
 | **G5** | Evidence Fidelity | **PASS** | Exact character offsets verified in narrative text; NOT GIVEN quote is strictly `null`. |
 | **G6** | Deterministic Processing | **PASS** | Canonical hash re-evaluation matches recorded SHA-256; re-runs skip in O(1). |
 | **G7** | Privacy Isolation | **PASS** | Authentic exam records stored strictly in `private/staging/normalized/`. |
 
 ---
 
-## 6. Known Limitations
+## 7. Known Limitations
 
 1. **Truncated Physical Scans in Source Materials:**
    As confirmed during discovery, `SRC-137` is missing book page 94 (Question 1) and cuts off at the bottom of page 96 (Questions 11–13). These items remain unresolved (`target_value: null`) until an authoritative Cambridge key book is ingested.
 2. **Single-Passage Pilot Scope:**
    Only VOL 6 Reading Test 5 Passage 1 was normalized in this phase. Tests 1–4 and 6 in VOL 6 remain in raw extraction staging.
-3. **Evidence Extraction Heuristics:**
+3. **Single-Source Key Provenance:**
+   Answer keys extracted from `SRC-137` remain flagged as `SINGLE_SOURCE_UNVERIFIED_KEY` pending independent secondary or authoritative reconciliation.
+4. **Evidence Extraction Heuristics:**
    Detailed pedagogical explanations were present in `SRC-137` only for Questions 3–6. Questions 7–10 currently have answer keys without source explanations.
 
 ---
 
-## 7. Phase V0.3 Readiness Assessment
+## 8. Phase V0.3 Readiness Assessment
 
 The Phase V0.2-B Normalization Engine has achieved all design objectives and proven operational stability:
 - The data contract is verified against authentic messy Word documents and OCR scanned PDFs.

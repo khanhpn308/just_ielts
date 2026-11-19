@@ -214,10 +214,28 @@ class AnswerReconciler(BaseNormalizer):
                 source_ref = key_info.get("source_ref", f"Question {q_num} Answer Key")
                 raw_block = key_info.get("raw_block", f"key_index:{q_num}")
                 unit_id = key_info.get("unit_identifier", "page_0001")
-                answer_verification: AnswerVerification = "authoritative_key" if is_official else "consensus_key"
+
+                # Check for independent corroboration
+                has_corroboration = bool(
+                    key_info.get("corroborated")
+                    or source_record.get("corroborating_sources")
+                    or key_info.get("consensus_sources")
+                )
+
+                if is_official:
+                    answer_verification: AnswerVerification = "authoritative_key"
+                    ans_lifecycle: LifecycleStatus = "reviewed" if not flags else "review_required"
+                elif has_corroboration:
+                    answer_verification = "consensus_key"
+                    ans_lifecycle = "reviewed" if not flags else "review_required"
+                else:
+                    # Single-source secondary keys cannot be labeled consensus_key without independent corroboration
+                    answer_verification = "unverified"
+                    ans_lifecycle = "review_required"
+                    flags.append("SINGLE_SOURCE_UNVERIFIED_KEY")
 
                 qp = QualityProfile(
-                    lifecycle_status="reviewed" if not flags else "review_required",
+                    lifecycle_status=ans_lifecycle,
                     extraction_quality="complete_clean" if "OCR_TYPO_CORRECTED" not in flags else "ocr_noisy",
                     source_fidelity=source_fidelity,
                     answer_verification=answer_verification,
