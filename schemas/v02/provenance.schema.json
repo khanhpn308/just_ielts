@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/provenance.schema.json",
+  "title": "ProvenanceEnvelope",
+  "description": "Standard backward-traceable provenance envelope aligning with V0.1 sources (file_id = FILE-<hash> and legacy_id = SRC-XXX).",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "v0.2.0-normalized"
+    },
+    "source_file_id": {
+      "type": "string",
+      "pattern": "^FILE-[a-f0-9]{12}$",
+      "description": "Physical file identifier from V0.1 inventory (FILE-<sha256(relative_path)[:12]>)"
+    },
+    "source_legacy_id": {
+      "type": "string",
+      "pattern": "^(SRC-\\d{3,4}|UNKNOWN)$",
+      "description": "Authoritative legacy source identifier (e.g. SRC-011, SRC-138) from V0.1"
+    },
+    "relative_path": {
+      "type": "string",
+      "description": "Relative file path of raw document under private/raw/"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Cryptographic SHA-256 hash of original file bytes"
+    },
+    "processing_unit": {
+      "type": "string",
+      "enum": ["page", "document", "sheets", "audio_metadata"]
+    },
+    "unit_identifier": {
+      "type": "string",
+      "description": "Processing unit from V0.1 extraction (e.g. page_0001, raw_document, raw_sheets)"
+    },
+    "raw_block_locator": {
+      "type": "string",
+      "description": "Granular locator within raw extraction (e.g. para_index:309, cell:B3, ocr_box)"
+    },
+    "extractor_adapter": {
+      "type": "string",
+      "description": "Extractor adapter name from V0.1"
+    },
+    "extractor_version": {
+      "type": "string",
+      "description": "Version of extractor adapter"
+    },
+    "normalizer_version": {
+      "type": "string",
+      "description": "Version of normalizer logic"
+    },
+    "canonical_content_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Deterministic SHA-256 of canonical payload (excluding volatile run timestamps)"
+    },
+    "normalized_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Optional ISO 8601 UTC timestamp of execution. Excluded from canonical content hash."
+    }
+  },
+  "required": [
+    "schema_version",
+    "source_file_id",
+    "source_legacy_id",
+    "relative_path",
+    "source_sha256",
+    "processing_unit",
+    "unit_identifier",
+    "raw_block_locator",
+    "extractor_adapter",
+    "extractor_version",
+    "normalizer_version"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "schema_version": "v0.2.0-normalized",
+      "source_file_id": "FILE-000000000001",
+      "source_legacy_id": "SRC-999",
+      "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "processing_unit": "document",
+      "unit_identifier": "raw_document",
+      "raw_block_locator": "para_index:12",
+      "extractor_adapter": "docx",
+      "extractor_version": "0.1.0-lxml-docx",
+      "normalizer_version": "0.2.0-alpha",
+      "canonical_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "normalized_at": "2026-11-19T12:00:00Z"
+    }
+  ]
+}

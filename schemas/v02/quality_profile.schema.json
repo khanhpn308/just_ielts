@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/quality_profile.schema.json",
+  "title": "QualityProfile",
+  "description": "Reusable multi-dimensional quality profile and verification state machine for normalized IELTS entities.",
+  "type": "object",
+  "properties": {
+    "lifecycle_status": {
+      "type": "string",
+      "enum": [
+        "extracted",
+        "review_required",
+        "reviewed",
+        "verified",
+        "rejected"
+      ],
+      "description": "Lifecycle state of the entity in the verification pipeline."
+    },
+    "extraction_quality": {
+      "type": "string",
+      "enum": [
+        "complete_clean",
+        "ocr_noisy",
+        "segmented_imperfect",
+        "truncated_missing_pages"
+      ],
+      "description": "Physical text extraction fidelity and completeness."
+    },
+    "source_fidelity": {
+      "type": "string",
+      "enum": [
+        "authoritative_official",
+        "secondary_reputable",
+        "unverified_community"
+      ],
+      "description": "Authority and editorial rigor of the source publication."
+    },
+    "answer_verification": {
+      "type": "string",
+      "enum": [
+        "authoritative_key",
+        "consensus_key",
+        "unverified",
+        "disputed",
+        "missing_key"
+      ],
+      "description": "Epistemic certainty of the answer key value."
+    },
+    "explanation_verification": {
+      "type": "string",
+      "enum": [
+        "source_provided",
+        "expert_verified",
+        "machine_drafted_unverified",
+        "unsupported",
+        "missing_explanation"
+      ],
+      "description": "Pedagogical validity and grounding of the rationale."
+    },
+    "publication_permission": {
+      "type": "string",
+      "enum": [
+        "public_synthetic",
+        "private_copyrighted",
+        "restricted_citation"
+      ],
+      "description": "Legal copyright and repository distribution classification."
+    },
+    "validation_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Diagnostic warning or informational flags emitted by normalizer."
+    }
+  },
+  "required": [
+    "lifecycle_status",
+    "extraction_quality",
+    "source_fidelity",
+    "answer_verification",
+    "explanation_verification",
+    "publication_permission"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "lifecycle_status": "reviewed",
+      "extraction_quality": "complete_clean",
+      "source_fidelity": "authoritative_official",
+      "answer_verification": "authoritative_key",
+      "explanation_verification": "source_provided",
+      "publication_permission": "public_synthetic",
+      "validation_flags": []
+    },
+    {
+      "lifecycle_status": "review_required",
+      "extraction_quality": "segmented_imperfect",
+      "source_fidelity": "secondary_reputable",
+      "answer_verification": "missing_key",
+      "explanation_verification": "missing_explanation",
+      "publication_permission": "private_copyrighted",
+      "validation_flags": [
+        "CONCATENATED_QUESTION_RUN_RECOVERED",
+        "MISSING_SOURCE_ANSWER_KEY"
+      ]
+    }
+  ]
+}

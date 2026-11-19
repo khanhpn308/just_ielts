@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/writing_task.schema.json",
+  "title": "IELTSWritingTask",
+  "description": "Normalized Writing prompt, essay plan, and model response.",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^WR-[A-Z0-9-]+-TASK[12]-\\d{3}$"
+    },
+    "test_id": {
+      "type": ["string", "null"],
+      "pattern": "^TEST-IELTS-[A-Z0-9]+-\\d{2}-(ACAD|GT)$"
+    },
+    "task_part": {
+      "type": "integer",
+      "enum": [1, 2]
+    },
+    "task_type": {
+      "type": "string",
+      "enum": [
+        "task1_line_graph",
+        "task1_bar_chart",
+        "task1_pie_chart",
+        "task1_table",
+        "task1_process_diagram",
+        "task1_map_comparison",
+        "task1_multiple_charts",
+        "task2_agree_disagree",
+        "task2_discuss_both_views",
+        "task2_advantages_disadvantages",
+        "task2_problem_solution",
+        "task2_two_part_question"
+      ]
+    },
+    "prompt_text": {
+      "type": "string",
+      "minLength": 10
+    },
+    "stimulus_image_path": {
+      "type": ["string", "null"]
+    },
+    "essay_plan": {
+      "type": ["object", "null"],
+      "properties": {
+        "overview_or_thesis": {
+          "type": "string"
+        },
+        "body_paragraph_1": {
+          "type": "string"
+        },
+        "body_paragraph_2": {
+          "type": "string"
+        },
+        "cohesive_devices_planned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["overview_or_thesis", "body_paragraph_1", "body_paragraph_2"],
+      "additionalProperties": false
+    },
+    "sample_answer": {
+      "type": ["object", "null"],
+      "properties": {
+        "full_text": {
+          "type": "string",
+          "minLength": 150
+        },
+        "word_count": {
+          "type": "integer",
+          "minimum": 150
+        },
+        "band_estimate": {
+          "type": "string",
+          "enum": ["6.5", "7.0", "7.5", "8.0", "8.5", "9.0"]
+        },
+        "criterion_analysis": {
+          "type": "object",
+          "properties": {
+            "task_achievement_or_response": {
+              "type": "string"
+            },
+            "coherence_and_cohesion": {
+              "type": "string"
+            },
+            "lexical_resource": {
+              "type": "string"
+            },
+            "grammatical_range_and_accuracy": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_achievement_or_response",
+            "coherence_and_cohesion",
+            "lexical_resource",
+            "grammatical_range_and_accuracy"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": ["full_text", "word_count", "band_estimate", "criterion_analysis"],
+      "additionalProperties": false
+    },
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "task_id",
+    "task_part",
+    "task_type",
+    "prompt_text",
+    "quality_profile",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "task_id": "WR-VOL99-TASK2-001",
+      "test_id": "TEST-IELTS-VOL99-01-ACAD",
+      "task_part": 2,
+      "task_type": "task2_agree_disagree",
+      "prompt_text": "Some people believe that universities should focus exclusively on preparing students for careers. To what extent do you agree or disagree?",
+      "stimulus_image_path": null,
+      "essay_plan": {
+        "overview_or_thesis": "Disagree with the exclusive vocational focus; universities must balance vocational skills with broad intellectual inquiry.",
+        "body_paragraph_1": "Career-oriented training secures immediate economic productivity and professional competence.",
+        "body_paragraph_2": "Theoretical and philosophical exploration cultivates critical adaptability in an automated future.",
+        "cohesive_devices_planned": ["while it is undeniable that", "nevertheless", "in the final analysis"]
+      },
+      "sample_answer": null,
+      "quality_profile": {
+        "lifecycle_status": "reviewed",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "secondary_reputable",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "expert_verified",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "FILE-495991b7852b",
+        "source_legacy_id": "SRC-996",
+        "relative_path": "private/raw/SYNTHETIC_VOL/writing_task2.pdf",
+        "source_sha256": "495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca",
+        "processing_unit": "page",
+        "unit_identifier": "page_0001",
+        "raw_block_locator": "para:1",
+        "extractor_adapter": "pdf_native",
+        "extractor_version": "0.1.0-pdfminer",
+        "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}

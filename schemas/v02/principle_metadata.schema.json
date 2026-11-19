@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/principle_metadata.schema.json",
+  "title": "PrincipleMetadata",
+  "description": "Validation schema for YAML frontmatter in principles/**/*.md files, maintaining 100% backward compatibility with existing principles.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[A-Z0-9]+-\\d{3}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3
+    },
+    "type": {
+      "type": "string",
+      "enum": ["principle", "strategy", "workflow", "heuristic"]
+    },
+    "skill": {
+      "type": "string",
+      "enum": ["reading", "listening", "writing", "speaking", "general"]
+    },
+    "question_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "triggers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_-]+$"
+      },
+      "default": []
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{2}-[A-Z0-9]+-\\d{3}$"
+      },
+      "default": []
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "reviewed", "verified"]
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "type",
+    "skill",
+    "question_types",
+    "triggers",
+    "dependencies",
+    "status",
+    "source_refs"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "id": "RD-TFNG-001",
+      "title": "Distinguish FALSE from NOT GIVEN",
+      "type": "strategy",
+      "skill": "reading",
+      "question_types": ["true-false-not-given"],
+      "triggers": ["confuse_false_not_given", "unsupported_inference"],
+      "dependencies": ["RD-CORE-001"],
+      "status": "draft",
+      "source_refs": []
+    },
+    {
+      "id": "RD-CORE-001",
+      "title": "Evidence-Based Answering",
+      "type": "principle",
+      "skill": "reading",
+      "question_types": [],
+      "triggers": [
+        "missing_textual_evidence",
+        "guessing_from_background_knowledge"
+      ],
+      "dependencies": [],
+      "status": "draft",
+      "source_refs": []
+    }
+  ]
+}
