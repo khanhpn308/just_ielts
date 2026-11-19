@@ -1,8 +1,8 @@
 # IELTS Data Harness V0.2 — Phase V0.2-B Implementation Plan
-**Phase V0.2-A: Schema Design & Normalization Contract**  
+**Phase V0.2-A: Schema Design & Normalization Contract (Remediated)**  
 **Status:** Actionable Engineering Roadmap  
 **Author:** IELTS Learning Systems Engineer & Data Architecture Team  
-**Date:** 2026-11-19  
+**Date:** 2026-11-19 (Remediated)  
 
 ---
 
@@ -35,10 +35,10 @@ Phase V0.2-B represents the implementation phase that translates the specificati
 ### Sprint 1: Pydantic Data Models & Base Normalizer Engine
 - **Goal:** Implement type-safe Python data structures implementing the V0.2-A JSON schemas.
 - **Key Modules to Create:**
-  - `harness/normalizers/base.py`: Abstract `BaseNormalizer` with atomic output writing and provenance tracking.
-  - `harness/models/provenance.py`: `ProvenanceEnvelope` model.
-  - `harness/models/question_bank.py`: `Test`, `PassageOrSection`, `QuestionGroup`, `Question`, `Answer`, `Evidence`, `Explanation` models.
-  - `harness/models/quality.py`: `QualityProfile` model and state machine validator.
+  - `harness/normalizers/base.py`: Abstract `BaseNormalizer` with atomic output writing, deterministic hashing (`compute_canonical_content_hash`), and provenance tracking.
+  - `harness/models/provenance.py`: `ProvenanceEnvelope` model supporting `source_file_id` (`FILE-[a-f0-9]{12}`) and `source_legacy_id` (`SRC-XXX`).
+  - `harness/models/quality.py`: `QualityProfile` model and validation state machine.
+  - `harness/models/question_bank.py`: `Test`, `PassageOrSection`, `QuestionGroup`, `Question`, `Answer`, `Evidence` (with `direct_support`, `contradictory_evidence`, and `insufficient_information_not_given`), and `Explanation` models.
 - **Automated Tests:** `tests/test_v02_models.py` (Validates Pydantic serialization, enum enforcement, and boundary validation).
 
 ---
@@ -47,10 +47,10 @@ Phase V0.2-B represents the implementation phase that translates the specificati
 - **Goal:** Transform raw paragraph arrays from `DocxExtractor` and raw OCR pages from `PdfOcrExtractor` into structured passages and questions.
 - **Key Modules to Create:**
   - `harness/normalizers/reading_docx.py`: Parser for `SRC-138` (VOL 6) and other digital Word documents.
-    - Implements numbered sentence recovery for concatenated runs (e.g. paragraph 309).
+    - Implements lookahead delimiter regex `(?:^|[\.\?!a-zA-Z\s])(k)(?:[\.\s]*)(?=[A-Z])` for joined runs with zero text loss.
     - Detects passage headings, subtitles, and paragraph letter tags (`A`–`H`).
   - `harness/normalizers/reading_pdf.py`: Structural parser for scanned PDF tests (`SRC-011`).
-- **Automated Tests:** `tests/test_v02_reading_parser.py` (Tests segmentation on raw paragraph runs and passage boundaries).
+- **Automated Tests:** `tests/test_v02_reading_parser.py` (Tests segmentation on raw paragraph runs and passage boundaries using synthetic fixtures).
 
 ---
 
@@ -62,6 +62,7 @@ Phase V0.2-B represents the implementation phase that translates the specificati
     - Scanned PDF Key parser: Ingests `SRC-011` p. 23 and `SRC-137` answer lines.
     - Enum canonicalizer: Converts `"T"`, `"True"`, `"TRUE"` $\to$ `"TRUE"`, `"NGV"` $\to$ `"NOT GIVEN"`.
     - OCR typo remediation: Replaces `"Fraudulant"` with `"fraudulent"`.
+    - Orphan key handler: Populates `question_id: null` and sets `lifecycle_status: "review_required"`.
 - **Automated Tests:** `tests/test_v02_answer_reconciler.py` (Tests multi-format answer extraction and normalization).
 
 ---
@@ -71,8 +72,8 @@ Phase V0.2-B represents the implementation phase that translates the specificati
 - **Key Modules to Create:**
   - `harness/normalizers/evidence_resolver.py`:
     - Verbatim substring finder (`char_start`, `char_end`).
+    - NOT GIVEN handler: Assigns `evidence_type: "insufficient_information_not_given"`, sets `verbatim_quote: null`, and populates `missing_information_rationale`.
     - Fuzzy fallback for OCR variations using standard library `difflib.SequenceMatcher`.
-    - Automated detection of paragraph letter location (`Paragraph C`).
 - **Automated Tests:** `tests/test_v02_evidence_resolver.py` (Validates span calculation and exact match verification).
 
 ---
@@ -95,18 +96,5 @@ Phase V0.2-B represents the implementation phase that translates the specificati
   1. Run normalizer on `SRC-138` (Test 5 Passage 1).
   2. Run reconciler on `SRC-137` (Test 5 Explanations & Keys).
   3. Emit normalized entities into `private/staging/normalized/`.
-  4. Run validation gates; generate audit report verifying that Questions 2–6 achieve `reviewed` status and Questions 1, 11–13 are correctly flagged `review_required`.
-  5. Commit synthetic validation fixtures into `tests/fixtures/v02/`.
-
----
-
-## 3. Sprint Acceptance Criteria Matrix
-
-| Sprint | Deliverable Files | Success Criteria |
-|---|---|---|
-| **Sprint 1** | `harness/models/*.py`, `harness/normalizers/base.py` | 100% schema compliance, zero external dependencies beyond `pydantic`. |
-| **Sprint 2** | `harness/normalizers/reading_docx.py` | Perfectly separates concatenated Q1–6 in paragraph 309 of `SRC-138`. |
-| **Sprint 3** | `harness/normalizers/answer_reconciler.py` | Successfully extracts 360 answers from `SRC-077` and 9 answers from `SRC-137`. |
-| **Sprint 4** | `harness/normalizers/evidence_resolver.py` | Correctly resolves exact character offsets for Q3, Q4, Q5, Q6 in `SRC-138`. |
-| **Sprint 5** | `harness/cli.py` extensions, SQLite tables | `harness.cli normalize` runs idempotently with O(1) checkpoint skipping. |
-| **Sprint 6** | End-to-end pilot output & audit log | Produces zero unhandled exceptions; correctly flags missing inputs; outputs 100% verifiable learning records. |
+  4. Run validation gates; verify that Questions 3–6 achieve `verified` status, Q2 achieves `reviewed`, and Questions 1, 11–13 are correctly flagged `review_required`.
+  5. Verify zero verbatim copyrighted text committed to public git.

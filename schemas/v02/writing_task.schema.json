@@ -106,9 +106,8 @@
       "required": ["full_text", "word_count", "band_estimate", "criterion_analysis"],
       "additionalProperties": false
     },
-    "verification_status": {
-      "type": "string",
-      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
     },
     "_provenance": {
       "$ref": "provenance.schema.json"
@@ -119,7 +118,7 @@
     "task_part",
     "task_type",
     "prompt_text",
-    "verification_status",
+    "quality_profile",
     "_provenance"
   ],
   "additionalProperties": false,
@@ -138,10 +137,18 @@
         "cohesive_devices_planned": ["while it is undeniable that", "nevertheless", "in the final analysis"]
       },
       "sample_answer": null,
-      "verification_status": "reviewed",
+      "quality_profile": {
+        "lifecycle_status": "reviewed",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "secondary_reputable",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "expert_verified",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
       "_provenance": {
         "schema_version": "v0.2.0-normalized",
-        "source_file_id": "SRC-996",
+        "source_file_id": "FILE-495991b7852b",
         "source_legacy_id": "SRC-996",
         "relative_path": "private/raw/SYNTHETIC_VOL/writing_task2.pdf",
         "source_sha256": "495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca",
@@ -151,6 +158,7 @@
         "extractor_adapter": "pdf_native",
         "extractor_version": "0.1.0-pdfminer",
         "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
         "normalized_at": "2026-11-19T12:00:00Z"
       }
     }

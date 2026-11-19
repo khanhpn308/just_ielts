@@ -1,8 +1,8 @@
 # IELTS Data Harness V0.2 — System Architecture Specification
-**Phase V0.2-A: Schema Design & Normalization Contract**  
+**Phase V0.2-A: Schema Design & Normalization Contract (Remediated)**  
 **Status:** Architectural Blueprint (Design Only)  
 **Author:** IELTS Learning Systems Engineer & Data Architecture Team  
-**Date:** 2026-11-19  
+**Date:** 2026-11-19 (Remediated)  
 
 ---
 
@@ -11,6 +11,7 @@
 ### 1.1 The V0.1 Baseline
 In Phase V0.1, the IELTS Data Harness solved the physical extraction challenge across heterogeneous source materials (scanned PDF, digital PDF, OpenXML DOCX, OpenXML XLSX, and MP3 audio). V0.1 implemented:
 - Read-only scanning and deterministic SHA-256 source inventory (`private/raw/`).
+- Deterministic physical file identification (`sources.file_id` = `FILE-<sha256(relative_path)[:12]>`) and authoritative legacy mapping (`sources.legacy_id` = `SRC-XXX`).
 - Format detection and classifier routing.
 - Granular per-page, per-sheet, and per-document extraction adapters (`PdfNativeExtractor`, `PdfOcrExtractor`, `DocxExtractor`, `XlsxExtractor`, `AudioMetaExtractor`).
 - SQLite transactional checkpoint/resume engine (`harness/state/harness.db`).
@@ -76,7 +77,7 @@ To maintain high data integrity, auditable version control, and low operational 
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ TIER 2: CANONICAL NORMALIZED DATA (Immutable Structured JSON / JSONL)           │
-│ • Location: data/normalized/{tests,passages,questions,answers,evidence}/        │
+│ • Location: private/staging/normalized/ (copyrighted) & data/ (synthetic/rules) │
 │ • Role: Source-of-truth machine-readable entity bank                            │
 │ • Format: Deterministic JSON Schema-validated files with provenance envelopes   │
 │ • Mutability: Append-only or deterministic rebuild via idempotent normalizer    │
@@ -100,7 +101,7 @@ Vector databases (e.g., Chroma, Qdrant, Pinecone) are deliberately excluded from
 2. **Exact Textual Span & Byte Offset Anchoring:**
    Learning verification requires character-level coordinates (`char_start`, `char_end`) or paragraph-letter coordinates (`Paragraph C, Lines 4–6`). Vector embeddings discard precise boundaries and token positions.
 3. **Auditability & Traceability:**
-   Every fact, answer key, and explanation must point to an immutable source file (`file_id`), processing unit (`page_0001`), and block index. A vector search result provides no audit trail of ground-truth validity.
+   Every fact, answer key, and explanation must point to an immutable source file (`FILE-<hash>`), legacy ID (`SRC-XXX`), processing unit (`page_0001`), and block index. A vector search result provides no audit trail of ground-truth validity.
 4. **Zero Heavy Infrastructure Dependency:**
    In accordance with the repository's lean architecture, SQLite provides $O(1)$ and $O(\log N)$ exact relational and full-text retrieval (via FTS5) with zero cloud services, zero external daemon processes, and negligible storage footprint.
 
@@ -137,13 +138,13 @@ The V0.2 entity architecture abstracts the core examination domain into universa
 ┌───────────────┐      ┌───────────────┐          ┌───────────────┐       ┌───────────────┐
 │ Atomic        │      │ Atomic        │          │ Model Essay   │       │ Audio Cue /   │
 │ Question Item │      │ Question Item │          │ (Band 7.5+)   │       │ Sample Audio  │
-└───────┬───────┘      └───────┬───────┘          └───────┬───────┘       └───────┬───────┘
-        ▼                      ▼                          ▼                       ▼
-┌───────────────┐      ┌───────────────┐          ┌───────────────┐       ┌───────────────┐
-│ Answer Key    │      │ Answer Key    │          │ Criterion     │       │ Criterion     │
-│ & Alternates  │      │ & Alternates  │          │ Assessment    │       │ Assessment    │
 └───────┬───────┘      └───────┬───────┘          │ (TR/CC/LR/GRA)│       │ (FC/PR/LR/GRA)│
         ▼                      ▼                  └───────┬───────┘       └───────┬───────┘
+┌───────────────┐      ┌───────────────┐                  │                       │
+│ Answer Key    │      │ Answer Key    │                  │                       │
+│ & Alternates  │      │ & Alternates  │                  │                       │
+└───────┬───────┘      └───────┬───────┘                  │                       │
+        ▼                      ▼                          │                       │
 ┌───────────────┐      ┌───────────────┐                  │                       │
 │ Textual       │      │ Audio Bounding│                  │                       │
 │ Evidence Span │      │ & Timed Script│                  │                       │
@@ -158,84 +159,21 @@ The V0.2 entity architecture abstracts the core examination domain into universa
         └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.1 Academic Reading (Primary Pilot Focus)
-- **Granularity:** 3 Passages per test, 40 questions total.
-- **Evidence Anchor:** Character start/end offsets, paragraph labels (A–H), verbatim text quotes.
-- **Verification Rule:** Every answer must have verbatim textual grounding in the passage.
+---
 
-### 3.2 Listening
-- **Granularity:** 4 Sections/Parts per test, 40 questions total.
-- **Evidence Anchor:** Timestamp intervals (`start_time_sec`, `end_time_sec`), audio track reference, transcript paragraph/speaker label.
-- **Verification Rule:** Answer words must conform to exact word limits stated in the instructions.
+## 4. Deterministic Hashing & Execution Invariants
 
-### 3.3 Writing
-- **Granularity:** Task 1 (Academic report/process) & Task 2 (Discursive essay).
-- **Core Entities:** Prompt $\to$ Prompt Deconstruction $\to$ Essay Plan $\to$ Sample Answer $\to$ Criterion Breakdown (TR/TA, CC, LR, GRA) $\to$ Lexical Bank.
-- **Verification Rule:** Band scores for model answers are advisory/unofficial and must include criterion-level justifications.
-
-### 3.4 Speaking
-- **Granularity:** Part 1 (Introduction & Interview), Part 2 (Long Turn / Cue Card), Part 3 (Two-way Discussion).
-- **Core Entities:** Topic / Cue Card Prompt $\to$ Mindmap / Structural Strategy $\to$ Sample Response Transcript $\to$ Lexical Resource & Pronunciation Targets.
-- **Verification Rule:** Differentiate between exam forecast questions and official test material.
+To guarantee bit-level idempotency:
+1. **Canonical Payload Hashing:**
+   Cryptographic SHA-256 signatures are calculated exclusively over deterministic content fields (e.g. IDs, text, coordinates, options), excluding volatile execution timestamps (`normalized_at`).
+2. **Re-run Stability:**
+   Re-running normalization over unchanged raw inputs yields byte-for-byte identical canonical records.
+3. **No-Guessing Invariant:**
+   Missing inputs (unlocated answers, missing pages, absent evidence) are recorded as `null` with explicit `review_required` diagnostic flags. Machine models never impute missing answers.
 
 ---
 
-## 4. Pipeline Execution Architecture
+## 5. Privacy & Air-Gapped Copyright Boundary
 
-Normalization proceeds through seven sequential, fault-isolated pipeline stages:
-
-```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 1: Ingestion & Provenance Binding                                        │
-│ Read staged raw JSON artifact, verify SHA-256 against checkpoint database.     │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 2: Content Block Sanitization & Structural Segmentation                  │
-│ Clean raw text, de-hyphenate linebreaks, repair encoding, segment paragraphs,   │
-│ isolate tables and metadata blocks.                                            │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 3: Test & Passage / Section Demarcation                                  │
-│ Detect test boundaries, volume metadata, passage titles, narrative text runs,   │
-│ and section division labels.                                                   │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 4: Question Group & Item Parsing                                         │
-│ Extract instruction headers, word constraints, question numbers, prompts, and   │
-│ options (A/B/C/D). Handle joined/concatenated runs with boundary regexes.      │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 5: Answer Key Normalization & Multi-Source Reconciliation                │
-│ Parse answer tables/lists, normalize enums (TRUE/FALSE/NOT GIVEN), register    │
-│ acceptable spelling variants, resolve conflicting answer sources.              │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 6: Evidence Grounding & Offset Resolution                                │
-│ Align quoted evidence against normalized passage text. Verify exact character  │
-│ offsets. Compute similarity confidence if OCR noise is present.                │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Stage 7: Quality Gate Evaluation & Atomic Output Generation                    │
-│ Evaluate multi-dimensional quality flags, assign lifecycle status, and write   │
-│ atomic normalized JSON records + derived SQLite entries.                       │
-└────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 5. Architectural Quality Guarantees
-
-1. **Non-Destructive Processing:**
-   Raw staged JSON outputs from V0.1 are immutable inputs. The normalizer never modifies V0.1 artifacts or `private/raw/` files.
-2. **Determinism & Idempotency:**
-   Given identical raw input artifacts and the same normalization configuration, the normalizer produces identical JSON outputs with identical cryptographic hashes.
-3. **No Guessing Policy:**
-   Missing answers, missing question texts, or cut-off pages are explicitly recorded as `null` with a `missing_input` validation flag. Missing fields are never synthesized or imputed by machine models during normalization.
-4. **Air-Gapped Copyright Protection:**
-   All normalized records extracted from copyrighted test materials are stored strictly in `private/staging/normalized/` (gitignored). Public schema directories contain strictly synthetic illustrative records.
+- **Private Storage:** Full copyrighted question booklets, scanned explanation pages, and commercial audio files reside exclusively under `private/` (specifically `private/raw/` and `private/staging/`).
+- **Public Repository:** Only synthetic test items, illustrative structural diagrams, and repository principles are committed to Git. Public documentation contains structural descriptions rather than verbatim unauthorized quotations.

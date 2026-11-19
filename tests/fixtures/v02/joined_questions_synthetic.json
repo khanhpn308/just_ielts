@@ -1,0 +1,88 @@
+{
+  "description": "Synthetic regression fixtures for joined DOCX question segmentation.",
+  "fixtures": [
+    {
+      "test_case_id": "JOINED_NO_SPACE_AFTER_PERIOD",
+      "expected_range": [1, 6],
+      "input_text": " 1 Applicants to the department must have previously studied art history.2 Students can choose two optional courses instead of the Theory and Methods course.3 The course organisers had more problems collecting art objects from some historical periods than others.4 The Theory and Methods course focuses on the way art is made and perceived.5 Students will be able to do any of the optional courses that are listed.6 Students may be able to take an unlisted course if they get the appropriate approval.",
+      "expected_count": 6,
+      "expected_items": [
+        {
+          "number": 1,
+          "prompt": "Applicants to the department must have previously studied art history."
+        },
+        {
+          "number": 2,
+          "prompt": "Students can choose two optional courses instead of the Theory and Methods course."
+        },
+        {
+          "number": 3,
+          "prompt": "The course organisers had more problems collecting art objects from some historical periods than others."
+        },
+        {
+          "number": 4,
+          "prompt": "The Theory and Methods course focuses on the way art is made and perceived."
+        },
+        {
+          "number": 5,
+          "prompt": "Students will be able to do any of the optional courses that are listed."
+        },
+        {
+          "number": 6,
+          "prompt": "Students may be able to take an unlisted course if they get the appropriate approval."
+        }
+      ]
+    },
+    {
+      "test_case_id": "JOINED_NO_PUNCTUATION_WORD_TO_DIGIT",
+      "expected_range": [1, 4],
+      "input_text": "1 Synthetic polymer resins are synthesized through addition polymerization2 Thermosetting plastics maintain structural rigidity under heat3 Elastomers demonstrate significant elongation before mechanical failure4 Modern composites incorporate carbon fibers for tensile reinforcement",
+      "expected_count": 4,
+      "expected_items": [
+        {
+          "number": 1,
+          "prompt": "Synthetic polymer resins are synthesized through addition polymerization"
+        },
+        {
+          "number": 2,
+          "prompt": "Thermosetting plastics maintain structural rigidity under heat"
+        },
+        {
+          "number": 3,
+          "prompt": "Elastomers demonstrate significant elongation before mechanical failure"
+        },
+        {
+          "number": 4,
+          "prompt": "Modern composites incorporate carbon fibers for tensile reinforcement"
+        }
+      ]
+    },
+    {
+      "test_case_id": "INTERNAL_NUMERICAL_DISTRACTORS",
+      "expected_range": [1, 3],
+      "input_text": "1 In 1980 the committee established 2 distinct research branches.2 Approximately 25 percent of all specimens survived the 3 winter trials.3 The final outcome was published in 2020.",
+      "expected_count": 3,
+      "expected_items": [
+        {
+          "number": 1,
+          "prompt": "In 1980 the committee established 2 distinct research branches."
+        },
+        {
+          "number": 2,
+          "prompt": "Approximately 25 percent of all specimens survived the 3 winter trials."
+        },
+        {
+          "number": 3,
+          "prompt": "The final outcome was published in 2020."
+        }
+      ]
+    },
+    {
+      "test_case_id": "CORRUPTED_SEQUENCE_GAP_TO_REVIEW",
+      "expected_range": [1, 4],
+      "input_text": "1 First question is stated here.3 Third question appears because question 2 was skipped.4 Fourth question finishes.",
+      "should_fail_or_flag_review": true,
+      "expected_flag": "SEGMENTATION_SEQUENCE_GAP"
+    }
+  ]
+}

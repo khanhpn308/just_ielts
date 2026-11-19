@@ -2,38 +2,39 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://just-ielts.internal/schemas/v02/answer.schema.json",
   "title": "IELTSAnswer",
-  "description": "Normalized ground truth answer key and verified variants.",
+  "description": "Normalized ground truth answer key and verified variants, supporting orphaned keys and missing answers without data invention.",
   "type": "object",
   "properties": {
     "answer_id": {
       "type": "string",
-      "pattern": "^ANS-[A-Z0-9-]+-KEY$"
+      "pattern": "^ANS-[A-Z0-9-]+-(KEY|ALT\\d{2})$"
     },
     "question_id": {
-      "type": "string",
-      "pattern": "^Q-[A-Z0-9-]+-(RD|LS)-\\d{3}$"
+      "type": ["string", "null"],
+      "pattern": "^Q-[A-Z0-9-]+-(RD|LS|WR|SP)-\\d{3}$",
+      "description": "Associated question ID. Null for orphaned answer keys where question booklet is missing."
     },
     "target_value": {
       "type": ["string", "null"],
-      "description": "Primary authoritative answer string. Null only if key is missing in source."
+      "description": "Primary authoritative answer string. Null if key is unrecorded or cut off in source."
     },
     "acceptable_alternates": {
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "default": []
     },
     "case_sensitive": {
       "type": "boolean",
       "default": false
     },
-    "verification_status": {
-      "type": "string",
-      "enum": ["authoritative_key", "consensus_key", "unverified", "disputed"]
-    },
     "source_key_ref": {
       "type": "string",
-      "description": "Document page or table coordinate citing the answer key"
+      "description": "Document page, sheet name, or cell coordinate citing the answer key"
+    },
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
     },
     "_provenance": {
       "$ref": "provenance.schema.json"
@@ -41,11 +42,10 @@
   },
   "required": [
     "answer_id",
-    "question_id",
     "acceptable_alternates",
     "case_sensitive",
-    "verification_status",
     "source_key_ref",
+    "quality_profile",
     "_provenance"
   ],
   "additionalProperties": false,
@@ -56,11 +56,19 @@
       "target_value": "TRUE",
       "acceptable_alternates": ["T"],
       "case_sensitive": false,
-      "verification_status": "authoritative_key",
       "source_key_ref": "Key Sheet 1, Cell B3",
+      "quality_profile": {
+        "lifecycle_status": "verified",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "source_provided",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
       "_provenance": {
         "schema_version": "v0.2.0-normalized",
-        "source_file_id": "SRC-998",
+        "source_file_id": "FILE-f4c8996fb924",
         "source_legacy_id": "SRC-998",
         "relative_path": "private/raw/SYNTHETIC_VOL/key.xlsx",
         "source_sha256": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
@@ -70,6 +78,39 @@
         "extractor_adapter": "xlsx",
         "extractor_version": "0.1.0-lxml-xlsx",
         "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    },
+    {
+      "answer_id": "ANS-VOL99-01-RD-001-KEY",
+      "question_id": null,
+      "target_value": "FALSE",
+      "acceptable_alternates": ["F"],
+      "case_sensitive": false,
+      "source_key_ref": "Key Book VOL 7, Page 12",
+      "quality_profile": {
+        "lifecycle_status": "review_required",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "missing_explanation",
+        "publication_permission": "public_synthetic",
+        "validation_flags": ["ORPHAN_ANSWER_KEY_UNLINKED"]
+      },
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "FILE-f4c8996fb924",
+        "source_legacy_id": "SRC-998",
+        "relative_path": "private/raw/SYNTHETIC_VOL/key.xlsx",
+        "source_sha256": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
+        "processing_unit": "sheets",
+        "unit_identifier": "raw_sheets",
+        "raw_block_locator": "sheet:Test 1, cell:B4",
+        "extractor_adapter": "xlsx",
+        "extractor_version": "0.1.0-lxml-xlsx",
+        "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
         "normalized_at": "2026-11-19T12:00:00Z"
       }
     }

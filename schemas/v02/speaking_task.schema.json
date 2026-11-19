@@ -41,11 +41,11 @@
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "default": []
     },
-    "verification_status": {
-      "type": "string",
-      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
     },
     "_provenance": {
       "$ref": "provenance.schema.json"
@@ -57,7 +57,7 @@
     "topic",
     "prompt_questions",
     "target_vocabulary",
-    "verification_status",
+    "quality_profile",
     "_provenance"
   ],
   "additionalProperties": false,
@@ -77,11 +77,23 @@
         "Explain how you felt about the experience"
       ],
       "sample_transcript": "I would like to talk about a community reforestation project...",
-      "target_vocabulary": ["biodiversity", "ecological footprint", "reforestation"],
-      "verification_status": "reviewed",
+      "target_vocabulary": [
+        "biodiversity",
+        "ecological footprint",
+        "reforestation"
+      ],
+      "quality_profile": {
+        "lifecycle_status": "reviewed",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "secondary_reputable",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "expert_verified",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
       "_provenance": {
         "schema_version": "v0.2.0-normalized",
-        "source_file_id": "SRC-995",
+        "source_file_id": "FILE-ca495991b785",
         "source_legacy_id": "SRC-995",
         "relative_path": "private/raw/SYNTHETIC_VOL/speaking_cards.pdf",
         "source_sha256": "ca495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934",
@@ -91,6 +103,7 @@
         "extractor_adapter": "pdf_native",
         "extractor_version": "0.1.0-pdfminer",
         "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
         "normalized_at": "2026-11-19T12:00:00Z"
       }
     }

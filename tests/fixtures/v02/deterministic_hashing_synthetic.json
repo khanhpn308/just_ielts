@@ -1,0 +1,27 @@
+{
+  "description": "Synthetic fixtures verifying deterministic hashing policy: canonical content hash is invariant to execution timestamp.",
+  "payload_run_1": {
+    "question_id": "Q-SYNTH-01-RD-001",
+    "prompt_text": "Early synthetic polymers were more brittle than modern alternatives.",
+    "question_type": "true-false-not-given",
+    "_provenance": {
+      "source_file_id": "FILE-e3b0c44298fc",
+      "source_legacy_id": "SRC-999",
+      "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "normalized_at": "2026-11-19T10:00:00Z"
+    }
+  },
+  "payload_run_2": {
+    "question_id": "Q-SYNTH-01-RD-001",
+    "prompt_text": "Early synthetic polymers were more brittle than modern alternatives.",
+    "question_type": "true-false-not-given",
+    "_provenance": {
+      "source_file_id": "FILE-e3b0c44298fc",
+      "source_legacy_id": "SRC-999",
+      "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "normalized_at": "2026-11-19T15:45:12Z"
+    }
+  }
+}

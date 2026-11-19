@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://just-ielts.internal/schemas/v02/provenance.schema.json",
   "title": "ProvenanceEnvelope",
-  "description": "Standard backward-traceable provenance envelope for all normalized IELTS entities.",
+  "description": "Standard backward-traceable provenance envelope aligning with V0.1 sources (file_id = FILE-<hash> and legacy_id = SRC-XXX).",
   "type": "object",
   "properties": {
     "schema_version": {
@@ -11,12 +11,13 @@
     },
     "source_file_id": {
       "type": "string",
-      "pattern": "^SRC-\\d{3,4}$",
-      "description": "Physical file identifier from V0.1 inventory"
+      "pattern": "^FILE-[a-f0-9]{12}$",
+      "description": "Physical file identifier from V0.1 inventory (FILE-<sha256(relative_path)[:12]>)"
     },
     "source_legacy_id": {
       "type": "string",
-      "description": "Legacy file identifier or source alias"
+      "pattern": "^(SRC-\\d{3,4}|UNKNOWN)$",
+      "description": "Authoritative legacy source identifier (e.g. SRC-011, SRC-138) from V0.1"
     },
     "relative_path": {
       "type": "string",
@@ -25,7 +26,7 @@
     "source_sha256": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
-      "description": "Cryptographic SHA-256 hash of original file"
+      "description": "Cryptographic SHA-256 hash of original file bytes"
     },
     "processing_unit": {
       "type": "string",
@@ -41,7 +42,7 @@
     },
     "extractor_adapter": {
       "type": "string",
-      "description": "Adapter name that extracted raw data"
+      "description": "Extractor adapter name from V0.1"
     },
     "extractor_version": {
       "type": "string",
@@ -51,38 +52,45 @@
       "type": "string",
       "description": "Version of normalizer logic"
     },
+    "canonical_content_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Deterministic SHA-256 of canonical payload (excluding volatile run timestamps)"
+    },
     "normalized_at": {
-      "type": "string",
+      "type": ["string", "null"],
       "format": "date-time",
-      "description": "ISO 8601 UTC timestamp of normalization"
+      "description": "Optional ISO 8601 UTC timestamp of execution. Excluded from canonical content hash."
     }
   },
   "required": [
     "schema_version",
     "source_file_id",
+    "source_legacy_id",
+    "relative_path",
     "source_sha256",
     "processing_unit",
     "unit_identifier",
     "raw_block_locator",
     "extractor_adapter",
     "extractor_version",
-    "normalizer_version",
-    "normalized_at"
+    "normalizer_version"
   ],
   "additionalProperties": false,
   "examples": [
     {
       "schema_version": "v0.2.0-normalized",
-      "source_file_id": "SRC-999",
-      "source_legacy_id": "SRC-999",
-      "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
-      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_file_id": "FILE-3a7f8090a786",
+      "source_legacy_id": "SRC-138",
+      "relative_path": "private/raw/VOL 6/READING/VOL 6.docx",
+      "source_sha256": "3a7f8090a7864f1c95697241cfb26ad0ffcf56a7c36a6ec65cf1f3c3a9f061b1",
       "processing_unit": "document",
       "unit_identifier": "raw_document",
-      "raw_block_locator": "para_index:12",
+      "raw_block_locator": "para_index:309",
       "extractor_adapter": "docx",
       "extractor_version": "0.1.0-lxml-docx",
       "normalizer_version": "0.2.0-alpha",
+      "canonical_content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "normalized_at": "2026-11-19T12:00:00Z"
     }
   ]

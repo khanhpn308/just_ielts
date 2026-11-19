@@ -1,0 +1,109 @@
+{
+  "description": "Synthetic fixtures demonstrating orphan and missing-data modeling without guessing.",
+  "fixtures": {
+    "orphan_answer_key": {
+      "answer_id": "ANS-VOL07-T01-RD-001-KEY",
+      "question_id": null,
+      "target_value": "FALSE",
+      "acceptable_alternates": ["F"],
+      "case_sensitive": false,
+      "source_key_ref": "VOL 7 Reading Key PDF Page 1",
+      "quality_profile": {
+        "lifecycle_status": "review_required",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "missing_explanation",
+        "publication_permission": "public_synthetic",
+        "validation_flags": ["ORPHAN_ANSWER_KEY_UNLINKED"]
+      },
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "FILE-a1b2c3d4e5f6",
+        "source_legacy_id": "SRC-151",
+        "relative_path": "private/raw/VOL 7/READING TEST 11 - 16 + key/Key.pdf",
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processing_unit": "page",
+        "unit_identifier": "page_0001",
+        "raw_block_locator": "line:5",
+        "extractor_adapter": "pdf_ocr",
+        "extractor_version": "0.1.0-tesseract-pdftoppm",
+        "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
+        "normalized_at": null
+      }
+    },
+    "question_missing_answer_key": {
+      "question_id": "Q-VOL03-10-RD-001",
+      "group_id": "QG-VOL03-10-RD01-G01",
+      "passage_id": "PASSAGE-VOL03-10-RD01",
+      "question_number": 1,
+      "question_type": "true-false-not-given",
+      "prompt_text": "Specimens collected in the southern region displayed higher resistance to low temperatures.",
+      "options": null,
+      "blank_target": null,
+      "linked_principle_ids": ["RD-TFNG-001"],
+      "quality_profile": {
+        "lifecycle_status": "review_required",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "missing_key",
+        "explanation_verification": "missing_explanation",
+        "publication_permission": "public_synthetic",
+        "validation_flags": ["MISSING_SOURCE_ANSWER_KEY"]
+      },
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "FILE-112233445566",
+        "source_legacy_id": "SRC-079",
+        "relative_path": "private/raw/VOL 3/Reading/Test 1-10.pdf",
+        "source_sha256": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
+        "processing_unit": "page",
+        "unit_identifier": "page_0108",
+        "raw_block_locator": "para:4",
+        "extractor_adapter": "pdf_ocr",
+        "extractor_version": "0.1.0-tesseract-pdftoppm",
+        "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
+        "normalized_at": null
+      }
+    },
+    "not_given_evidence": {
+      "evidence_id": "EVID-VOL99-01-RD-003-01",
+      "answer_id": "ANS-VOL99-01-RD-003-KEY",
+      "passage_id": "PASSAGE-VOL99-01-RD01",
+      "evidence_type": "insufficient_information_not_given",
+      "paragraph_label": "C",
+      "char_start": null,
+      "char_end": null,
+      "verbatim_quote": null,
+      "exact_match_verified": false,
+      "missing_information_rationale": "Paragraph C describes collection of items across historical periods, but contains no evidence comparing collection difficulty between periods.",
+      "audio_interval": null,
+      "quality_profile": {
+        "lifecycle_status": "verified",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "source_provided",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "FILE-998877665544",
+        "source_legacy_id": "SRC-137",
+        "relative_path": "private/raw/VOL 6/READING/KEY + EXPLANATION 5-6.pdf",
+        "source_sha256": "41e4649b934ca495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae",
+        "processing_unit": "page",
+        "unit_identifier": "page_0001",
+        "raw_block_locator": "line:25",
+        "extractor_adapter": "pdf_ocr",
+        "extractor_version": "0.1.0-tesseract-pdftoppm",
+        "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
+        "normalized_at": null
+      }
+    }
+  }
+}

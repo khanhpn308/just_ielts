@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://just-ielts.internal/schemas/v02/explanation.schema.json",
   "title": "IELTSExplanation",
-  "description": "Normalized pedagogical rationale, distractor analysis, and lexical paraphrase mapping.",
+  "description": "Normalized pedagogical rationale, distractor analysis, and lexical paraphrase mapping, allowing nullable answer/evidence links for ungrounded explanations.",
   "type": "object",
   "properties": {
     "explanation_id": {
@@ -11,15 +11,17 @@
     },
     "question_id": {
       "type": "string",
-      "pattern": "^Q-[A-Z0-9-]+-(RD|LS)-\\d{3}$"
+      "pattern": "^Q-[A-Z0-9-]+-(RD|LS|WR|SP)-\\d{3}$"
     },
     "answer_id": {
-      "type": "string",
-      "pattern": "^ANS-[A-Z0-9-]+-KEY$"
+      "type": ["string", "null"],
+      "pattern": "^ANS-[A-Z0-9-]+-(KEY|ALT\\d{2})$",
+      "description": "Associated answer ID. Null if answer key is unlinked or missing."
     },
     "evidence_id": {
       "type": ["string", "null"],
-      "pattern": "^EVID-[A-Z0-9-]+-\\d{2}$"
+      "pattern": "^EVID-[A-Z0-9-]+-\\d{2}$",
+      "description": "Associated evidence ID. Null if rationale is ungrounded or pending text anchoring."
     },
     "rationale_en": {
       "type": ["string", "null"],
@@ -43,7 +45,8 @@
         },
         "required": ["prompt_term", "passage_term"],
         "additionalProperties": false
-      }
+      },
+      "default": []
     },
     "distractor_notes": {
       "type": ["string", "null"]
@@ -52,9 +55,8 @@
       "type": "string",
       "enum": ["source_published", "expert_teacher", "machine_drafted"]
     },
-    "verification_status": {
-      "type": "string",
-      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
     },
     "_provenance": {
       "$ref": "provenance.schema.json"
@@ -63,10 +65,9 @@
   "required": [
     "explanation_id",
     "question_id",
-    "answer_id",
     "paraphrase_map",
     "author_type",
-    "verification_status",
+    "quality_profile",
     "_provenance"
   ],
   "additionalProperties": false,
@@ -76,8 +77,8 @@
       "question_id": "Q-VOL99-01-RD-001",
       "answer_id": "ANS-VOL99-01-RD-001-KEY",
       "evidence_id": "EVID-VOL99-01-RD-001-01",
-      "rationale_en": "Paragraph B states that early formulations lacked elasticity and fractured easily, which directly confirms that they were more brittle.",
-      "rationale_vi": "Đoạn B khẳng định các công thức đời đầu thiếu độ đàn hồi và dễ nứt gãy, hoàn toàn đồng nghĩa với việc chúng giòn hơn.",
+      "rationale_en": "Paragraph B states that early formulations lacked elasticity and fractured easily, confirming that they were more brittle.",
+      "rationale_vi": "Đoạn B khẳng định các công thức đời đầu thiếu độ đàn hồi và dễ nứt gãy, khẳng định chúng giòn hơn.",
       "paraphrase_map": [
         {
           "prompt_term": "more brittle",
@@ -86,12 +87,20 @@
       ],
       "distractor_notes": null,
       "author_type": "source_published",
-      "verification_status": "verified",
+      "quality_profile": {
+        "lifecycle_status": "verified",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "source_provided",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
       "_provenance": {
         "schema_version": "v0.2.0-normalized",
-        "source_file_id": "SRC-997",
+        "source_file_id": "FILE-41e4649b934c",
         "source_legacy_id": "SRC-997",
-        "relative_path": "private/raw/SYNTHETIC_VOL/explanation_book.pdf",
+        "relative_path": "private/raw/SYNTHETIC_VOL/explanation_sample.pdf",
         "source_sha256": "41e4649b934ca495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae",
         "processing_unit": "page",
         "unit_identifier": "page_0005",
@@ -99,6 +108,7 @@
         "extractor_adapter": "pdf_ocr",
         "extractor_version": "0.1.0-tesseract-pdftoppm",
         "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
         "normalized_at": "2026-11-19T12:00:00Z"
       }
     }

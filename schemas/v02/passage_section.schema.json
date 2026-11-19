@@ -71,9 +71,8 @@
       "minimum": 50,
       "maximum": 2000
     },
-    "verification_status": {
-      "type": "string",
-      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
     },
     "_provenance": {
       "$ref": "provenance.schema.json"
@@ -88,7 +87,7 @@
     "narrative_text",
     "paragraphs",
     "word_count",
-    "verification_status",
+    "quality_profile",
     "_provenance"
   ],
   "additionalProperties": false,
@@ -112,10 +111,18 @@
       ],
       "audio_track_ref": null,
       "word_count": 680,
-      "verification_status": "reviewed",
+      "quality_profile": {
+        "lifecycle_status": "reviewed",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "source_provided",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
       "_provenance": {
         "schema_version": "v0.2.0-normalized",
-        "source_file_id": "SRC-999",
+        "source_file_id": "FILE-e3b0c44298fc",
         "source_legacy_id": "SRC-999",
         "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
         "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -125,6 +132,7 @@
         "extractor_adapter": "docx",
         "extractor_version": "0.1.0-lxml-docx",
         "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
         "normalized_at": "2026-11-19T12:00:00Z"
       }
     }

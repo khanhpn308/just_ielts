@@ -2,20 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://just-ielts.internal/schemas/v02/question.schema.json",
   "title": "IELTSQuestion",
-  "description": "Normalized atomic test question item.",
+  "description": "Normalized atomic test question item, supporting standalone questions and segmented runs.",
   "type": "object",
   "properties": {
     "question_id": {
       "type": "string",
-      "pattern": "^Q-[A-Z0-9-]+-(RD|LS)-\\d{3}$"
+      "pattern": "^Q-[A-Z0-9-]+-(RD|LS|WR|SP)-\\d{3}$"
     },
     "group_id": {
       "type": "string",
       "pattern": "^QG-[A-Z0-9-]+-G\\d{2}$"
     },
     "passage_id": {
-      "type": "string",
-      "pattern": "^(PASSAGE|SECTION)-[A-Z0-9-]+-(RD|LS)\\d{2}$"
+      "type": ["string", "null"],
+      "pattern": "^(PASSAGE|SECTION)-[A-Z0-9-]+-(RD|LS)\\d{2}$",
+      "description": "Associated passage/section ID. Nullable for standalone prompts."
     },
     "question_number": {
       "type": "integer",
@@ -62,11 +63,11 @@
       "items": {
         "type": "string",
         "pattern": "^[A-Z]{2}-[A-Z0-9]+-\\d{3}$"
-      }
+      },
+      "default": []
     },
-    "verification_status": {
-      "type": "string",
-      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    "quality_profile": {
+      "$ref": "quality_profile.schema.json"
     },
     "_provenance": {
       "$ref": "provenance.schema.json"
@@ -75,12 +76,11 @@
   "required": [
     "question_id",
     "group_id",
-    "passage_id",
     "question_number",
     "question_type",
     "prompt_text",
     "linked_principle_ids",
-    "verification_status",
+    "quality_profile",
     "_provenance"
   ],
   "additionalProperties": false,
@@ -95,10 +95,18 @@
       "options": null,
       "blank_target": null,
       "linked_principle_ids": ["RD-TFNG-001"],
-      "verification_status": "reviewed",
+      "quality_profile": {
+        "lifecycle_status": "reviewed",
+        "extraction_quality": "complete_clean",
+        "source_fidelity": "authoritative_official",
+        "answer_verification": "authoritative_key",
+        "explanation_verification": "source_provided",
+        "publication_permission": "public_synthetic",
+        "validation_flags": []
+      },
       "_provenance": {
         "schema_version": "v0.2.0-normalized",
-        "source_file_id": "SRC-999",
+        "source_file_id": "FILE-e3b0c44298fc",
         "source_legacy_id": "SRC-999",
         "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
         "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -108,6 +116,7 @@
         "extractor_adapter": "docx",
         "extractor_version": "0.1.0-lxml-docx",
         "normalizer_version": "0.2.0-alpha",
+        "canonical_content_sha256": null,
         "normalized_at": "2026-11-19T12:00:00Z"
       }
     }
