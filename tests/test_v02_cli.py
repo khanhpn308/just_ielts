@@ -8,23 +8,151 @@ from unittest.mock import patch
 import pytest
 
 from harness.cli import main
-from harness.db import get_db_connection, init_db, upsert_normalization_checkpoint
+from harness.db import get_db_connection, init_db, upsert_normalization_checkpoint, upsert_source
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_cli_normalization_status_empty():
+def test_cli_normalization_status_empty(tmp_path: Path):
     """Verify normalization-status executes without errors."""
-    init_db()
-    with patch("sys.argv", ["harness", "normalization-status"]):
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    with patch("harness.config.DB_PATH", db_path), \
+         patch("harness.db.DB_PATH", db_path), \
+         patch("sys.argv", ["harness", "normalization-status"]):
         main()
 
 
-def test_cli_normalize_dry_run_flag():
+def test_cli_normalize_dry_run_flag(tmp_path: Path):
     """Verify normalize command accepts --dry-run and executes without writing files."""
-    init_db()
-    with patch("sys.argv", ["harness", "normalize", "--pilot", "--dry-run"]):
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    upsert_source(
+        conn,
+        {
+            "file_id": "FILE-000000000001",
+            "legacy_id": "SRC-999",
+            "relative_path": "synthetic/sample.docx",
+            "filename": "sample.docx",
+            "extension": ".docx",
+            "detected_type": "openxml_word",
+            "size_bytes": 1000,
+            "content_sha256": "0" * 64,
+            "collection": "synthetic",
+            "duplicate_group": "none",
+            "accessibility_status": "accessible",
+        },
+    )
+    upsert_source(
+        conn,
+        {
+            "file_id": "FILE-000000000002",
+            "legacy_id": "SRC-998",
+            "relative_path": "synthetic/sample.pdf",
+            "filename": "sample.pdf",
+            "extension": ".pdf",
+            "detected_type": "pdf_digital",
+            "size_bytes": 1000,
+            "content_sha256": "1" * 64,
+            "collection": "synthetic",
+            "duplicate_group": "none",
+            "accessibility_status": "accessible",
+        },
+    )
+    conn.close()
+
+    raw_dir = tmp_path / "raw"
+    doc_dir = raw_dir / "SRC-999"
+    doc_dir.mkdir(parents=True)
+    synthetic_doc = {
+        "content": {
+            "paragraphs": [
+                {"text": "READING PASSAGE 1"},
+                {"text": "You should spend about 20 minutes on Questions 1-3..."},
+                {"text": "Synthetic Marine Energy Research"},
+                {
+                    "text": (
+                        "A Ocean tidal power systems generate predictable kinetic electricity through marine current turbines. "
+                        "These submerged hydrokinetic generators harvest energy directly from gravitational sea movements without "
+                        "requiring expansive barrage dams or causing significant environmental disruption to coastal ecosystems."
+                    )
+                },
+                {
+                    "text": (
+                        "B Turbines anchored in deep water channels experience minimal cavitation compared to shallow installations. "
+                        "Subsea engineering teams utilize corrosion resistant alloys and modular composite blades to withstand severe "
+                        "saline hydrostatic pressures while maintaining operational reliability across prolonged deployment cycles."
+                    )
+                },
+                {"text": "Questions 1-3"},
+                {
+                    "text": (
+                        "Do the following statements agree with the information given in Reading Passage 1? Write TRUE, FALSE or NOT GIVEN."
+                    )
+                },
+                {
+                    "text": (
+                        "1 Tidal power produces kinetic electricity. 2 Deep water channels suffer significant cavitation. 3 Global deployment costs increased in 2020."
+                    )
+                },
+            ]
+        }
+    }
+    (doc_dir / "raw_document.json").write_text(json.dumps(synthetic_doc), encoding="utf-8")
+
+    key_dir = raw_dir / "SRC-998"
+    key_dir.mkdir(parents=True)
+    (key_dir / "page_001.json").write_text(
+        json.dumps({
+            "content": {
+                "page_number": 1,
+                "text": "Reading Passage 1\n4 Answer: True\n\n5 Answer: False\n",
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "normalized"
+    cli_args = [
+        "harness",
+        "normalize",
+        "--source-id",
+        "SRC-999",
+        "--key-source-id",
+        "SRC-998",
+        "--test-number",
+        "1",
+        "--passage-number",
+        "1",
+        "--output-dir",
+        str(out_dir),
+        "--dry-run",
+    ]
+
+    from harness.orchestrator import NormalizationOrchestrator
+
+    orig_init = NormalizationOrchestrator.__init__
+
+    def patched_init(self, *args, **kwargs):
+        kwargs["raw_staging_dir"] = raw_dir
+        orig_init(self, *args, **kwargs)
+
+    with patch("harness.config.DB_PATH", db_path), \
+         patch("harness.db.DB_PATH", db_path), \
+         patch.object(NormalizationOrchestrator, "__init__", patched_init), \
+         patch("sys.argv", cli_args):
         main()
+
+    conn = get_db_connection(db_path)
+    cur = conn.execute("SELECT COUNT(*) FROM normalization_checkpoints")
+    checkpoint_count = cur.fetchone()[0]
+    conn.close()
+
+    assert checkpoint_count == 0, f"Expected 0 checkpoints in dry-run, got {checkpoint_count}"
+    assert not out_dir.exists() or len(list(out_dir.glob("*.json"))) == 0, (
+        "Dry-run must create no persistent JSON outputs"
+    )
 
 
 def test_cli_verify_synthetic_entities(tmp_path: Path):
@@ -177,15 +305,19 @@ def test_cli_verify_synthetic_entities(tmp_path: Path):
     expl_dict = BaseNormalizer.finalize_and_hash_entity(expl_data)
     (tmp_path / "EXPL-VOL99-01-RD-001.json").write_text(json.dumps(expl_dict, indent=2))
 
-    with patch(
-        "sys.argv",
-        [
-            "harness",
-            "verify",
-            "--test-id",
-            "TEST-IELTS-VOL99-01-ACAD",
-            "--normalized-dir",
-            str(tmp_path),
-        ],
-    ):
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    with patch("harness.config.DB_PATH", db_path), \
+         patch("harness.db.DB_PATH", db_path), \
+         patch(
+            "sys.argv",
+            [
+                "harness",
+                "verify",
+                "--test-id",
+                "TEST-IELTS-VOL99-01-ACAD",
+                "--normalized-dir",
+                str(tmp_path),
+            ],
+        ):
         main()

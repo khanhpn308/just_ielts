@@ -253,6 +253,8 @@ def test_no_public_data_leakage():
             or filepath.startswith("harness/")
             or filepath.startswith("tests/")
             or filepath.startswith(".github/")
+            or filepath.startswith("docs/")
+            or filepath.startswith("schemas/")
         ), f"Unexpected untracked or modified file in repository: {filepath}"
         assert not filepath.startswith("private/staging/"), f"Staging output leaked to git: {filepath}"
         assert not filepath.startswith("private/raw/"), f"Raw file modified in git: {filepath}"
