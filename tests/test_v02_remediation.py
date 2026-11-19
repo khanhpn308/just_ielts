@@ -927,7 +927,21 @@ def test_failed_source_match_never_implies_expert_approval(tmp_path: Path):
     assert expl_ungrounded.quality_profile.explanation_verification == "machine_drafted_unverified"
     assert expl_ungrounded.quality_profile.lifecycle_status == "review_required"
 
-    # 2. Documented human expert review event
+    # 2. Assigning expert_verified without documented human expert review raises ValueError
+    with pytest.raises(ValueError, match="Epistemic violation"):
+        resolver.resolve_explanation(
+            explanation_id="EXPL-VOL99-01-RD-001",
+            question=question,
+            answer=answer,
+            evidence=None,
+            rationale_en="Unreviewed rationale claiming expert approval.",
+            author_type="expert_teacher",
+            explanation_verification="expert_verified",
+            publication_permission="public_synthetic",
+            has_human_review=False,
+        )
+
+    # 3. Documented human expert review event succeeds
     expl_reviewed = resolver.resolve_explanation(
         explanation_id="EXPL-VOL99-01-RD-001",
         question=question,
@@ -937,6 +951,7 @@ def test_failed_source_match_never_implies_expert_approval(tmp_path: Path):
         author_type="expert_teacher",
         explanation_verification="expert_verified",
         publication_permission="public_synthetic",
+        has_human_review=True,
     )
     assert expl_reviewed.author_type == "expert_teacher"
     assert expl_reviewed.quality_profile.explanation_verification == "expert_verified"
@@ -1079,4 +1094,132 @@ def test_invalid_annotations_file_fails_visibly(synthetic_env):
             key_legacy_id="SRC-998",
             annotations_path=bad_json,
         )
+
+
+def test_pre_write_privacy_symlink_escape_rejected(tmp_path: Path):
+    """Verify that writing private_copyrighted entities via symlink pointing outside authorized private storage is rejected."""
+    from harness.normalizers.base import BaseNormalizer
+
+    prov = ProvenanceEnvelope(
+        schema_version=SCHEMA_VERSION,
+        source_file_id="FILE-000000000099",
+        source_legacy_id="SRC-999",
+        relative_path="sources/raw.docx",
+        source_sha256="0" * 64,
+        processing_unit="document",
+        unit_identifier="raw_document",
+        raw_block_locator="para:0",
+        extractor_adapter="docx",
+        extractor_version="0.1.0",
+        normalizer_version="0.2.0-b",
+    )
+    qp_private = QualityProfile(
+        lifecycle_status="reviewed",
+        extraction_quality="complete_clean",
+        source_fidelity="secondary_reputable",
+        answer_verification="unverified",
+        explanation_verification="source_provided",
+        publication_permission="private_copyrighted",
+    )
+    private_entity = IELTSAnswer(
+        answer_id="ANS-VOL99-01-RD-001-KEY",
+        question_id="Q-VOL99-01-RD-001",
+        target_value="TRUE",
+        acceptable_alternates=["T"],
+        source_key_ref="Page 1",
+        quality_profile=qp_private,
+        _provenance=prov,
+    )
+
+    private_dir = tmp_path / "private_store"
+    private_dir.mkdir()
+    public_target_dir = tmp_path / "public_leak"
+    public_target_dir.mkdir()
+
+    symlink_path = private_dir / "symlink_escape.json"
+    target_leak_file = public_target_dir / "escaped.json"
+    symlink_path.symlink_to(target_leak_file)
+
+    with pytest.raises(PermissionError, match="Privacy policy violation"):
+        BaseNormalizer.write_entity(symlink_path, private_entity, authorized_private_roots=[private_dir])
+
+
+def test_stale_entity_reconciliation_on_annotation_modification(synthetic_env):
+    """Verify that modifying an annotation produces updated canonical hashes and updates checkpoints."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    # Run 1: original annotations
+    res1 = orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=synthetic_env["ann_file"],
+    )
+    q3_expl_file = synthetic_env["output_dir"] / "EXPL-VOL99-01-RD-003.json"
+    m1_data = json.loads((synthetic_env["output_dir"] / "manifest.json").read_text(encoding="utf-8"))
+    q3_expl_entry1 = next(e for e in m1_data["entities"] if e["entity_id"] == "EXPL-VOL99-01-RD-003")
+    orig_hash = q3_expl_entry1["canonical_content_sha256"]
+
+    # Run 2: modify Q3 rationale in annotation
+    ann_data = json.loads(synthetic_env["ann_file"].read_text(encoding="utf-8"))
+    ann_data["3"]["rationale_en"] = "MODIFIED explanation rationale for Q3."
+    synthetic_env["ann_file"].write_text(json.dumps(ann_data), encoding="utf-8")
+
+    # Running with resume: dependency-aware checksum detects annotation change and regenerates Q3
+    res2 = orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=synthetic_env["ann_file"],
+    )
+    assert res2["written_count"] > 0
+
+    m2_data = json.loads((synthetic_env["output_dir"] / "manifest.json").read_text(encoding="utf-8"))
+    q3_expl_entry2 = next(e for e in m2_data["entities"] if e["entity_id"] == "EXPL-VOL99-01-RD-003")
+    new_hash = q3_expl_entry2["canonical_content_sha256"]
+
+    assert new_hash != orig_hash, "Canonical hash must change when annotation content is modified"
+    updated_q3_json = json.loads(q3_expl_file.read_text(encoding="utf-8"))
+    assert updated_q3_json["rationale_en"] == "MODIFIED explanation rationale for Q3."
+
+
+def test_quality_gate_rejects_epistemic_integrity_violations(tmp_path: Path):
+    """Negative tests for Quality Gates: reject consensus_key without corroboration and expert_verified on unreviewed."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+
+    entities = create_minimal_valid_entities(db_path)
+
+    # 1. Answer has SINGLE_SOURCE_UNVERIFIED_KEY flag but is labeled consensus_key
+    bad_ans = copy.deepcopy(entities["answers"][0])
+    bad_ans["quality_profile"]["answer_verification"] = "consensus_key"
+    bad_ans["quality_profile"]["validation_flags"] = ["SINGLE_SOURCE_UNVERIFIED_KEY"]
+    entities_bad_ans = copy.deepcopy(entities)
+    entities_bad_ans["answers"][0] = bad_ans
+
+    res1 = runner.verify_g4_referential_integrity(entities_bad_ans)
+    assert not res1["passed"]
+    assert any("SINGLE_SOURCE_UNVERIFIED_KEY flag" in err for err in res1["errors"])
+
+    # 2. Explanation has MACHINE_DRAFTED_UNVERIFIED flag but claims expert_verified
+    bad_expl = copy.deepcopy(entities["explanations"][0])
+    bad_expl["quality_profile"]["explanation_verification"] = "expert_verified"
+    bad_expl["quality_profile"]["validation_flags"] = ["MACHINE_DRAFTED_UNVERIFIED"]
+    entities_bad_expl = copy.deepcopy(entities)
+    entities_bad_expl["explanations"][0] = bad_expl
+
+    res2 = runner.verify_g4_referential_integrity(entities_bad_expl)
+    assert not res2["passed"]
+    assert any("claims expert_verified despite MACHINE_DRAFTED_UNVERIFIED" in err for err in res2["errors"])
+
 

@@ -84,18 +84,19 @@ The normalizer segments this into 3 distinct `IELTSQuestion` entities:
 - **Target Scope:** VOL 6 — Reading Test 5 — Passage 1 (Questions 1–13)
 
 ### 4.2 Entity Summary
-- Total Normalized Entities: **62**
+- Total Active Normalized Entities: **38**
   - `IELTSTest`: 1 (`TEST-IELTS-VOL06-05-ACAD`)
   - `PassageOrSection`: 1 (`PASSAGE-VOL06-05-RD01`, 9 paragraphs, 891 words)
   - `QuestionGroup`: 2 (`QG-VOL06-05-RD01-G01` [Q1-6], `QG-VOL06-05-RD01-G02` [Q7-13])
   - `IELTSQuestion`: 13 (`Q-VOL06-05-RD-001` through `Q-VOL06-05-RD-013`)
-  - `IELTSAnswer`: 37 (`ANS-VOL06-05-RD-001-KEY` through `ANS-VOL06-05-RD-013-KEY`, plus 24 extracted secondary keys for Passages 2 & 3)
+  - `IELTSAnswer`: 13 (`ANS-VOL06-05-RD-001-KEY` through `ANS-VOL06-05-RD-013-KEY`)
   - `IELTSEvidence`: 4 (`EVID-VOL06-05-RD-003-01` through `EVID-VOL06-05-RD-006-01`)
   - `IELTSExplanation`: 4 (`EXPL-VOL06-05-RD-003` through `EXPL-VOL06-05-RD-006`)
+- Reconciled Historical / Stale Artifacts: **24** (quarantined to `.historical/` and deprecated in checkpoints)
 
 ### 4.3 Lifecycle & Verification Breakdown
 - `extracted`: 14 (1 passage + 13 questions)
-- `review_required`: 40 (37 single-source secondary/missing answers, 1 test, 2 question groups)
+- `review_required`: 16 (9 single-source secondary answers [Q2-10] + 4 missing answers [Q1, Q11-13] + 1 test + 2 question groups)
 - `reviewed`: 8 (4 evidence + 4 explanations with verified source grounding)
 - `verified`: **0** (Human expert review strictly required; zero false claims)
 - `rejected`: 0
@@ -131,7 +132,7 @@ Four distinct dimensions are tracked independently without conflation:
 |---|---|---|---|
 | **G1** | Source Integrity | **PASS** | Source file SHA-256 and legacy IDs match SQLite `sources` table exactly. |
 | **G2** | Structural Fidelity | **PASS** | Sequential numbering 1–13 verified; zero gaps and zero unaccounted text loss. |
-| **G3** | Schema Compliance | **PASS** | All 62 entities validate against Draft 2020-12 schemas via referencing registry. |
+| **G3** | Schema Compliance | **PASS** | All 38 active entities validate against Draft 2020-12 schemas via referencing registry. |
 | **G4** | Referential Integrity | **PASS** | Foreign keys resolve. Missing/unverified keys cataloged as unresolved items. Overall status: `PASS_WITH_UNRESOLVED`. |
 | **G5** | Evidence Fidelity | **PASS** | Exact character offsets verified in narrative text; NOT GIVEN quote is strictly `null`. |
 | **G6** | Deterministic Processing | **PASS** | Canonical hash re-evaluation matches recorded SHA-256; re-runs skip in O(1). |

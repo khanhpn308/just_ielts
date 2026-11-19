@@ -233,6 +233,18 @@ class QualityGateRunner:
                 errors.append(f"Source {legacy_id} ({file_id}) not found in SQLite sources table.")
             elif src_rec["content_sha256"] != source_sha:
                 errors.append(f"Source SHA mismatch for {legacy_id}: DB={src_rec['content_sha256']} vs Prov={source_sha}")
+            else:
+                # Physical source freshness validation
+                rel_path = src_rec.get("relative_path")
+                if rel_path:
+                    phys_path = Path(rel_path) if Path(rel_path).is_absolute() else REPO_ROOT / rel_path
+                    if phys_path.is_file():
+                        disk_sha = hashlib.sha256(phys_path.read_bytes()).hexdigest()
+                        if disk_sha != src_rec["content_sha256"]:
+                            errors.append(
+                                f"Physical source freshness violation for {legacy_id}: "
+                                f"on-disk SHA {disk_sha} does not match DB SHA {src_rec['content_sha256']}"
+                            )
 
         if conn:
             conn.close()
@@ -387,6 +399,9 @@ class QualityGateRunner:
 
             qp = a.get("quality_profile", {})
             ans_verif = qp.get("answer_verification")
+            flags = qp.get("validation_flags", [])
+            if ans_verif == "consensus_key" and "SINGLE_SOURCE_UNVERIFIED_KEY" in flags:
+                errors.append(f"Answer {a['answer_id']} labeled consensus_key despite SINGLE_SOURCE_UNVERIFIED_KEY flag")
             if a.get("target_value") is None or ans_verif == "missing_key":
                 unresolved.append({"type": "missing_answer_key", "id": a["answer_id"], "note": f"Missing key for {q_id}"})
             elif ans_verif == "unverified":
@@ -407,6 +422,16 @@ class QualityGateRunner:
                 errors.append(f"Explanation {ex['explanation_id']} references missing answer_id: {ex['answer_id']}")
             if ex.get("evidence_id") and ex["evidence_id"] not in evidence_ids:
                 errors.append(f"Explanation {ex['explanation_id']} references missing evidence_id: {ex['evidence_id']}")
+
+            # Verification state checks
+            qp = ex.get("quality_profile", {})
+            expl_verif = qp.get("explanation_verification")
+            author = ex.get("author_type")
+            flags = qp.get("validation_flags", [])
+            if expl_verif == "expert_verified" and author == "machine_drafted":
+                errors.append(f"Explanation {ex['explanation_id']} has conflicting expert_verified status and machine_drafted author")
+            if expl_verif == "expert_verified" and "MACHINE_DRAFTED_UNVERIFIED" in flags:
+                errors.append(f"Explanation {ex['explanation_id']} claims expert_verified despite MACHINE_DRAFTED_UNVERIFIED flag")
 
         # Check questions without matching answer
         answers_by_q = {a.get("question_id"): a for a in entities["answers"] if a.get("question_id")}

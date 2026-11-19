@@ -98,6 +98,20 @@ class NormalizationOrchestrator:
             conn.close()
             raise ValueError(f"Source {key_legacy_id} not found in database inventory.")
 
+        # Physical source freshness validation
+        for src in [doc_source, key_source]:
+            rel_path = src.get("relative_path")
+            if rel_path:
+                phys_path = Path(rel_path) if Path(rel_path).is_absolute() else REPO_ROOT / rel_path
+                if phys_path.is_file():
+                    disk_sha = hashlib.sha256(phys_path.read_bytes()).hexdigest()
+                    if disk_sha != src["content_sha256"]:
+                        conn.close()
+                        raise ValueError(
+                            f"Physical source freshness violation for {src.get('legacy_id')}: "
+                            f"on-disk SHA {disk_sha} != DB SHA {src['content_sha256']}"
+                        )
+
         is_synthetic = doc_source.get("collection") == "synthetic"
         pub_permission = "public_synthetic" if is_synthetic else "private_copyrighted"
 
@@ -146,7 +160,11 @@ class NormalizationOrchestrator:
         question_entities = reading_result["questions"]
 
         # 3. Parse and reconcile Answer Keys
-        raw_keys = self.answer_reconciler.parse_pdf_ocr_explanation_keys(key_pages)
+        raw_keys = self.answer_reconciler.parse_pdf_ocr_explanation_keys(
+            key_pages,
+            test_number=test_number,
+            passage_number=passage_number,
+        )
         answer_entities = self.answer_reconciler.reconcile_answers(
             questions=question_entities,
             raw_key_map=raw_keys,
@@ -191,13 +209,26 @@ class NormalizationOrchestrator:
 
             if "annotations" in ann_data and isinstance(ann_data["annotations"], list):
                 for item in ann_data["annotations"]:
+                    if not isinstance(item, dict):
+                        conn.close()
+                        raise ValueError("Each item in 'annotations' list must be a JSON object")
                     qn = item.get("question_number")
-                    if qn is not None:
-                        known_evidence[int(qn)] = item
+                    if qn is None:
+                        conn.close()
+                        raise ValueError("Annotation item missing 'question_number'")
+                    if "evidence_type" not in item:
+                        conn.close()
+                        raise ValueError(f"Annotation for question {qn} missing 'evidence_type'")
+                    known_evidence[int(qn)] = item
             else:
                 for k, item in ann_data.items():
                     try:
-                        known_evidence[int(k)] = item
+                        qn = int(k)
+                        if isinstance(item, dict):
+                            if "evidence_type" not in item:
+                                conn.close()
+                                raise ValueError(f"Annotation for question {qn} missing 'evidence_type'")
+                            known_evidence[qn] = item
                     except (ValueError, TypeError):
                         pass
 
@@ -274,6 +305,7 @@ class NormalizationOrchestrator:
                 unit_identifier=source_unit,
                 raw_block_locator=matched_offset or f"explanation:{expl_id}",
                 explanation_verification=expl_verif,
+                has_human_review=has_human_review,
             )
             explanation_entities.append(expl_entity)
 

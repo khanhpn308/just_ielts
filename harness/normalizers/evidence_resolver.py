@@ -218,8 +218,19 @@ class EvidenceResolver(BaseNormalizer):
         unit_identifier: Optional[str] = None,
         raw_block_locator: Optional[str] = None,
         explanation_verification: Optional[ExplanationVerification] = None,
+        has_human_review: bool = False,
     ) -> IELTSExplanation:
         """Constructs and validates IELTSExplanation entity."""
+        if (
+            explanation_verification == "expert_verified"
+            or author_type == "expert_teacher"
+        ) and not has_human_review:
+            raise ValueError(
+                f"Epistemic violation on explanation {explanation_id}: "
+                f"cannot assign expert_verified or author_type='expert_teacher' "
+                f"without a documented human expert review event (has_human_review=True)."
+            )
+
         if source_record is None:
             source_record = {
                 "file_id": "FILE-000000000000",

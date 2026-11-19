@@ -68,16 +68,44 @@ class AnswerReconciler(BaseNormalizer):
         super().__init__(normalizer_version=normalizer_version)
 
     def parse_pdf_ocr_explanation_keys(
-        self, pages: List[Dict[str, Any]]
+        self,
+        pages: List[Dict[str, Any]],
+        test_number: Optional[int] = None,
+        passage_number: Optional[int] = None,
     ) -> Dict[int, Dict[str, Any]]:
         """Parses answer keys from PDF explanation guides (e.g. SRC-137 pages).
 
         Preserves accurate page-level provenance, exact character offsets,
         raw matched text, and confidence indicators.
         """
+        # Filter pages by test and passage if multi-passage headings are detected
+        filtered_pages = pages
+        has_headers = any(
+            re.search(r"READING\s+PASSAGE\s+\d+", p.get("content", {}).get("text", ""), re.IGNORECASE)
+            for p in pages
+        )
+        if has_headers and (test_number is not None or passage_number is not None):
+            curr_test = test_number or 5
+            curr_pass = 1
+            selected = []
+            for idx, p in enumerate(pages):
+                text = p.get("content", {}).get("text", "")
+                m = re.search(r"READING\s+PASSAGE\s+(\d+)", text, re.IGNORECASE)
+                if m:
+                    p_num = int(m.group(1))
+                    if p_num == 1 and idx > 0:
+                        curr_test += 1
+                    curr_pass = p_num
+                if (test_number is None or curr_test == test_number) and (
+                    passage_number is None or curr_pass == passage_number
+                ):
+                    selected.append(p)
+            if selected:
+                filtered_pages = selected
+
         answers: Dict[int, Dict[str, Any]] = {}
 
-        for idx, page in enumerate(pages):
+        for idx, page in enumerate(filtered_pages):
             content = page.get("content", {})
             prov = page.get("provenance", {})
             page_num = content.get("page_number", idx + 1)
@@ -98,6 +126,9 @@ class AnswerReconciler(BaseNormalizer):
                 if q_num in answers:
                     ambiguity_flags.append("MULTIPLE_KEY_CANDIDATES")
                     answers[q_num].setdefault("ambiguity_flags", []).append("MULTIPLE_KEY_CANDIDATES")
+                    # Do not overwrite existing answer if existing has higher or equal confidence
+                    if answers[q_num].get("confidence", 0) >= confidence:
+                        return
 
                 answers[q_num] = {
                     "raw_val": raw_val,
@@ -145,29 +176,34 @@ class AnswerReconciler(BaseNormalizer):
                     ambiguity_flags: List[str] = []
                     if 6 in answers:
                         ambiguity_flags.append("MULTIPLE_KEY_CANDIDATES")
-                    answers[6] = {
-                        "raw_val": m6.group(1).strip().split()[0],
-                        "original_val": m6.group(1).strip().split()[0],
-                        "unit_identifier": unit_id,
-                        "page_number": page_num,
-                        "char_start": c_start,
-                        "char_end": c_end,
-                        "raw_matched_text": m6.group(0),
-                        "source_ref": f"{unit_id} (page {page_num}), chars {c_start}-{c_end}",
-                        "raw_block": f"offset:{c_start}-{c_end}",
-                        "confidence": 1.0,
-                        "ambiguity_flags": ambiguity_flags,
-                    }
+                        answers[6].setdefault("ambiguity_flags", []).append("MULTIPLE_KEY_CANDIDATES")
+                    if 6 not in answers or answers[6].get("confidence", 0) < 1.0:
+                        answers[6] = {
+                            "raw_val": m6.group(1).strip().split()[0],
+                            "original_val": m6.group(1).strip().split()[0],
+                            "unit_identifier": unit_id,
+                            "page_number": page_num,
+                            "char_start": c_start,
+                            "char_end": c_end,
+                            "raw_matched_text": m6.group(0),
+                            "source_ref": f"{unit_id} (page {page_num}), chars {c_start}-{c_end}",
+                            "raw_block": f"offset:{c_start}-{c_end}",
+                            "confidence": 1.0,
+                            "ambiguity_flags": ambiguity_flags,
+                        }
 
             # 5. Note completion items (Questions 7-10)
+            note_stopwords = {"answer", "questions", "question", "most", "the", "of", "in", "and", "or", "to", "for", "with", "a", "an"}
             for q_num in [7, 8, 9, 10]:
                 m_note = re.search(rf"\b{q_num}\s+([A-Za-z]+)", text)
                 if m_note:
-                    record_answer(q_num, m_note.group(1).strip(), m_note, confidence=0.95)
+                    cand_word = m_note.group(1).strip()
+                    if cand_word.lower() not in note_stopwords:
+                        record_answer(q_num, cand_word, m_note, confidence=0.95)
 
             # 7. General fallback for standard numbered answer lines: e.g. "1. Answer: TRUE" or "1 Answer: B"
             for q_cand in range(1, 41):
-                if q_cand in answers and answers[q_cand]["unit_identifier"] == unit_id:
+                if q_cand in answers:
                     continue
                 m_gen = re.search(
                     rf"(?:^|\n)\s*(?:Question\s+)?{q_cand}[\.\s\:\)]*Answer\s*[:\-]\s*([^\n\r]+)",
