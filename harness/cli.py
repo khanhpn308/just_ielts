@@ -268,6 +268,7 @@ def cmd_normalize(args):
 
     print(">>> Starting V0.2 Normalization Pipeline...")
     output_dir = Path(args.output_dir) if getattr(args, "output_dir", None) else None
+    annotations_path = Path(args.annotations) if getattr(args, "annotations", None) else None
     orch = NormalizationOrchestrator(output_dir=output_dir) if output_dir else NormalizationOrchestrator()
 
     if getattr(args, "pilot", False) or getattr(args, "source_id", None) in {"SRC-138", None}:
@@ -277,6 +278,7 @@ def cmd_normalize(args):
             force=getattr(args, "force", False),
             test_number=args.test_number,
             passage_number=args.passage_number,
+            annotations_path=annotations_path,
         )
         print("\n=== NORMALIZATION RESULT ===")
         print(f"Test ID: {res['test_id']}")
@@ -296,6 +298,7 @@ def cmd_normalize(args):
             passage_number=args.passage_number,
             dry_run=getattr(args, "dry_run", False),
             force=getattr(args, "force", False),
+            annotations_path=annotations_path,
         )
         print(f"Completed normalization for {args.source_id}: {res['total_entities']} entities.")
 
@@ -435,6 +438,7 @@ def main():
     parser_norm.add_argument("--force", action="store_true", help="Force reprocessing, bypassing checkpoints")
     parser_norm.add_argument("--resume", action="store_true", help="Resume from existing valid checkpoints")
     parser_norm.add_argument("--output-dir", type=str, help="Custom output directory")
+    parser_norm.add_argument("--annotations", type=str, help="Path to evidence annotations JSON")
 
     # verify
     parser_ver = subparsers.add_parser("verify", help="Run Quality Gates G1-G7 verification")

@@ -38,10 +38,12 @@ class NormalizationOrchestrator:
         output_dir: Path = STAGING_NORMALIZED_DIR,
         raw_staging_dir: Path = STAGING_RAW_DIR,
         normalizer_version: str = NORMALIZER_VERSION,
+        db_path: Optional[Path] = None,
     ):
         self.output_dir = output_dir
         self.raw_staging_dir = raw_staging_dir
         self.normalizer_version = normalizer_version
+        self.db_path = db_path
         self.docx_normalizer = DocxReadingNormalizer(normalizer_version=normalizer_version)
         self.answer_reconciler = AnswerReconciler(normalizer_version=normalizer_version)
         self.evidence_resolver = EvidenceResolver(normalizer_version=normalizer_version)
@@ -53,6 +55,7 @@ class NormalizationOrchestrator:
         test_number: int = 5,
         passage_number: int = 1,
         volume_code: str = "VOL06",
+        annotations_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Runs the approved Reading Pilot (SRC-138 + SRC-137) end-to-end."""
         return self.normalize_reading_pilot(
@@ -63,6 +66,7 @@ class NormalizationOrchestrator:
             volume_code=volume_code,
             dry_run=dry_run,
             force=force,
+            annotations_path=annotations_path,
         )
 
     def normalize_reading_pilot(
@@ -74,9 +78,10 @@ class NormalizationOrchestrator:
         volume_code: str = "VOL06",
         dry_run: bool = False,
         force: bool = False,
+        annotations_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Executes normalization for a Reading test passage with answer key & explanations."""
-        conn = get_db_connection()
+        conn = get_db_connection(self.db_path)
 
         doc_source = get_source_by_legacy_id(conn, doc_legacy_id)
         if not doc_source:
@@ -98,11 +103,17 @@ class NormalizationOrchestrator:
         raw_doc_sha = hashlib.sha256(raw_doc_bytes).hexdigest()
         raw_document = json.loads(raw_doc_bytes.decode("utf-8"))
 
-        # Load key pages
+        # Load key pages and compute raw_key_sha
         key_dir = self.raw_staging_dir / key_legacy_id
         key_pages = []
-        for p_file in sorted(key_dir.glob("page_*.json")):
-            key_pages.append(json.loads(p_file.read_text(encoding="utf-8")))
+        key_hasher = hashlib.sha256()
+        key_files = sorted(key_dir.glob("page_*.json")) if key_dir.exists() else []
+        for p_file in key_files:
+            p_bytes = p_file.read_bytes()
+            key_hasher.update(p_bytes)
+            key_pages.append(json.loads(p_bytes.decode("utf-8")))
+
+        raw_key_sha = key_hasher.hexdigest() if key_files else key_source.get("content_sha256", "0" * 64)
 
         # 2. Parse Reading Passage and Questions
         reading_result = self.docx_normalizer.normalize(
@@ -130,59 +141,41 @@ class NormalizationOrchestrator:
             publication_permission="private_copyrighted",
         )
 
-        # 4. Resolve Evidence Spans and Explanations for Questions 3–6
+        # 4. Resolve Evidence Spans and Explanations from private annotations
         evidence_entities: List[IELTSEvidence] = []
         explanation_entities: List[IELTSExplanation] = []
 
         q_map = {q.question_number: q for q in question_entities}
         ans_map = {a.answer_id.split("-")[-2]: a for a in answer_entities}
 
-        # Explicit candidate evidence quotes and explanations verified from SRC-137
-        known_evidence = {
-            3: {
-                "evidence_type": "insufficient_information_not_given",
-                "paragraph_label": "1",
-                "quote": None,
-                "missing_rationale": (
-                    "The passage discusses how images and objects have been brought together to show visual styles "
-                    "at different periods and places, but contains no information about whether collecting objects "
-                    "from some periods was more difficult than others."
-                ),
-                "rationale_en": (
-                    "The passage tells that the images and objects have been brought together to show visual styles "
-                    "at different periods and different places, but there is no information whether more objects were "
-                    "collected from one period than another."
-                ),
-                "paraphrases": [],
-            },
-            4: {
-                "evidence_type": "direct_support",
-                "paragraph_label": "2",
-                "quote": "The course is organised around a series of issues that relate to the production of art and people's responses to it.",
-                "missing_rationale": None,
-                "rationale_en": "Paragraph 2 states that the course relates to the production of art and people's responses to it, which means how art is made and perceived.",
-                "paraphrases": [{"prompt_term": "perceived", "passage_term": "people's responses to it"}],
-            },
-            5: {
-                "evidence_type": "contradictory_evidence",
-                "paragraph_label": "3",
-                "quote": "The optional courses listed below are not available every year and prospective students are advised to check on the availability of specific courses.",
-                "missing_rationale": None,
-                "rationale_en": "The optional courses listed below are not available every year means students cannot do any of the optional courses that are listed, which is opposite to the statement.",
-                "paraphrases": [],
-            },
-            6: {
-                "evidence_type": "direct_support",
-                "paragraph_label": "3",
-                "quote": "Students wishing to take a course that does not appear in the list but is offered by the Faculty of History will need to get permission from the relevant Course Tutor.",
-                "missing_rationale": None,
-                "rationale_en": "Students wishing to take an unlisted course can do so if they get permission from the relevant course tutor, confirming the statement.",
-                "paraphrases": [
-                    {"prompt_term": "take an unlisted course", "passage_term": "a course that does not appear in the list"},
-                    {"prompt_term": "appropriate approval", "passage_term": "permission from the relevant Course Tutor"},
-                ],
-            },
-        }
+        known_evidence = {}
+        evidence_source_sha = "none"
+
+        ann_file = annotations_path
+        if ann_file is None:
+            default_ann = REPO_ROOT / "private" / "annotations" / "pilot_05_reading_evidence.json"
+            if default_ann.exists():
+                ann_file = default_ann
+
+        if ann_file and Path(ann_file).exists():
+            ann_bytes = Path(ann_file).read_bytes()
+            evidence_source_sha = hashlib.sha256(ann_bytes).hexdigest()
+            try:
+                ann_data = json.loads(ann_bytes.decode("utf-8"))
+                if isinstance(ann_data, dict):
+                    if "annotations" in ann_data and isinstance(ann_data["annotations"], list):
+                        for item in ann_data["annotations"]:
+                            qn = item.get("question_number")
+                            if qn is not None:
+                                known_evidence[int(qn)] = item
+                    else:
+                        for k, item in ann_data.items():
+                            try:
+                                known_evidence[int(k)] = item
+                            except (ValueError, TypeError):
+                                pass
+            except Exception:
+                pass
 
         for q_num, ev_info in known_evidence.items():
             q_ent = q_map.get(q_num)
@@ -192,17 +185,36 @@ class NormalizationOrchestrator:
             if not q_ent or not ans_ent:
                 continue
 
+            # Verify presence in raw key_pages text
+            expl_text = ev_info.get("rationale_en", "")
+            search_term = ev_info.get("source_search_term") or (expl_text[:30] if expl_text else "")
+            verified_in_source = False
+            source_unit = ev_info.get("source_unit", "page_0001")
+            matched_offset = None
+
+            for kp in key_pages:
+                kp_content = kp.get("content", {})
+                kp_text = kp_content.get("text", "")
+                if search_term and search_term.lower() in kp_text.lower():
+                    verified_in_source = True
+                    source_unit = kp.get("provenance", {}).get("unit_identifier") or f"page_{kp_content.get('page_number', 1):04d}"
+                    idx = kp_text.lower().find(search_term.lower())
+                    matched_offset = f"offset:{idx}-{idx + len(search_term)}"
+                    break
+
             ev_id = f"EVID-{volume_code}-{test_number:02d}-RD-{q_num:03d}-01"
             ev_entity = self.evidence_resolver.resolve_evidence(
                 evidence_id=ev_id,
                 answer=ans_ent,
                 passage=passage_entity,
                 evidence_type=ev_info["evidence_type"],  # type: ignore[arg-type]
-                candidate_quote=ev_info["quote"],
-                paragraph_label=ev_info["paragraph_label"],
-                missing_information_rationale=ev_info["missing_rationale"],
+                candidate_quote=ev_info.get("quote"),
+                paragraph_label=ev_info.get("paragraph_label"),
+                missing_information_rationale=ev_info.get("missing_rationale"),
                 source_record=key_source,
                 publication_permission="private_copyrighted",
+                unit_identifier=source_unit,
+                raw_block_locator=matched_offset or f"evidence:{ev_id}",
             )
             evidence_entities.append(ev_entity)
 
@@ -212,12 +224,15 @@ class NormalizationOrchestrator:
                 question=q_ent,
                 answer=ans_ent,
                 evidence=ev_entity,
-                rationale_en=ev_info["rationale_en"],
-                rationale_vi=None,
-                paraphrase_map=ev_info["paraphrases"],
-                author_type="source_published",
+                rationale_en=expl_text,
+                rationale_vi=ev_info.get("rationale_vi"),
+                paraphrase_map=ev_info.get("paraphrases"),
+                author_type="source_published" if verified_in_source else "expert_teacher",
                 source_record=key_source,
                 publication_permission="private_copyrighted",
+                unit_identifier=source_unit,
+                raw_block_locator=matched_offset or f"explanation:{expl_id}",
+                explanation_verification="source_provided" if verified_in_source else "expert_verified",
             )
             explanation_entities.append(expl_entity)
 
@@ -226,6 +241,21 @@ class NormalizationOrchestrator:
         skipped_count = 0
         written_count = 0
         config_hash = "default_config"
+
+        # Dependency-aware checksums
+        doc_dep_sha = raw_doc_sha
+        ans_dep_sha = hashlib.sha256(f"{raw_doc_sha}:{raw_key_sha}".encode("utf-8")).hexdigest()
+        evid_dep_sha = hashlib.sha256(f"{raw_doc_sha}:{raw_key_sha}:{evidence_source_sha}".encode("utf-8")).hexdigest()
+
+        dep_map = {
+            "test": doc_dep_sha,
+            "passage": doc_dep_sha,
+            "question_group": doc_dep_sha,
+            "question": doc_dep_sha,
+            "answer": ans_dep_sha,
+            "evidence": evid_dep_sha,
+            "explanation": evid_dep_sha,
+        }
 
         all_entities: List[Tuple[str, str, Any, str, str]] = [
             ("test", test_entity.test_id, test_entity, f"{test_entity.test_id}.json", doc_source["file_id"]),
@@ -246,18 +276,38 @@ class NormalizationOrchestrator:
 
         for entity_type, entity_id, entity_obj, filename, src_fid in all_entities:
             out_path = self.output_dir / filename
+            expected_raw_sha = dep_map.get(entity_type, raw_doc_sha)
 
             # Checkpoint check
             if not force and is_normalization_checkpoint_valid(
                 conn=conn,
                 entity_id=entity_id,
                 normalizer_version=self.normalizer_version,
-                raw_sha256=raw_doc_sha,
+                raw_sha256=expected_raw_sha,
                 config_hash=config_hash,
                 schema_version=SCHEMA_VERSION,
             ):
                 skipped_count += 1
                 saved_files.append(out_path)
+
+                # Collect manifest entry for skipped entity to ensure manifest is complete
+                c_hash = None
+                if out_path.exists():
+                    try:
+                        existing = json.loads(out_path.read_text(encoding="utf-8"))
+                        c_hash = existing.get("_provenance", {}).get("canonical_content_sha256")
+                    except Exception:
+                        pass
+                if not c_hash:
+                    final_dict = BaseNormalizer.finalize_and_hash_entity(entity_obj)
+                    c_hash = final_dict["_provenance"]["canonical_content_sha256"]
+
+                manifest_entries.append({
+                    "entity_id": entity_id,
+                    "entity_type": entity_type,
+                    "canonical_content_sha256": c_hash,
+                    "output_filename": filename,
+                })
                 continue
 
             final_dict = BaseNormalizer.finalize_and_hash_entity(entity_obj)
@@ -270,7 +320,7 @@ class NormalizationOrchestrator:
                 out_sha = hashlib.sha256(out_path.read_bytes()).hexdigest()
                 lifecycle = final_dict.get("quality_profile", {}).get("lifecycle_status", "extracted")
 
-                # Upsert checkpoint
+                # Upsert checkpoint with dependency-aware raw_sha256
                 upsert_normalization_checkpoint(
                     conn=conn,
                     cp_data={
@@ -281,7 +331,7 @@ class NormalizationOrchestrator:
                         "normalizer_version": self.normalizer_version,
                         "schema_version": SCHEMA_VERSION,
                         "config_hash": config_hash,
-                        "raw_sha256": raw_doc_sha,
+                        "raw_sha256": expected_raw_sha,
                         "canonical_content_sha256": c_hash,
                         "output_path": str(out_path),
                         "output_sha256": out_sha,

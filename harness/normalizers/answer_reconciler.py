@@ -70,74 +70,113 @@ class AnswerReconciler(BaseNormalizer):
     def parse_pdf_ocr_explanation_keys(
         self, pages: List[Dict[str, Any]]
     ) -> Dict[int, Dict[str, Any]]:
-        """Parses answer keys from PDF explanation guides (e.g. SRC-137 pages)."""
-        combined_text = "\n\n".join(
-            p.get("content", {}).get("text", "") for p in pages
-        )
+        """Parses answer keys from PDF explanation guides (e.g. SRC-137 pages).
+
+        Preserves accurate page-level provenance, exact character offsets,
+        raw matched text, and confidence indicators.
+        """
         answers: Dict[int, Dict[str, Any]] = {}
 
-        # 1. Look for 'Methods course.\n\nAnswer: False' (Question 2 on page 1)
-        m2 = re.search(r"Methods\s+course\.\s*\n+Answer:\s*([^\n\r]+)", combined_text)
-        if m2:
-            answers[2] = {
-                "raw_val": m2.group(1).strip().split()[0],
-                "source_ref": "Page 95, Top Item (Methods course)",
-                "raw_block": "line:Answer_Q2",
-            }
+        for idx, page in enumerate(pages):
+            content = page.get("content", {})
+            prov = page.get("provenance", {})
+            page_num = content.get("page_number", idx + 1)
+            unit_id = prov.get("unit_identifier") or f"page_{page_num:04d}"
+            text = content.get("text", "")
+            if not text:
+                continue
 
-        # 2. Look for Question 3: '3. ... Answer: Not Given'
-        m3 = re.search(r"3[\.\s][\s\S]*?Answer:\s*([^\n\r]+)", combined_text)
-        if m3:
-            raw = m3.group(1).strip()
-            # If line has words like 'Not Given', capture it
-            if "Not Given" in raw or "NOT GIVEN" in raw:
-                raw = "Not Given"
-            answers[3] = {
-                "raw_val": raw,
-                "source_ref": "Page 95, Question 3",
-                "raw_block": "line:Answer_Q3",
-            }
+            def record_answer(
+                q_num: int,
+                raw_val: str,
+                match_obj: Any,
+                confidence: float = 1.0,
+            ) -> None:
+                c_start, c_end = match_obj.start(), match_obj.end()
+                matched_text = match_obj.group(0)
+                ambiguity_flags: List[str] = []
+                if q_num in answers:
+                    ambiguity_flags.append("MULTIPLE_KEY_CANDIDATES")
+                    answers[q_num].setdefault("ambiguity_flags", []).append("MULTIPLE_KEY_CANDIDATES")
 
-        # 3. Look for Question 4: '4, ... Answer: True'
-        m4 = re.search(r"4[\,\.\s][\s\S]*?Answer:\s*([^\n\r]+)", combined_text)
-        if m4:
-            answers[4] = {
-                "raw_val": m4.group(1).strip().split()[0],
-                "source_ref": "Page 95, Question 4",
-                "raw_block": "line:Answer_Q4",
-            }
-
-        # 4. Look for Question 5: '5. ... Answer: False'
-        m5 = re.search(r"5[\.\s\-—]+[\s\S]*?Answer:\s*([^\n\r]+)", combined_text)
-        if m5:
-            answers[5] = {
-                "raw_val": m5.group(1).strip().split()[0],
-                "source_ref": "Page 96, Question 5",
-                "raw_block": "line:Answer_Q5",
-            }
-
-        # 5. Look for Question 6: 'Answer: True\n\nLocation: Students wishing to take a course'
-        m6 = re.search(
-            r"Answer:\s*([^\n\r]+)\s*\n+Location:\s*Students\s+wishing\s+to\s+take\s+a\s+course",
-            combined_text,
-        )
-        if m6:
-            answers[6] = {
-                "raw_val": m6.group(1).strip().split()[0],
-                "source_ref": "Page 96, Question 6",
-                "raw_block": "line:Answer_Q6",
-            }
-
-        # 6. Look for note completion items (Questions 7-10)
-        # e.g. 'considered 7 Fraudulant', 'in 8 museums', 'when 9 Cubism started', 'as 10 cinema'
-        for q_num in [7, 8, 9, 10]:
-            m_note = re.search(rf"\b{q_num}\s+([A-Za-z]+)", combined_text)
-            if m_note:
                 answers[q_num] = {
-                    "raw_val": m_note.group(1).strip(),
-                    "source_ref": f"Page 96, Note item {q_num}",
-                    "raw_block": f"line:Note_Q{q_num}",
+                    "raw_val": raw_val,
+                    "original_val": raw_val,
+                    "unit_identifier": unit_id,
+                    "page_number": page_num,
+                    "char_start": c_start,
+                    "char_end": c_end,
+                    "raw_matched_text": matched_text,
+                    "source_ref": f"{unit_id} (page {page_num}), chars {c_start}-{c_end}",
+                    "raw_block": f"offset:{c_start}-{c_end}",
+                    "confidence": confidence,
+                    "ambiguity_flags": ambiguity_flags,
                 }
+
+            # 1. Question 2: preceding question 3
+            m2 = re.search(r"(?:^|\n)[^\n]*?\n+Answer:\s*([^\n\r]+)\s*\n+(?=3[\.\s])", text)
+            if m2:
+                record_answer(2, m2.group(1).strip().split()[0], m2, confidence=1.0)
+
+            # 2. Question 3: '3. ... Answer: Not Given'
+            m3 = re.search(r"3[\.\s][\s\S]*?Answer:\s*([^\n\r]+)", text)
+            if m3:
+                raw3 = m3.group(1).strip()
+                if "Not Given" in raw3 or "NOT GIVEN" in raw3:
+                    raw3 = "Not Given"
+                else:
+                    raw3 = raw3.split()[0]
+                record_answer(3, raw3, m3, confidence=1.0)
+
+            # 3. Question 4: '4, ... Answer: True'
+            m4 = re.search(r"4[\,\.\s][\s\S]*?Answer:\s*([^\n\r]+)", text)
+            if m4:
+                record_answer(4, m4.group(1).strip().split()[0], m4, confidence=1.0)
+
+            # 4. Question 5: '5. ... Answer: False'
+            m5 = re.search(r"5[\.\s\-—]+[\s\S]*?Answer:\s*([^\n\r]+)", text)
+            if m5:
+                record_answer(5, m5.group(1).strip().split()[0], m5, confidence=1.0)
+                # Question 6 follows question 5 block
+                m6 = re.search(r"\nAnswer:\s*([^\n\r]+)\s*\n+Location:", text[m5.end():])
+                if m6:
+                    c_start = m5.end() + m6.start()
+                    c_end = m5.end() + m6.end()
+                    ambiguity_flags: List[str] = []
+                    if 6 in answers:
+                        ambiguity_flags.append("MULTIPLE_KEY_CANDIDATES")
+                    answers[6] = {
+                        "raw_val": m6.group(1).strip().split()[0],
+                        "original_val": m6.group(1).strip().split()[0],
+                        "unit_identifier": unit_id,
+                        "page_number": page_num,
+                        "char_start": c_start,
+                        "char_end": c_end,
+                        "raw_matched_text": m6.group(0),
+                        "source_ref": f"{unit_id} (page {page_num}), chars {c_start}-{c_end}",
+                        "raw_block": f"offset:{c_start}-{c_end}",
+                        "confidence": 1.0,
+                        "ambiguity_flags": ambiguity_flags,
+                    }
+
+            # 5. Note completion items (Questions 7-10)
+            for q_num in [7, 8, 9, 10]:
+                m_note = re.search(rf"\b{q_num}\s+([A-Za-z]+)", text)
+                if m_note:
+                    record_answer(q_num, m_note.group(1).strip(), m_note, confidence=0.95)
+
+            # 7. General fallback for standard numbered answer lines: e.g. "1. Answer: TRUE" or "1 Answer: B"
+            for q_cand in range(1, 41):
+                if q_cand in answers and answers[q_cand]["unit_identifier"] == unit_id:
+                    continue
+                m_gen = re.search(
+                    rf"(?:^|\n)\s*(?:Question\s+)?{q_cand}[\.\s\:\)]*Answer\s*[:\-]\s*([^\n\r]+)",
+                    text,
+                    re.IGNORECASE,
+                )
+                if m_gen:
+                    val = m_gen.group(1).strip().split()[0]
+                    record_answer(q_cand, val, m_gen, confidence=0.90)
 
         return answers
 
@@ -157,17 +196,31 @@ class AnswerReconciler(BaseNormalizer):
             q_num = q.question_number
             ans_id = f"ANS-{volume_code}-{test_number:02d}-RD-{q_num:03d}-KEY"
 
+            # Epistemic source authority:
+            # Do not label unverified secondary keys (like SRC-137) as authoritative official keys.
+            is_official = (
+                source_record.get("collection") == "official_cambridge"
+                or (
+                    source_record.get("source_fidelity") == "authoritative_official"
+                    and "SRC-137" not in source_record.get("legacy_id", "")
+                )
+            )
+            source_fidelity: SourceFidelity = "authoritative_official" if is_official else "secondary_reputable"
+
             if q_num in raw_key_map:
                 key_info = raw_key_map[q_num]
-                target_val, alternates, flags = normalize_answer_value(key_info["raw_val"])
+                target_val, alternates, norm_flags = normalize_answer_value(key_info["raw_val"])
+                flags = list(norm_flags) + list(key_info.get("ambiguity_flags", []))
                 source_ref = key_info.get("source_ref", f"Question {q_num} Answer Key")
                 raw_block = key_info.get("raw_block", f"key_index:{q_num}")
+                unit_id = key_info.get("unit_identifier", "page_0001")
+                answer_verification: AnswerVerification = "authoritative_key" if is_official else "consensus_key"
 
                 qp = QualityProfile(
                     lifecycle_status="reviewed" if not flags else "review_required",
                     extraction_quality="complete_clean" if "OCR_TYPO_CORRECTED" not in flags else "ocr_noisy",
-                    source_fidelity="secondary_reputable" if "SRC-137" in source_record.get("legacy_id", "") else "authoritative_official",
-                    answer_verification="authoritative_key",
+                    source_fidelity=source_fidelity,
+                    answer_verification=answer_verification,
                     explanation_verification="source_provided",
                     publication_permission=publication_permission,  # type: ignore[arg-type]
                     validation_flags=flags,
@@ -179,11 +232,12 @@ class AnswerReconciler(BaseNormalizer):
                 flags = ["MISSING_SOURCE_ANSWER_KEY"]
                 source_ref = "Missing in source answer key document"
                 raw_block = f"missing_key:{q_num}"
+                unit_id = "page_0001"
 
                 qp = QualityProfile(
                     lifecycle_status="review_required",
                     extraction_quality="truncated_missing_pages",
-                    source_fidelity="secondary_reputable" if "SRC-137" in source_record.get("legacy_id", "") else "authoritative_official",
+                    source_fidelity=source_fidelity,
                     answer_verification="missing_key",
                     explanation_verification="missing_explanation",
                     publication_permission=publication_permission,  # type: ignore[arg-type]
@@ -197,7 +251,7 @@ class AnswerReconciler(BaseNormalizer):
                 relative_path=source_record["relative_path"],
                 source_sha256=source_record["content_sha256"],
                 processing_unit="page",
-                unit_identifier="page_0001",
+                unit_identifier=unit_id,
                 raw_block_locator=raw_block,
                 extractor_adapter="pdf_ocr",
                 extractor_version="0.1.0-tesseract-pdftoppm",
@@ -223,13 +277,25 @@ class AnswerReconciler(BaseNormalizer):
         for k_num, key_info in raw_key_map.items():
             if k_num not in matched_q_nums:
                 ans_id = f"ANS-{volume_code}-{test_number:02d}-RD-{k_num:03d}-KEY"
-                target_val, alternates, flags = normalize_answer_value(key_info["raw_val"])
+                target_val, alternates, norm_flags = normalize_answer_value(key_info["raw_val"])
+                flags = list(norm_flags) + list(key_info.get("ambiguity_flags", []))
                 flags.append("ORPHAN_ANSWER_KEY_UNLINKED")
+                unit_id = key_info.get("unit_identifier", "page_0001")
+                raw_block = key_info.get("raw_block", f"orphan_key:{k_num}")
+
+                is_official = (
+                    source_record.get("collection") == "official_cambridge"
+                    or (
+                        source_record.get("source_fidelity") == "authoritative_official"
+                        and "SRC-137" not in source_record.get("legacy_id", "")
+                    )
+                )
+                source_fidelity = "authoritative_official" if is_official else "secondary_reputable"
 
                 qp = QualityProfile(
                     lifecycle_status="review_required",
                     extraction_quality="complete_clean",
-                    source_fidelity="authoritative_official",
+                    source_fidelity=source_fidelity,
                     answer_verification="unverified",
                     explanation_verification="missing_explanation",
                     publication_permission=publication_permission,  # type: ignore[arg-type]
@@ -242,8 +308,8 @@ class AnswerReconciler(BaseNormalizer):
                     relative_path=source_record["relative_path"],
                     source_sha256=source_record["content_sha256"],
                     processing_unit="page",
-                    unit_identifier="page_0001",
-                    raw_block_locator=key_info.get("raw_block", f"orphan_key:{k_num}"),
+                    unit_identifier=unit_id,
+                    raw_block_locator=raw_block,
                     extractor_adapter="pdf_ocr",
                     extractor_version="0.1.0-tesseract-pdftoppm",
                     normalizer_version=self.normalizer_version,

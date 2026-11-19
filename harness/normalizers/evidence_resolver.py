@@ -89,6 +89,8 @@ class EvidenceResolver(BaseNormalizer):
         missing_information_rationale: Optional[str] = None,
         source_record: Optional[Dict[str, Any]] = None,
         publication_permission: str = "private_copyrighted",
+        unit_identifier: Optional[str] = None,
+        raw_block_locator: Optional[str] = None,
     ) -> IELTSEvidence:
         """Grounds evidence candidate into validated IELTSEvidence entity."""
         if source_record is None:
@@ -145,11 +147,21 @@ class EvidenceResolver(BaseNormalizer):
                         flags.append("UNRESOLVED_EVIDENCE_SPAN")
                         lifecycle_status = "review_required"
 
+        is_official = (
+            source_record.get("collection") == "official_cambridge"
+            or (
+                source_record.get("source_fidelity") == "authoritative_official"
+                and "SRC-137" not in source_record.get("legacy_id", "")
+            )
+        )
+        source_fidelity: SourceFidelity = "authoritative_official" if is_official else "secondary_reputable"
+        ans_verif: AnswerVerification = "authoritative_key" if is_official else "consensus_key"
+
         qp = QualityProfile(
             lifecycle_status=lifecycle_status,  # type: ignore[arg-type]
             extraction_quality="complete_clean" if exact_match_verified or evidence_type == "insufficient_information_not_given" else "ocr_noisy",
-            source_fidelity="secondary_reputable" if "SRC-137" in source_record.get("legacy_id", "") else "authoritative_official",
-            answer_verification="authoritative_key",
+            source_fidelity=source_fidelity,
+            answer_verification=ans_verif,
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=flags,
@@ -162,8 +174,8 @@ class EvidenceResolver(BaseNormalizer):
             relative_path=source_record["relative_path"],
             source_sha256=source_record["content_sha256"],
             processing_unit="page",
-            unit_identifier="page_0001",
-            raw_block_locator=f"evidence:{evidence_id}",
+            unit_identifier=unit_identifier or "page_0001",
+            raw_block_locator=raw_block_locator or f"evidence:{evidence_id}",
             extractor_adapter="pdf_ocr",
             extractor_version="0.1.0-tesseract-pdftoppm",
             normalizer_version=self.normalizer_version,
@@ -200,6 +212,9 @@ class EvidenceResolver(BaseNormalizer):
         author_type: AuthorType = "source_published",
         source_record: Optional[Dict[str, Any]] = None,
         publication_permission: str = "private_copyrighted",
+        unit_identifier: Optional[str] = None,
+        raw_block_locator: Optional[str] = None,
+        explanation_verification: Optional[ExplanationVerification] = None,
     ) -> IELTSExplanation:
         """Constructs and validates IELTSExplanation entity."""
         if source_record is None:
@@ -216,23 +231,36 @@ class EvidenceResolver(BaseNormalizer):
         ]
 
         flags: List[str] = []
-        if author_type == "machine_drafted":
-            expl_verif: ExplanationVerification = "machine_drafted_unverified"
-            lifecycle_status: LifecycleStatus = "review_required"
+        if explanation_verification:
+            expl_verif = explanation_verification
+            lifecycle_status = "review_required" if "unverified" in expl_verif else "reviewed"
+        elif author_type == "machine_drafted":
+            expl_verif = "machine_drafted_unverified"
+            lifecycle_status = "review_required"
             flags.append("MACHINE_DRAFTED_UNVERIFIED")
         elif not rationale_en and not rationale_vi:
             expl_verif = "missing_explanation"
             lifecycle_status = "review_required"
             flags.append("MISSING_EXPLANATION_RATIONALE")
         else:
-            expl_verif = "source_provided"
+            expl_verif = "source_provided" if author_type == "source_published" else "expert_verified"
             lifecycle_status = "reviewed"
+
+        is_official = (
+            source_record.get("collection") == "official_cambridge"
+            or (
+                source_record.get("source_fidelity") == "authoritative_official"
+                and "SRC-137" not in source_record.get("legacy_id", "")
+            )
+        )
+        source_fidelity: SourceFidelity = "authoritative_official" if is_official else "secondary_reputable"
+        ans_verif: AnswerVerification = "authoritative_key" if is_official else "consensus_key"
 
         qp = QualityProfile(
             lifecycle_status=lifecycle_status,
             extraction_quality="complete_clean",
-            source_fidelity="secondary_reputable" if "SRC-137" in source_record.get("legacy_id", "") else "authoritative_official",
-            answer_verification="authoritative_key",
+            source_fidelity=source_fidelity,
+            answer_verification=ans_verif,
             explanation_verification=expl_verif,
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=flags,
@@ -245,8 +273,8 @@ class EvidenceResolver(BaseNormalizer):
             relative_path=source_record["relative_path"],
             source_sha256=source_record["content_sha256"],
             processing_unit="page",
-            unit_identifier="page_0001",
-            raw_block_locator=f"explanation:{explanation_id}",
+            unit_identifier=unit_identifier or "page_0001",
+            raw_block_locator=raw_block_locator or f"explanation:{explanation_id}",
             extractor_adapter="pdf_ocr",
             extractor_version="0.1.0-tesseract-pdftoppm",
             normalizer_version=self.normalizer_version,

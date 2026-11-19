@@ -111,14 +111,12 @@ class QualityGateRunner:
         g1_res = self.verify_g1_source_integrity(entities)
         report["gates"]["G1_source_integrity"] = g1_res
         if not g1_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g1_res["errors"])
 
         # G2: Structural Fidelity
         g2_res = self.verify_g2_structural_fidelity(entities)
         report["gates"]["G2_structural_fidelity"] = g2_res
         if not g2_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g2_res["errors"])
         report["warnings"].extend(g2_res.get("warnings", []))
 
@@ -126,14 +124,12 @@ class QualityGateRunner:
         g3_res = self.verify_g3_schema_compliance(entities)
         report["gates"]["G3_schema_compliance"] = g3_res
         if not g3_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g3_res["errors"])
 
         # G4: Referential Integrity
         g4_res = self.verify_g4_referential_integrity(entities)
         report["gates"]["G4_referential_integrity"] = g4_res
         if not g4_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g4_res["errors"])
         report["unresolved_items"].extend(g4_res.get("unresolved", []))
 
@@ -141,29 +137,40 @@ class QualityGateRunner:
         g5_res = self.verify_g5_evidence_fidelity(entities)
         report["gates"]["G5_evidence_fidelity"] = g5_res
         if not g5_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g5_res["errors"])
 
         # G6: Deterministic Processing
         g6_res = self.verify_g6_deterministic_processing(entities)
         report["gates"]["G6_deterministic_processing"] = g6_res
         if not g6_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g6_res["errors"])
 
         # G7: Privacy Isolation
         g7_res = self.verify_g7_privacy_isolation(entities)
         report["gates"]["G7_privacy_isolation"] = g7_res
         if not g7_res["passed"]:
-            report["overall_status"] = "FAIL"
             report["errors"].extend(g7_res["errors"])
+
+        # Determine overall status: FAIL if any error, PASS_WITH_UNRESOLVED if warnings/unresolved items, else PASS
+        has_fail = any(not g.get("passed") for g in report["gates"].values())
+        has_unresolved = (
+            any(g.get("status") in ("PASS_WITH_UNRESOLVED", "REVIEW_REQUIRED") for g in report["gates"].values())
+            or len(report["unresolved_items"]) > 0
+        )
+        if has_fail:
+            report["overall_status"] = "FAIL"
+        elif has_unresolved:
+            report["overall_status"] = "PASS_WITH_UNRESOLVED"
+        else:
+            report["overall_status"] = "PASS"
 
         return report
 
     def verify_g1_source_integrity(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         """G1: Verify source files and staged extractions match expected hashes."""
         errors = []
-        conn = get_db_connection(self.db_path) if self.db_path.exists() else None
+        db_available = self.db_path.exists()
+        conn = get_db_connection(self.db_path) if db_available else None
 
         all_items = (
             entities["test"]
@@ -182,6 +189,11 @@ class QualityGateRunner:
             if qp.get("publication_permission") == "public_synthetic":
                 continue
 
+            # For non-synthetic entities, database source verification is mandatory
+            if not db_available or not conn:
+                errors.append(f"Mandatory source verification unavailable: SQLite database not found at {self.db_path}")
+                break
+
             prov = item.get("_provenance", {})
             file_id = prov.get("source_file_id")
             legacy_id = prov.get("source_legacy_id")
@@ -195,27 +207,28 @@ class QualityGateRunner:
                 continue
             checked_sources.add(file_id)
 
-            if conn:
-                src_rec = get_source_by_file_id(conn, file_id) or get_source_by_legacy_id(conn, legacy_id)
-                if not src_rec:
-                    errors.append(f"Source {legacy_id} ({file_id}) not found in SQLite sources table.")
-                elif src_rec["content_sha256"] != source_sha:
-                    errors.append(f"Source SHA mismatch for {legacy_id}: DB={src_rec['content_sha256']} vs Prov={source_sha}")
+            src_rec = get_source_by_file_id(conn, file_id) or get_source_by_legacy_id(conn, legacy_id)
+            if not src_rec:
+                errors.append(f"Source {legacy_id} ({file_id}) not found in SQLite sources table.")
+            elif src_rec["content_sha256"] != source_sha:
+                errors.append(f"Source SHA mismatch for {legacy_id}: DB={src_rec['content_sha256']} vs Prov={source_sha}")
 
         if conn:
             conn.close()
 
-        return {"passed": len(errors) == 0, "errors": errors, "sources_verified": len(checked_sources)}
+        status = "FAIL" if errors else "PASS"
+        return {"passed": len(errors) == 0, "status": status, "errors": errors, "sources_verified": len(checked_sources)}
 
     def verify_g2_structural_fidelity(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
-        """G2: Verify sequential numbering, count consistency, and absence of unaccounted text loss."""
+        """G2: Verify sequential numbering, count consistency, and group boundaries."""
         errors = []
         warnings = []
         questions = entities["questions"]
+        groups = entities["groups"]
 
         if not questions:
             errors.append("No questions found for structural validation.")
-            return {"passed": False, "errors": errors, "warnings": warnings}
+            return {"passed": False, "status": "FAIL", "errors": errors, "warnings": warnings}
 
         q_nums = [q.get("question_number") for q in questions]
         expected_range = list(range(min(q_nums), max(q_nums) + 1))
@@ -232,13 +245,54 @@ class QualityGateRunner:
         if missing_nums:
             errors.append(f"Missing question numbers in sequence: {sorted(missing_nums)}")
 
-        # Check questions with unresolved prompts
+        # Validate question group boundaries and counts
+        group_expected_total = 0
+        all_group_q_nums = set()
+        for g in groups:
+            g_id = g.get("group_id", "unknown_group")
+            start_q = g.get("start_question_number")
+            end_q = g.get("end_question_number")
+
+            if start_q is None or end_q is None or start_q > end_q:
+                errors.append(f"Group {g_id} has invalid boundaries: start={start_q}, end={end_q}")
+                continue
+
+            expected_group_q = set(range(start_q, end_q + 1))
+            group_expected_total += len(expected_group_q)
+
+            # Check for overlapping group ranges
+            if all_group_q_nums & expected_group_q:
+                errors.append(f"Group {g_id} range overlaps with another group: {sorted(all_group_q_nums & expected_group_q)}")
+            all_group_q_nums.update(expected_group_q)
+
+            # Verify questions assigned to this group
+            assigned_questions = [q for q in questions if q.get("group_id") == g_id]
+            assigned_q_nums = [q.get("question_number") for q in assigned_questions]
+
+            # All assigned questions must be within [start_q, end_q]
+            for qn in assigned_q_nums:
+                if qn < start_q or qn > end_q:
+                    errors.append(f"Question {qn} assigned to group {g_id} is outside boundary [{start_q}, {end_q}]")
+
+            # Check question count for this group
+            if len(assigned_questions) != len(expected_group_q):
+                errors.append(f"Group {g_id} expects {len(expected_group_q)} questions [{start_q}-{end_q}], but found {len(assigned_questions)}")
+
+        # Check total questions vs total expected across groups
+        if groups and len(questions) != group_expected_total:
+            errors.append(f"Total questions count ({len(questions)}) does not match expected groups sum ({group_expected_total})")
+
+        # Check questions with unresolved prompts or forbidden placeholders
         for q in questions:
+            prompt_text = q.get("prompt_text", "")
+            if "[question" in prompt_text.lower() and "unresolved]" in prompt_text.lower():
+                errors.append(f"Question {q.get('question_id')} contains forbidden placeholder prompt: '{prompt_text}'")
             flags = q.get("quality_profile", {}).get("validation_flags", [])
             if "UNRESOLVED_QUESTION_PROMPT" in flags:
                 warnings.append(f"Question {q.get('question_id')} has unresolved prompt.")
 
-        return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
+        status = "FAIL" if errors else ("REVIEW_REQUIRED" if warnings else "PASS")
+        return {"passed": len(errors) == 0, "status": status, "errors": errors, "warnings": warnings}
 
     def verify_g3_schema_compliance(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         """G3: Validate every entity against its JSON schema."""
@@ -269,7 +323,8 @@ class QualityGateRunner:
                     item_id = item.get("test_id", item.get("question_id", item.get("answer_id", item.get("evidence_id", item.get("explanation_id", "unknown")))))
                     errors.append(f"Schema validation error on {category} ({item_id}): {e.message if hasattr(e, 'message') else str(e)}")
 
-        return {"passed": len(errors) == 0, "errors": errors, "entities_validated": total_checked}
+        status = "FAIL" if errors else "PASS"
+        return {"passed": len(errors) == 0, "status": status, "errors": errors, "entities_validated": total_checked}
 
     def verify_g4_referential_integrity(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         """G4: Verify relational integrity across entities."""
@@ -328,41 +383,101 @@ class QualityGateRunner:
             if ex.get("evidence_id") and ex["evidence_id"] not in evidence_ids:
                 errors.append(f"Explanation {ex['explanation_id']} references missing evidence_id: {ex['evidence_id']}")
 
-        return {"passed": len(errors) == 0, "errors": errors, "unresolved": unresolved}
+        # Check questions without matching answer
+        answers_by_q = {a.get("question_id"): a for a in entities["answers"] if a.get("question_id")}
+        for q in entities["questions"]:
+            qid = q.get("question_id")
+            if qid not in answers_by_q:
+                unresolved.append({"type": "unanswered_question", "id": qid, "note": f"Question {qid} has no matching answer record"})
+
+        status = "FAIL" if errors else ("PASS_WITH_UNRESOLVED" if unresolved else "PASS")
+        return {"passed": len(errors) == 0, "status": status, "errors": errors, "unresolved": unresolved}
 
     def verify_g5_evidence_fidelity(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
-        """G5: Verify evidence grounding and NOT GIVEN null quotation rule."""
+        """G5: Verify evidence grounding and NOT GIVEN null quotation rule, separating textual and semantic checks."""
         errors = []
+        textual_errors = []
+        semantic_errors = []
+        verified_spans = 0
+        checked_semantic = 0
+
         passages_by_id = {p["passage_id"]: p for p in entities["passages"]}
+        answers_by_id = {a["answer_id"]: a for a in entities["answers"]}
 
         for evid in entities["evidence"]:
             p_id = evid.get("passage_id")
             passage = passages_by_id.get(p_id)
             ev_type = evid.get("evidence_type")
 
+            # 1. Textual Grounding Verification
             if ev_type == "insufficient_information_not_given":
                 # Must NOT have verbatim quote or char offsets
                 if evid.get("verbatim_quote") is not None:
-                    errors.append(f"NOT GIVEN evidence {evid['evidence_id']} has non-null verbatim_quote.")
+                    textual_errors.append(f"NOT GIVEN evidence {evid['evidence_id']} has non-null verbatim_quote.")
                 if evid.get("char_start") is not None or evid.get("char_end") is not None:
-                    errors.append(f"NOT GIVEN evidence {evid['evidence_id']} has non-null character offsets.")
+                    textual_errors.append(f"NOT GIVEN evidence {evid['evidence_id']} has non-null character offsets.")
                 if not evid.get("missing_information_rationale"):
-                    errors.append(f"NOT GIVEN evidence {evid['evidence_id']} missing information rationale.")
+                    textual_errors.append(f"NOT GIVEN evidence {evid['evidence_id']} missing information rationale.")
             elif ev_type in {"direct_support", "contradictory_evidence"}:
                 quote = evid.get("verbatim_quote")
                 c_start = evid.get("char_start")
                 c_end = evid.get("char_end")
 
                 if not quote:
-                    errors.append(f"Evidence {evid['evidence_id']} ({ev_type}) missing verbatim_quote.")
+                    textual_errors.append(f"Evidence {evid['evidence_id']} ({ev_type}) missing verbatim_quote.")
+                elif c_start is None or c_end is None or c_start < 0 or c_start >= c_end:
+                    textual_errors.append(f"Evidence {evid['evidence_id']} has invalid offsets: [{c_start}, {c_end}]")
                 elif evid.get("exact_match_verified") is True:
                     if passage:
                         narrative = passage.get("narrative_text", "")
                         actual_span = narrative[c_start:c_end]
                         if actual_span != quote:
-                            errors.append(f"Evidence span mismatch on {evid['evidence_id']}: span='{actual_span[:30]}' vs quote='{quote[:30]}'")
+                            textual_errors.append(
+                                f"Evidence span mismatch on {evid['evidence_id']}: span='{actual_span[:30]}' vs quote='{quote[:30]}'"
+                            )
+                        else:
+                            verified_spans += 1
 
-        return {"passed": len(errors) == 0, "errors": errors}
+            # 2. Semantic Answer Verification
+            ans_id = evid.get("answer_id")
+            if ans_id and ans_id in answers_by_id:
+                ans_rec = answers_by_id[ans_id]
+                target_val = ans_rec.get("target_value")
+                if target_val:
+                    checked_semantic += 1
+                    norm_target = str(target_val).strip().upper()
+                    if norm_target in ("TRUE", "YES") and ev_type != "direct_support":
+                        semantic_errors.append(
+                            f"Semantic mismatch on evidence {evid['evidence_id']}: answer is '{norm_target}' but evidence_type is '{ev_type}' (expected 'direct_support')"
+                        )
+                    elif norm_target in ("FALSE", "NO") and ev_type != "contradictory_evidence":
+                        semantic_errors.append(
+                            f"Semantic mismatch on evidence {evid['evidence_id']}: answer is '{norm_target}' but evidence_type is '{ev_type}' (expected 'contradictory_evidence')"
+                        )
+                    elif norm_target == "NOT GIVEN" and ev_type != "insufficient_information_not_given":
+                        semantic_errors.append(
+                            f"Semantic mismatch on evidence {evid['evidence_id']}: answer is 'NOT GIVEN' but evidence_type is '{ev_type}' (expected 'insufficient_information_not_given')"
+                        )
+
+        errors.extend(textual_errors)
+        errors.extend(semantic_errors)
+        status = "FAIL" if errors else "PASS"
+
+        return {
+            "passed": len(errors) == 0,
+            "status": status,
+            "errors": errors,
+            "textual_grounding": {
+                "passed": len(textual_errors) == 0,
+                "errors": textual_errors,
+                "verified_spans": verified_spans,
+            },
+            "semantic_verification": {
+                "passed": len(semantic_errors) == 0,
+                "errors": semantic_errors,
+                "checked_pairs": checked_semantic,
+            },
+        }
 
     def verify_g6_deterministic_processing(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         """G6: Verify canonical content hashes match deterministic payload computation."""
@@ -377,30 +492,71 @@ class QualityGateRunner:
             + entities["explanations"]
         )
 
+        checked_count = 0
         for item in all_items:
+            item_id = item.get("test_id", item.get("question_id", item.get("answer_id", item.get("evidence_id", item.get("explanation_id", item.get("passage_id", item.get("group_id", "unknown")))))))
             prov = item.get("_provenance", {})
             recorded_hash = prov.get("canonical_content_sha256")
             if not recorded_hash:
+                errors.append(f"Missing canonical_content_sha256 in provenance for {item_id}")
                 continue
 
             computed = compute_canonical_content_hash(item)
             if computed != recorded_hash:
-                item_id = item.get("test_id", item.get("question_id", item.get("answer_id", "unknown")))
                 errors.append(f"Canonical hash mismatch on {item_id}: recorded={recorded_hash} vs computed={computed}")
+            else:
+                checked_count += 1
 
-        return {"passed": len(errors) == 0, "errors": errors}
+        status = "FAIL" if errors else "PASS"
+        return {
+            "passed": len(errors) == 0,
+            "status": status,
+            "errors": errors,
+            "entities_checked": checked_count,
+        }
 
     def verify_g7_privacy_isolation(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
-        """G7: Verify no private copyrighted text is exposed to public paths."""
+        """G7: Verify no private copyrighted text is exposed to public paths or unisolated outputs."""
         errors = []
-        # Check if any private_copyrighted entities are saved outside private/
-        for p in (REPO_ROOT / "data").rglob("*.json"):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                qp = data.get("quality_profile", {})
-                if qp.get("publication_permission") == "private_copyrighted":
-                    errors.append(f"Private copyrighted entity committed or stored under public data/: {p}")
-            except Exception:
-                pass
 
-        return {"passed": len(errors) == 0, "errors": errors}
+        # 1. Check all in-memory entities: if publication_permission is private_copyrighted,
+        # ensure output destination path or relative path is confined to private/
+        for category, items in entities.items():
+            for item in items:
+                qp = item.get("quality_profile", {})
+                prov = item.get("_provenance", {})
+                perm = qp.get("publication_permission")
+                output_rel_path = item.get("_output_path") or prov.get("relative_path") or ""
+                if perm == "private_copyrighted":
+                    if output_rel_path and not output_rel_path.startswith("private/"):
+                        item_id = item.get("test_id", item.get("question_id", item.get("answer_id", item.get("evidence_id", item.get("explanation_id", "unknown")))))
+                        errors.append(f"Private copyrighted entity {item_id} has public/non-private output path: {output_rel_path}")
+
+        # 2. Check all public filesystem paths for leaked private_copyrighted entities
+        public_dirs = [
+            REPO_ROOT / "data",
+            REPO_ROOT / "schemas",
+            REPO_ROOT / "harness",
+            REPO_ROOT / "tests",
+            REPO_ROOT / "principles",
+            REPO_ROOT / "docs",
+        ]
+        for pdir in public_dirs:
+            if not pdir.exists():
+                continue
+            for p in pdir.rglob("*.json"):
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        qp = data.get("quality_profile", {})
+                        if qp.get("publication_permission") == "private_copyrighted":
+                            errors.append(f"Private copyrighted entity stored under public path {p.relative_to(REPO_ROOT)}")
+                    elif isinstance(data, list):
+                        for elem in data:
+                            if isinstance(elem, dict) and elem.get("quality_profile", {}).get("publication_permission") == "private_copyrighted":
+                                errors.append(f"Private copyrighted entity found in list under public path {p.relative_to(REPO_ROOT)}")
+                except Exception:
+                    pass
+
+        status = "FAIL" if errors else "PASS"
+        return {"passed": len(errors) == 0, "status": status, "errors": errors}

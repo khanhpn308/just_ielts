@@ -134,6 +134,7 @@ class DocxReadingNormalizer(BaseNormalizer):
 
     def __init__(self, normalizer_version: str = NORMALIZER_VERSION):
         super().__init__(normalizer_version=normalizer_version)
+        self.unresolved_questions: List[Dict[str, Any]] = []
 
     def normalize(
         self,
@@ -153,6 +154,7 @@ class DocxReadingNormalizer(BaseNormalizer):
         - 'groups': List[QuestionGroup]
         - 'questions': List[IELTSQuestion]
         """
+        self.unresolved_questions = []
         paragraphs = raw_document.get("content", {}).get("paragraphs", [])
         if not paragraphs:
             raise ValueError("No paragraphs found in raw_document content.")
@@ -278,6 +280,7 @@ class DocxReadingNormalizer(BaseNormalizer):
             "passage": passage_entity,
             "groups": groups,
             "questions": questions,
+            "unresolved_questions": list(self.unresolved_questions),
         }
 
     def _find_passage_bounds(
@@ -535,9 +538,21 @@ class DocxReadingNormalizer(BaseNormalizer):
                     break
 
             q_id = f"Q-{volume_code}-{test_number:02d}-RD-{q_num:03d}"
-            prompt = matched_para if matched_para else f"[Question {q_num} text unresolved]"
-            flags = [] if matched_para else ["UNRESOLVED_QUESTION_PROMPT"]
-            status = "extracted" if matched_para else "review_required"
+            if not matched_para:
+                self.unresolved_questions.append({
+                    "question_id": q_id,
+                    "group_id": group_id,
+                    "passage_id": passage_id,
+                    "question_number": q_num,
+                    "question_type": q_type,
+                    "error": "UNRESOLVED_QUESTION_PROMPT",
+                    "note": f"Could not match question prompt text for question {q_num} in group {group_id}",
+                })
+                continue
+
+            prompt = matched_para
+            flags: List[str] = []
+            status = "extracted"
 
             q_prov = self._make_provenance(
                 source_record=source_record,
