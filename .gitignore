@@ -20,3 +20,21 @@ __pycache__/
 
 # Keep copyrighted/unreviewed raw source files locally
 sources/raw/
+
+
+# Private source materials
+/private/
+
+# Harness runtime state
+/harness/state/
+
+# Generated files
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary extraction files
+*.tmp
+

@@ -1,0 +1,365 @@
+"""Extraction orchestration and checkpoint/resume engine for Harness V0.1."""
+
+from datetime import datetime, timezone
+import json
+import logging
+import os
+from pathlib import Path
+import traceback
+from typing import Any, Dict, List, Optional
+
+from harness.adapters import (
+    AudioMetaExtractor,
+    BaseExtractor,
+    DocxExtractor,
+    PdfNativeExtractor,
+    PdfOcrExtractor,
+    PdfRouterExtractor,
+    XlsxExtractor,
+)
+from harness.classifier import classify_source
+from harness.config import (
+    OUTPUT_SCHEMA_VERSION,
+    PILOT_SOURCE_IDS,
+    RAW_DIR,
+    REPO_ROOT,
+    STAGING_DIR,
+)
+from harness.db import (
+    check_checkpoint_validity,
+    get_checkpoint,
+    get_db_connection,
+    get_source_by_file_id,
+    get_source_by_legacy_id,
+    list_sources,
+    record_checkpoint_completion,
+    record_checkpoint_failure,
+    record_checkpoint_start,
+)
+from harness.inventory import compute_file_sha256
+
+logger = logging.getLogger("harness.engine")
+
+
+def get_adapter_for_source(source_record: Dict[str, Any], adapter_override: Optional[str] = None) -> BaseExtractor:
+    """Selects and instantiates the appropriate extraction adapter."""
+    adapter_name = adapter_override
+    if not adapter_name:
+        cls_info = classify_source(source_record)
+        adapter_name = cls_info.get("recommended_adapter")
+
+    if adapter_name == "pdf_native":
+        return PdfNativeExtractor()
+    elif adapter_name == "pdf_ocr":
+        return PdfOcrExtractor()
+    elif adapter_name == "pdf_router":
+        return PdfRouterExtractor()
+    elif adapter_name == "docx":
+        return DocxExtractor()
+    elif adapter_name == "xlsx":
+        return XlsxExtractor()
+    elif adapter_name == "audio_meta":
+        return AudioMetaExtractor()
+    else:
+        raise ValueError(f"No suitable extraction adapter found for source {source_record.get('legacy_id')}")
+
+
+class ExtractionEngine:
+    """Orchestrates source extraction with granular checkpointing, resume, and retry."""
+
+    def __init__(self, db_path: Optional[Path] = None, staging_dir: Optional[Path] = None):
+        self.db_path = db_path
+        self.staging_dir = staging_dir or STAGING_DIR
+        self.stage = "raw_extraction"
+        self.schema_version = OUTPUT_SCHEMA_VERSION
+
+    def process_unit(
+        self,
+        conn,
+        source_record: Dict[str, Any],
+        adapter: BaseExtractor,
+        output_dir: Path,
+        unit_id: str,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Processes a single extraction unit with checkpoint verification."""
+        file_id = source_record["file_id"]
+        legacy_id = source_record.get("legacy_id") or "UNKNOWN"
+        source_sha256 = source_record["content_sha256"]
+        processing_unit = adapter.get_processing_unit_type(unit_id)
+
+        # Check existing checkpoint
+        if not force:
+            is_valid = check_checkpoint_validity(
+                conn=conn,
+                file_id=file_id,
+                stage=self.stage,
+                parser_version=adapter.version,
+                config_hash=adapter.config_hash,
+                output_schema_version=self.schema_version,
+                processing_unit=processing_unit,
+                unit_identifier=unit_id,
+                current_source_sha256=source_sha256,
+            )
+            if is_valid:
+                cp = get_checkpoint(
+                    conn,
+                    file_id,
+                    self.stage,
+                    adapter.version,
+                    adapter.config_hash,
+                    self.schema_version,
+                    processing_unit,
+                    unit_id,
+                )
+                return {
+                    "unit_identifier": unit_id,
+                    "status": "SKIPPED",
+                    "output_path": cp.get("output_path"),
+                    "output_sha256": cp.get("output_sha256"),
+                    "error": None,
+                }
+
+        # Record start of execution
+        expected_output = str(output_dir / f"{unit_id}.json")
+        record_checkpoint_start(
+            conn=conn,
+            file_id=file_id,
+            legacy_id=legacy_id,
+            source_sha256=source_sha256,
+            stage=self.stage,
+            parser_version=adapter.version,
+            config_hash=adapter.config_hash,
+            output_schema_version=self.schema_version,
+            processing_unit=processing_unit,
+            unit_identifier=unit_id,
+            output_path=expected_output,
+        )
+
+        try:
+            res = adapter.extract_unit(source_record, output_dir, unit_id)
+            record_checkpoint_completion(
+                conn=conn,
+                file_id=file_id,
+                stage=self.stage,
+                parser_version=adapter.version,
+                config_hash=adapter.config_hash,
+                output_schema_version=self.schema_version,
+                processing_unit=processing_unit,
+                unit_identifier=unit_id,
+                output_path=res["output_path"],
+                output_sha256=res["output_sha256"],
+                output_validity=res.get("output_validity", "valid"),
+            )
+            return {
+                "unit_identifier": unit_id,
+                "status": "COMPLETED",
+                "output_path": res["output_path"],
+                "output_sha256": res["output_sha256"],
+                "error": None,
+            }
+        except Exception as e:
+            err_msg = f"{type(e).__name__}: {str(e)}"
+            record_checkpoint_failure(
+                conn=conn,
+                file_id=file_id,
+                legacy_id=legacy_id,
+                source_sha256=source_sha256,
+                stage=self.stage,
+                parser_version=adapter.version,
+                config_hash=adapter.config_hash,
+                output_schema_version=self.schema_version,
+                processing_unit=processing_unit,
+                unit_identifier=unit_id,
+                error_message=err_msg,
+            )
+            # Remove any lingering .tmp file
+            tmp_candidate = Path(expected_output).with_name(f"{Path(expected_output).name}.tmp")
+            if tmp_candidate.exists():
+                tmp_candidate.unlink()
+            return {
+                "unit_identifier": unit_id,
+                "status": "FAILED",
+                "output_path": None,
+                "output_sha256": None,
+                "error": err_msg,
+            }
+
+    def process_source(
+        self,
+        source_record: Dict[str, Any],
+        force: bool = False,
+        specific_unit: Optional[str] = None,
+        adapter_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Processes all units of a single source record and writes a manifest."""
+        conn = get_db_connection(self.db_path)
+        legacy_id = source_record.get("legacy_id") or source_record["file_id"]
+        output_dir = self.staging_dir / legacy_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Source freshness verification: ensure source fingerprint matches on-disk content
+        actual_path = (
+            Path(source_record["relative_path"])
+            if Path(source_record["relative_path"]).is_absolute()
+            else REPO_ROOT / source_record["relative_path"]
+        )
+        if actual_path.is_file():
+            disk_sha = compute_file_sha256(actual_path)
+            if disk_sha != source_record.get("content_sha256"):
+                logger.info(
+                    f"Source {legacy_id} modified externally on disk: updating fingerprint."
+                )
+                source_record["content_sha256"] = disk_sha
+                source_record["size_bytes"] = actual_path.stat().st_size
+                now = datetime.now(timezone.utc).isoformat()
+                with conn:
+                    conn.execute(
+                        "UPDATE sources SET content_sha256 = ?, size_bytes = ?, updated_at = ? WHERE file_id = ?",
+                        (disk_sha, actual_path.stat().st_size, now, source_record["file_id"]),
+                    )
+
+        adapter = get_adapter_for_source(source_record, adapter_override)
+        all_units = adapter.get_processing_units(source_record)
+
+        if specific_unit:
+            if specific_unit not in all_units:
+                conn.close()
+                raise ValueError(f"Requested unit '{specific_unit}' not in valid units {all_units}")
+            units_to_process = [specific_unit]
+        else:
+            units_to_process = all_units
+
+        # Execute extraction for targeted units
+        new_results = []
+        for unit_id in units_to_process:
+            unit_res = self.process_unit(
+                conn=conn,
+                source_record=source_record,
+                adapter=adapter,
+                output_dir=output_dir,
+                unit_id=unit_id,
+                force=force,
+            )
+            new_results.append(unit_res)
+
+        manifest_path = output_dir / "manifest.json"
+
+        # Load existing manifest to preserve other units when re-extracting specific units
+        existing_manifest_units = {}
+        if manifest_path.exists():
+            try:
+                manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                for u in manifest_data.get("units", []):
+                    existing_manifest_units[u["unit_identifier"]] = u
+            except Exception:
+                pass
+
+        # Merge updated unit results into the manifest map
+        merged_units_map = dict(existing_manifest_units)
+        for res in new_results:
+            merged_units_map[res["unit_identifier"]] = res
+
+        final_units = []
+        completed_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        for u_id in all_units:
+            if u_id in merged_units_map:
+                u_info = merged_units_map[u_id]
+            else:
+                p_unit = adapter.get_processing_unit_type(u_id)
+                cp = get_checkpoint(
+                    conn,
+                    source_record["file_id"],
+                    self.stage,
+                    adapter.version,
+                    adapter.config_hash,
+                    self.schema_version,
+                    p_unit,
+                    u_id,
+                )
+                if cp and cp.get("status") == "COMPLETED":
+                    u_info = {
+                        "unit_identifier": u_id,
+                        "status": "COMPLETED",
+                        "output_path": cp.get("output_path"),
+                        "output_sha256": cp.get("output_sha256"),
+                        "error": None,
+                    }
+                elif cp and cp.get("status") == "FAILED":
+                    u_info = {
+                        "unit_identifier": u_id,
+                        "status": "FAILED",
+                        "output_path": None,
+                        "output_sha256": None,
+                        "error": cp.get("error_message"),
+                    }
+                else:
+                    u_info = {
+                        "unit_identifier": u_id,
+                        "status": "PENDING",
+                        "output_path": None,
+                        "output_sha256": None,
+                        "error": None,
+                    }
+            final_units.append(u_info)
+            st = u_info.get("status")
+            if st == "COMPLETED":
+                completed_count += 1
+            elif st == "SKIPPED":
+                skipped_count += 1
+            elif st == "FAILED":
+                failed_count += 1
+
+        manifest_payload = {
+            "file_id": source_record["file_id"],
+            "legacy_id": legacy_id,
+            "relative_path": source_record["relative_path"],
+            "source_sha256": source_record["content_sha256"],
+            "parser_name": adapter.name,
+            "parser_version": adapter.version,
+            "config_hash": adapter.config_hash,
+            "output_schema_version": self.schema_version,
+            "total_units": len(all_units),
+            "completed_units": completed_count,
+            "skipped_units": skipped_count,
+            "failed_units": failed_count,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "units": final_units,
+        }
+        adapter.atomic_write_json(manifest_path, manifest_payload)
+
+        run_completed = sum(1 for r in new_results if r["status"] == "COMPLETED")
+        run_skipped = sum(1 for r in new_results if r["status"] == "SKIPPED")
+        run_failed = sum(1 for r in new_results if r["status"] == "FAILED")
+
+        conn.close()
+        return {
+            "source_id": legacy_id,
+            "file_id": source_record["file_id"],
+            "total_units": len(all_units),
+            "completed": run_completed,
+            "skipped": run_skipped,
+            "failed": run_failed,
+            "manifest_path": str(manifest_path),
+            "results": new_results,
+        }
+
+    def process_all_pilots(self, force: bool = False) -> List[Dict[str, Any]]:
+        """Processes the 7 unique pilot sources."""
+        conn = get_db_connection(self.db_path)
+        sources = list_sources(conn, pilot_only=True, pilot_ids=PILOT_SOURCE_IDS)
+        conn.close()
+
+        source_map = {s["legacy_id"]: s for s in sources}
+        results = []
+        for pid in PILOT_SOURCE_IDS:
+            if pid not in source_map:
+                logger.warning(f"Pilot source {pid} not found in database inventory.")
+                continue
+            src = source_map[pid]
+            res = self.process_source(src, force=force)
+            results.append(res)
+        return results
