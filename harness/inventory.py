@@ -1,6 +1,7 @@
 """Source Inventory scanner and synchronization for Harness V0.1."""
 
 import csv
+from datetime import datetime, timezone
 import hashlib
 from collections import defaultdict
 from pathlib import Path
@@ -64,7 +65,10 @@ def scan_raw_sources(raw_dir: Path = RAW_DIR) -> List[Dict[str, Any]]:
     hash_counts = defaultdict(list)
 
     for p in raw_files:
-        rel_path = p.relative_to(REPO_ROOT).as_posix()
+        try:
+            rel_path = p.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            rel_path = p.as_posix()
         size_bytes = p.stat().st_size
         content_sha256 = compute_file_sha256(p)
         file_id = compute_file_id(rel_path)
@@ -121,16 +125,66 @@ def scan_raw_sources(raw_dir: Path = RAW_DIR) -> List[Dict[str, Any]]:
 def sync_inventory_to_db(db_path: Path = None, raw_dir: Path = RAW_DIR) -> Tuple[int, int]:
     """
     Scans raw sources and synchronizes all records to SQLite `sources` table.
-    Returns (total_records, total_bytes).
+    Reconciles removed and relocated files:
+    - Preserves legacy IDs for relocated files matching existing content hashes.
+    - Updates removed or relocated sources to 'missing' or 'relocated' status.
+    - Prevents missing sources from silently remaining marked as active.
+    Returns (total_scanned_records, total_bytes).
     """
     init_db(db_path)
     conn = get_db_connection(db_path)
-    sources = scan_raw_sources(raw_dir)
 
+    # 1. Fetch existing database records to compare
+    cur = conn.execute("SELECT * FROM sources")
+    existing_rows = [dict(r) for r in cur.fetchall()]
+    existing_by_file_id = {r["file_id"]: r for r in existing_rows}
+    existing_by_sha = defaultdict(list)
+    for r in existing_rows:
+        existing_by_sha[r["content_sha256"]].append(r)
+
+    # 2. Scan physical files on disk
+    sources = scan_raw_sources(raw_dir)
+    scanned_by_file_id = {s["file_id"]: s for s in sources}
+    scanned_by_rel_path = {s["relative_path"]: s for s in sources}
+    scanned_by_sha = defaultdict(list)
+    for s in sources:
+        scanned_by_sha[s["content_sha256"]].append(s)
+
+    # 3. Preserve legacy source IDs for relocated files
+    for s in sources:
+        if not s.get("legacy_id"):
+            candidates = existing_by_sha.get(s["content_sha256"], [])
+            for cand in candidates:
+                cand_legacy = cand.get("legacy_id")
+                if cand_legacy and cand["relative_path"] not in scanned_by_rel_path:
+                    s["legacy_id"] = cand_legacy
+                    break
+
+    # 4. Upsert scanned sources
     total_bytes = 0
     for src in sources:
         upsert_source(conn, src)
         total_bytes += src["size_bytes"]
+
+    # 5. Reconcile removed / relocated sources from prior inventory
+    now = datetime.now(timezone.utc).isoformat()
+    for old_fid, old_rec in existing_by_file_id.items():
+        if old_fid not in scanned_by_file_id:
+            old_rel_path = old_rec["relative_path"]
+            old_file_path = (
+                Path(old_rel_path) if Path(old_rel_path).is_absolute() else REPO_ROOT / old_rel_path
+            )
+            if not old_file_path.exists():
+                if old_rec["content_sha256"] in scanned_by_sha:
+                    new_status = "relocated"
+                else:
+                    new_status = "missing"
+
+                with conn:
+                    conn.execute(
+                        "UPDATE sources SET accessibility_status = ?, updated_at = ? WHERE file_id = ?",
+                        (new_status, now, old_fid),
+                    )
 
     conn.close()
     return len(sources), total_bytes

@@ -21,6 +21,16 @@ class BaseExtractor(ABC):
         self.config_hash = compute_config_hash(self.config)
         self.output_schema_version = OUTPUT_SCHEMA_VERSION
 
+    def get_processing_unit_type(self, unit_identifier: str) -> str:
+        """Determines standardized processing_unit string matching emitted provenance."""
+        if unit_identifier.startswith("page_"):
+            return "page"
+        if unit_identifier == "raw_sheets":
+            return "sheets"
+        if unit_identifier == "audio_metadata":
+            return "audio_metadata"
+        return "document"
+
     def build_provenance(
         self,
         source_record: Dict[str, Any],

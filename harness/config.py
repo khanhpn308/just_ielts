@@ -20,6 +20,7 @@ OUTPUT_SCHEMA_VERSION = "v0.1.0-raw-block-schema"
 PARSER_VERSIONS = {
     "pdf_native": "0.1.0-pdfminer",
     "pdf_ocr": "0.1.0-tesseract-pdftoppm",
+    "pdf_router": "0.1.0-page-router",
     "docx": "0.1.0-lxml-docx",
     "xlsx": "0.1.0-lxml-xlsx",
     "audio_meta": "0.1.0-file-id3",

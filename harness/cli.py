@@ -71,8 +71,66 @@ def cmd_extract(args):
     from harness.engine import ExtractionEngine
 
     engine = ExtractionEngine()
-    conn = get_db_connection()
 
+    if getattr(args, "_sources_override", None):
+        sources = args._sources_override
+    else:
+        conn = get_db_connection()
+        if args.source_id:
+            src = get_source_by_legacy_id(conn, args.source_id) or get_source_by_file_id(conn, args.source_id)
+            if not src:
+                print(f"Error: Source '{args.source_id}' not found in database inventory.")
+                conn.close()
+                sys.exit(1)
+            sources = [src]
+        elif args.pilot:
+            sources = list_sources(conn, pilot_only=True, pilot_ids=PILOT_SOURCE_IDS)
+        else:
+            print("Error: Specify --pilot or --source-id <id>.")
+            conn.close()
+            sys.exit(1)
+        conn.close()
+
+    total_failed_units = 0
+    force_flag = getattr(args, "force", False)
+
+    print(f">>> Running extraction on {len(sources)} source(s)... (Force={force_flag})")
+    for s in sources:
+        legacy_id = s.get("legacy_id") or s["file_id"]
+        print(f"\n--- Extracting {legacy_id} ({s['relative_path']}) ---")
+        res = engine.process_source(
+            source_record=s,
+            force=force_flag,
+            specific_unit=getattr(args, "unit", None),
+            adapter_override=getattr(args, "adapter", None),
+        )
+        print(
+            f"Result for {legacy_id}: Total units={res['total_units']}, "
+            f"Completed={res['completed']}, Skipped={res['skipped']}, Failed={res['failed']}"
+        )
+        if res["failed"] > 0:
+            total_failed_units += res["failed"]
+            for u in res["results"]:
+                if u["status"] == "FAILED":
+                    print(f"  [ERROR] Unit {u['unit_identifier']}: {u['error']}")
+
+    if total_failed_units > 0:
+        print(f"\n[ERROR] Extraction completed with {total_failed_units} failed unit(s).")
+        sys.exit(1)
+
+
+def cmd_resume(args):
+    """Resumes interrupted or incomplete extraction tasks across pilot or non-pilot sources."""
+    from harness.config import PILOT_SOURCE_IDS
+    from harness.db import (
+        get_db_connection,
+        get_interrupted_sources,
+        get_source_by_file_id,
+        get_source_by_legacy_id,
+        list_sources,
+    )
+
+    conn = get_db_connection()
     if args.source_id:
         src = get_source_by_legacy_id(conn, args.source_id) or get_source_by_file_id(conn, args.source_id)
         if not src:
@@ -80,32 +138,23 @@ def cmd_extract(args):
             conn.close()
             sys.exit(1)
         sources = [src]
-    elif args.pilot:
+    elif getattr(args, "all", False):
+        sources = get_interrupted_sources(conn)
+        if not sources:
+            print("No interrupted sources found across inventory.")
+            conn.close()
+            return
+    elif getattr(args, "pilot", False):
         sources = list_sources(conn, pilot_only=True, pilot_ids=PILOT_SOURCE_IDS)
     else:
-        print("Error: Specify --pilot or --source-id <id>.")
-        conn.close()
-        sys.exit(1)
-    conn.close()
+        # Default resume: check for interrupted sources first, otherwise fallback to pilot
+        interrupted = get_interrupted_sources(conn)
+        sources = interrupted if interrupted else list_sources(conn, pilot_only=True, pilot_ids=PILOT_SOURCE_IDS)
 
-    print(f">>> Running extraction on {len(sources)} source(s)... (Force={args.force})")
-    for s in sources:
-        legacy_id = s.get("legacy_id") or s["file_id"]
-        print(f"\n--- Extracting {legacy_id} ({s['relative_path']}) ---")
-        res = engine.process_source(
-            source_record=s,
-            force=args.force,
-            specific_unit=args.unit,
-            adapter_override=args.adapter,
-        )
-        print(
-            f"Result for {legacy_id}: Total units={res['total_units']}, "
-            f"Completed={res['completed']}, Skipped={res['skipped']}, Failed={res['failed']}"
-        )
-        if res["failed"] > 0:
-            for u in res["results"]:
-                if u["status"] == "FAILED":
-                    print(f"  [ERROR] Unit {u['unit_identifier']}: {u['error']}")
+    conn.close()
+    args.force = False
+    args._sources_override = sources
+    cmd_extract(args)
 
 
 def cmd_status(args):
@@ -152,25 +201,36 @@ def cmd_validate(args):
         print(f">>> Validating staged artifacts for {args.source_id}...")
         res = validate_staged_source(args.source_id)
         print(f"Status: {res['status']}")
-        print(f"Total files: {res['total_files']}, Passed: {res['passed']}, Failed: {res['failed']}")
+        print(
+            f"Total files: {res['total_files']}, Passed: {res['passed']}, "
+            f"Empty/Review: {res['empty']}, Failed: {res['failed']}"
+        )
         if res["errors"]:
             print("Errors encountered:")
             for e in res["errors"]:
                 print(f"  - {e}")
-        if res["status"] != "PASS":
+        if res["status"] == "FAIL":
             sys.exit(1)
     else:
         print(">>> Validating all staged outputs in staging directory...")
         res = validate_all_staged()
-        print(f"Total sources inspected: {res['total_sources']}")
-        print(f"Passed sources: {res['passed_sources']}, Failed sources: {res['failed_sources']}")
+        print(f"Overall Status: {res['status']}")
+        print(
+            f"Total sources inspected: {res['total_sources']}, "
+            f"Passed sources: {res['passed_sources']}, "
+            f"Review required sources: {res['review_required_sources']}, "
+            f"Failed sources: {res['failed_sources']}"
+        )
+        if res["errors"]:
+            for e in res["errors"]:
+                print(f"  [ERROR] {e}")
         for s in res["sources"]:
-            mark = "PASS" if s["status"] == "PASS" else "FAIL"
-            print(f"  [{mark}] {s['source_id']}: {s['passed']}/{s['total_files']} files valid")
+            mark = s["status"]
+            print(f"  [{mark:<15}] {s['source_id']}: {s['passed']}/{s['total_files']} files valid")
             if s["errors"]:
                 for e in s["errors"]:
-                    print(f"         Error: {e}")
-        if res["failed_sources"] > 0:
+                    print(f"                  Error: {e}")
+        if res["status"] == "FAIL" or res["total_sources"] == 0 or res["failed_sources"] > 0:
             sys.exit(1)
 
 
@@ -223,7 +283,12 @@ def main():
     parser_extract.add_argument("--adapter", type=str, help="Override adapter selection")
 
     # resume
-    subparsers.add_parser("resume", help="Resume interrupted or incomplete extraction tasks")
+    parser_resume = subparsers.add_parser("resume", help="Resume interrupted or incomplete extraction tasks")
+    parser_resume.add_argument("--source-id", type=str, help="Specific source ID to resume (pilot or non-pilot)")
+    parser_resume.add_argument("--pilot", action="store_true", help="Resume the 7 approved pilot sources")
+    parser_resume.add_argument("--all", action="store_true", help="Resume all interrupted sources across inventory")
+    parser_resume.add_argument("--unit", type=str, help="Specific unit identifier (e.g. page_0001)")
+    parser_resume.add_argument("--adapter", type=str, help="Override adapter selection")
 
     # status
     subparsers.add_parser("status", help="Show inventory and extraction checkpoint status")
@@ -244,12 +309,7 @@ def main():
     elif args.subcommand == "extract":
         cmd_extract(args)
     elif args.subcommand == "resume":
-        args.pilot = True
-        args.source_id = None
-        args.unit = None
-        args.force = False
-        args.adapter = None
-        cmd_extract(args)
+        cmd_resume(args)
     elif args.subcommand == "status":
         cmd_status(args)
     elif args.subcommand == "validate":

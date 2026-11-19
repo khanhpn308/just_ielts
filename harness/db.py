@@ -1,5 +1,6 @@
 """SQLite database schema and state management for Harness V0.1."""
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -347,6 +348,18 @@ def record_checkpoint_failure(
         )
 
 
+def get_interrupted_sources(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Retrieves all sources that have IN_PROGRESS or FAILED checkpoints."""
+    sql = """
+        SELECT DISTINCT s.* FROM sources s
+        JOIN processing_checkpoints cp ON s.file_id = cp.file_id
+        WHERE cp.status IN ('FAILED', 'IN_PROGRESS')
+        ORDER BY s.legacy_id
+    """
+    cur = conn.execute(sql)
+    return [dict(r) for r in cur.fetchall()]
+
+
 def check_checkpoint_validity(
     conn: sqlite3.Connection,
     file_id: str,
@@ -359,11 +372,15 @@ def check_checkpoint_validity(
     current_source_sha256: str,
 ) -> bool:
     """
-    Verifies if an existing checkpoint is fully valid and can be skipped.
+    Verifies if an existing checkpoint is fully valid and can be safely skipped.
     Returns True ONLY IF:
     1. Checkpoint exists and status == 'COMPLETED'.
-    2. Checkpoint source_sha256 matches current_source_sha256.
-    3. Checkpoint output_path is defined, file exists on disk, and size > 0.
+    2. Input source SHA-256 matches current_source_sha256.
+    3. Parser version, config hash, and schema version match.
+    4. Output file exists on disk and size > 0.
+    5. Output SHA-256 matches recorded checksum.
+    6. Output JSON structure is valid (contains 'provenance' and 'content' blocks).
+    7. Output provenance matches expected source (file_id, source_sha256) and unit.
     """
     cp = get_checkpoint(
         conn,
@@ -381,10 +398,77 @@ def check_checkpoint_validity(
         return False
     if cp.get("source_sha256") != current_source_sha256:
         return False
+    if cp.get("parser_version") != parser_version:
+        return False
+    if cp.get("config_hash") != config_hash:
+        return False
+    if cp.get("output_schema_version") != output_schema_version:
+        return False
+
     output_path = cp.get("output_path")
     if not output_path:
         return False
     p = Path(output_path)
     if not p.is_file() or p.stat().st_size == 0:
         return False
+
+    recorded_sha = cp.get("output_sha256")
+    if not recorded_sha:
+        return False
+
+    try:
+        raw_bytes = p.read_bytes()
+    except OSError:
+        return False
+
+    actual_sha = hashlib.sha256(raw_bytes).hexdigest()
+    if actual_sha != recorded_sha:
+        return False
+
+    try:
+        data = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        return False
+
+    if not isinstance(data, dict):
+        return False
+    if "provenance" not in data or "content" not in data:
+        return False
+
+    prov = data["provenance"]
+    if not isinstance(prov, dict):
+        return False
+
+    required_keys = [
+        "file_id",
+        "legacy_id",
+        "relative_path",
+        "source_sha256",
+        "parser_name",
+        "parser_version",
+        "config_hash",
+        "output_schema_version",
+        "processing_unit",
+        "unit_identifier",
+        "extracted_at",
+    ]
+    for k in required_keys:
+        if not prov.get(k):
+            return False
+
+    if prov.get("file_id") != file_id:
+        return False
+    if prov.get("source_sha256") != current_source_sha256:
+        return False
+    if prov.get("processing_unit") != processing_unit:
+        return False
+    if prov.get("unit_identifier") != unit_identifier:
+        return False
+    if prov.get("parser_version") != parser_version:
+        return False
+    if prov.get("config_hash") != config_hash:
+        return False
+    if prov.get("output_schema_version") != output_schema_version:
+        return False
+
     return True

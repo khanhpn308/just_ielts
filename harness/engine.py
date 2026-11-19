@@ -14,6 +14,7 @@ from harness.adapters import (
     DocxExtractor,
     PdfNativeExtractor,
     PdfOcrExtractor,
+    PdfRouterExtractor,
     XlsxExtractor,
 )
 from harness.classifier import classify_source
@@ -50,6 +51,8 @@ def get_adapter_for_source(source_record: Dict[str, Any], adapter_override: Opti
         return PdfNativeExtractor()
     elif adapter_name == "pdf_ocr":
         return PdfOcrExtractor()
+    elif adapter_name == "pdf_router":
+        return PdfRouterExtractor()
     elif adapter_name == "docx":
         return DocxExtractor()
     elif adapter_name == "xlsx":
@@ -82,7 +85,7 @@ class ExtractionEngine:
         file_id = source_record["file_id"]
         legacy_id = source_record.get("legacy_id") or "UNKNOWN"
         source_sha256 = source_record["content_sha256"]
-        processing_unit = "page" if unit_id.startswith("page_") else "document"
+        processing_unit = adapter.get_processing_unit_type(unit_id)
 
         # Check existing checkpoint
         if not force:

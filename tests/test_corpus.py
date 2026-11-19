@@ -28,6 +28,9 @@ from harness.engine import ExtractionEngine
 from harness.inventory import compute_file_sha256, scan_raw_sources, sync_inventory_to_db
 from harness.validator import validate_all_staged, validate_json_file, validate_staged_source
 
+# Mark all tests in this file as corpus tests (requiring private/raw/)
+pytestmark = pytest.mark.corpus
+
 
 @pytest.fixture(scope="session")
 def synced_db():
@@ -189,7 +192,7 @@ def test_interrupted_processing_recovery():
         assert res_full["failed"] == 0
 
         # Step 3: Validate output directory
-        val_res = validate_staged_source("SRC-004", staging_dir=tmp_staging)
+        val_res = validate_staged_source("SRC-004", staging_dir=tmp_staging, db_path=tmp_db)
         assert val_res["status"] == "PASS"
         assert val_res["total_files"] == 42
 
@@ -249,6 +252,7 @@ def test_no_public_data_leakage():
             filepath in allowed_root_files
             or filepath.startswith("harness/")
             or filepath.startswith("tests/")
+            or filepath.startswith(".github/")
         ), f"Unexpected untracked or modified file in repository: {filepath}"
         assert not filepath.startswith("private/staging/"), f"Staging output leaked to git: {filepath}"
         assert not filepath.startswith("private/raw/"), f"Raw file modified in git: {filepath}"
