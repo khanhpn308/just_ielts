@@ -1,3 +1,40 @@
+## Python Environment Policy
+
+This project uses a repository-local Python virtual environment located at `.venv/`.
+
+Before executing Python commands:
+
+1. Verify that `.venv/bin/python` exists.
+2. Use `.venv/bin/python` explicitly.
+3. Do not assume that the system Python contains the project's dependencies.
+4. Never install dependencies into system Python.
+5. If `.venv/` is missing, report the problem before executing the pipeline.
+6. Install dependencies only after user approval.
+
+### Required Commands
+
+Run tests:
+```bash
+./.venv/bin/python -m pytest -q tests/
+```
+
+Run Harness:
+```bash
+./.venv/bin/python -m harness.cli --help
+```
+
+Diagnose dependencies:
+```bash
+./.venv/bin/python -m harness.cli check-env
+```
+
+### Dependency Management
+
+- Maintain `requirements-harness.txt`.
+- Keep `.venv/` excluded from Git.
+- Do not commit installed packages.
+- Do not silently change package versions.
+
 # AI IELTS Tutor — Repository Instructions
 
 ## Scope
@@ -41,5 +78,5 @@ Support IELTS Academic Reading, Listening, Writing and Speaking. Target 7.5+ as 
 - One reusable principle/strategy per Markdown file. Use YAML frontmatter following `templates/principle.md`.
 - Never reuse an ID; do not silently modify/deprecate existing IDs. Link dependencies by ID.
 - Do not load every principle into context. Use the generated index.
-- For any new principle, run `python scripts/build_principles_index.py` and commit the index.
-- Use `python scripts/build_principles_index.py --check` and `python scripts/validate_data.py` to validate.
+- For any new principle, run `./.venv/bin/python scripts/build_principles_index.py` and commit the index.
+- Use `./.venv/bin/python scripts/build_principles_index.py --check` and `./.venv/bin/python scripts/validate_data.py` to validate.

@@ -1,0 +1,18 @@
+# IELTS Data Harness V0.1 — Direct Python Dependencies
+# Environment: Linux / WSL2 Ubuntu 24.04, Python >= 3.12
+
+# PDF low-level structure and page inspection
+pikepdf>=9.0.0,<11.0.0
+
+# PDF text and layout extraction
+pdfminer.six>=20221105
+
+# OpenXML (DOCX and XLSX) parsing
+lxml>=5.0.0,<7.0.0
+
+# Schema definition and configuration validation
+pydantic>=2.0.0,<3.0.0
+PyYAML>=6.0.0,<7.0.0
+
+# Automated testing
+pytest>=8.0.0,<10.0.0
