@@ -7,4 +7,9 @@ Legacy reference: [eight golden principles](general/8_golden_principles) (not ye
 | ID | Title | Skill | Question type(s) | Triggers | Status | File |
 | --- | --- | --- | --- | --- | --- | --- |
 | RD-CORE-001 | Evidence-Based Answering | reading | — | missing_textual_evidence, guessing_from_background_knowledge | draft | [open](reading/core/evidence-based-answering.md) |
+| RD-MI-001 | Question Decomposition | reading | matching-information | searching_with_full_prompt, misidentifying_information_target | draft | [open](reading/question-types/matching-information/question-decomposition.md) |
+| RD-MI-002 | Semantic Anchor Identification | reading | matching-information | exact_keyword_dependency, unable_to_locate_candidate_paragraph | draft | [open](reading/question-types/matching-information/semantic-anchor-identification.md) |
+| RD-MI-003 | Exact Information Evidence Verification | reading | matching-information | choosing_paragraph_without_evidence, incomplete_question_match | draft | [open](reading/question-types/matching-information/evidence-verification.md) |
+| RD-MI-004 | Topic-Match Distractor Elimination | reading | matching-information | topic_match_not_information_match, premature_selection_on_keywords | draft | [open](reading/question-types/matching-information/distractor-elimination.md) |
+| RD-MI-005 | Paragraph Reuse and Instruction Checks | reading | matching-information | assuming_one_to_one_paragraph_mapping, ignoring_answer_reuse_instructions | draft | [open](reading/question-types/matching-information/paragraph-reuse-and-instructions.md) |
 | RD-TFNG-001 | Distinguish FALSE from NOT GIVEN | reading | true-false-not-given | confuse_false_not_given, unsupported_inference | draft | [open](reading/question-types/true-false-not-given/false-vs-not-given.md) |
