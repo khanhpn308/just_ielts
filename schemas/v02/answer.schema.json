@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/answer.schema.json",
+  "title": "IELTSAnswer",
+  "description": "Normalized ground truth answer key and verified variants.",
+  "type": "object",
+  "properties": {
+    "answer_id": {
+      "type": "string",
+      "pattern": "^ANS-[A-Z0-9-]+-KEY$"
+    },
+    "question_id": {
+      "type": "string",
+      "pattern": "^Q-[A-Z0-9-]+-(RD|LS)-\\d{3}$"
+    },
+    "target_value": {
+      "type": ["string", "null"],
+      "description": "Primary authoritative answer string. Null only if key is missing in source."
+    },
+    "acceptable_alternates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "case_sensitive": {
+      "type": "boolean",
+      "default": false
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": ["authoritative_key", "consensus_key", "unverified", "disputed"]
+    },
+    "source_key_ref": {
+      "type": "string",
+      "description": "Document page or table coordinate citing the answer key"
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "answer_id",
+    "question_id",
+    "acceptable_alternates",
+    "case_sensitive",
+    "verification_status",
+    "source_key_ref",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "answer_id": "ANS-VOL99-01-RD-001-KEY",
+      "question_id": "Q-VOL99-01-RD-001",
+      "target_value": "TRUE",
+      "acceptable_alternates": ["T"],
+      "case_sensitive": false,
+      "verification_status": "authoritative_key",
+      "source_key_ref": "Key Sheet 1, Cell B3",
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "SRC-998",
+        "source_legacy_id": "SRC-998",
+        "relative_path": "private/raw/SYNTHETIC_VOL/key.xlsx",
+        "source_sha256": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
+        "processing_unit": "sheets",
+        "unit_identifier": "raw_sheets",
+        "raw_block_locator": "sheet:Test 1, cell:B3",
+        "extractor_adapter": "xlsx",
+        "extractor_version": "0.1.0-lxml-xlsx",
+        "normalizer_version": "0.2.0-alpha",
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/test.schema.json",
+  "title": "IELTSTest",
+  "description": "Normalized representation of an authentic or synthetic IELTS test paper.",
+  "type": "object",
+  "properties": {
+    "test_id": {
+      "type": "string",
+      "pattern": "^TEST-IELTS-[A-Z0-9]+-\\d{2}-(ACAD|GT)$",
+      "description": "Deterministic test ID"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 5
+    },
+    "volume": {
+      "type": "string"
+    },
+    "test_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    },
+    "track": {
+      "type": "string",
+      "enum": ["academic", "general_training"]
+    },
+    "source_reference_id": {
+      "type": ["string", "null"]
+    },
+    "sections_present": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["reading", "listening", "writing", "speaking"]
+      },
+      "minItems": 1
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "test_id",
+    "title",
+    "volume",
+    "test_number",
+    "track",
+    "sections_present",
+    "verification_status",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "test_id": "TEST-IELTS-VOL99-01-ACAD",
+      "title": "Synthetic Practice Test 1 (Academic)",
+      "volume": "VOL_99",
+      "test_number": 1,
+      "track": "academic",
+      "source_reference_id": "REF-SYNTH-01",
+      "sections_present": ["reading", "listening"],
+      "verification_status": "reviewed",
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "SRC-999",
+        "source_legacy_id": "SRC-999",
+        "relative_path": "private/raw/SYNTHETIC_VOL/test_paper.docx",
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processing_unit": "document",
+        "unit_identifier": "raw_document",
+        "raw_block_locator": "para_index:0",
+        "extractor_adapter": "docx",
+        "extractor_version": "0.1.0-lxml-docx",
+        "normalizer_version": "0.2.0-alpha",
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}

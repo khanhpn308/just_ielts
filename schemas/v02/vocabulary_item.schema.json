@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/vocabulary_item.schema.json",
+  "title": "VocabularyItem",
+  "description": "Normalized academic vocabulary or collocation entry grounded in authentic IELTS contexts.",
+  "type": "object",
+  "properties": {
+    "item_id": {
+      "type": "string",
+      "pattern": "^(VOC|COL)-[A-Z0-9]+-\\d{5}$"
+    },
+    "entry_type": {
+      "type": "string",
+      "enum": ["vocabulary", "collocation"]
+    },
+    "lemma_or_expression": {
+      "type": "string",
+      "minLength": 2
+    },
+    "pos": {
+      "type": "string",
+      "enum": ["noun", "verb", "adjective", "adverb", "phrase", "idiom"]
+    },
+    "cambridge_us_ipa": {
+      "type": "string",
+      "description": "Cambridge Dictionary US International Phonetic Alphabet representation"
+    },
+    "meaning_vi": {
+      "type": "string",
+      "minLength": 2,
+      "description": "Accurate explanation in Vietnamese"
+    },
+    "cefr_level": {
+      "type": "string",
+      "enum": ["B1", "B2", "C1", "C2"]
+    },
+    "context_sentence_en": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Authentic example sentence illustrating usage"
+    },
+    "collocations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_passage_id": {
+      "type": ["string", "null"]
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "item_id",
+    "entry_type",
+    "lemma_or_expression",
+    "pos",
+    "cambridge_us_ipa",
+    "meaning_vi",
+    "cefr_level",
+    "context_sentence_en",
+    "collocations",
+    "verification_status",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "item_id": "VOC-ACAD-00001",
+      "entry_type": "vocabulary",
+      "lemma_or_expression": "resilient",
+      "pos": "adjective",
+      "cambridge_us_ipa": "/rɪˈzɪl.jənt/",
+      "meaning_vi": "có khả năng phục hồi nhanh chóng, kiên cường chống chịu",
+      "cefr_level": "C1",
+      "context_sentence_en": "The newly formulated composite proved far more resilient to environmental degradation than conventional plastics.",
+      "collocations": ["resilient material", "highly resilient", "remain resilient"],
+      "source_passage_id": "PASSAGE-VOL99-01-RD01",
+      "verification_status": "verified",
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "SRC-999",
+        "source_legacy_id": "SRC-999",
+        "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processing_unit": "document",
+        "unit_identifier": "raw_document",
+        "raw_block_locator": "para_index:15",
+        "extractor_adapter": "docx",
+        "extractor_version": "0.1.0-lxml-docx",
+        "normalizer_version": "0.2.0-alpha",
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}

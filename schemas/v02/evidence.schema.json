@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/evidence.schema.json",
+  "title": "IELTSEvidence",
+  "description": "Normalized textual or auditory grounding proof supporting an answer.",
+  "type": "object",
+  "properties": {
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^EVID-[A-Z0-9-]+-\\d{2}$"
+    },
+    "answer_id": {
+      "type": "string",
+      "pattern": "^ANS-[A-Z0-9-]+-KEY$"
+    },
+    "passage_id": {
+      "type": "string",
+      "pattern": "^(PASSAGE|SECTION)-[A-Z0-9-]+-(RD|LS)\\d{2}$"
+    },
+    "paragraph_label": {
+      "type": ["string", "null"],
+      "description": "Paragraph letter anchor (e.g. 'B', 'Paragraph 3') or null"
+    },
+    "char_start": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Character start offset in passage narrative_text. Null if unresolved."
+    },
+    "char_end": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Character end offset in passage narrative_text. Null if unresolved."
+    },
+    "verbatim_quote": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Exact quoted string extracted from source or verified against text."
+    },
+    "exact_match_verified": {
+      "type": "boolean",
+      "default": false
+    },
+    "audio_interval": {
+      "type": ["object", "null"],
+      "properties": {
+        "start_sec": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_sec": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": ["start_sec", "end_sec"],
+      "additionalProperties": false
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "evidence_id",
+    "answer_id",
+    "passage_id",
+    "verbatim_quote",
+    "exact_match_verified",
+    "verification_status",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "evidence_id": "EVID-VOL99-01-RD-001-01",
+      "answer_id": "ANS-VOL99-01-RD-001-KEY",
+      "passage_id": "PASSAGE-VOL99-01-RD01",
+      "paragraph_label": "B",
+      "char_start": 320,
+      "char_end": 412,
+      "verbatim_quote": "These initial formulations lacked elasticity and fractured easily under sudden mechanical pressure.",
+      "exact_match_verified": true,
+      "audio_interval": null,
+      "verification_status": "verified",
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "SRC-997",
+        "source_legacy_id": "SRC-997",
+        "relative_path": "private/raw/SYNTHETIC_VOL/explanation_book.pdf",
+        "source_sha256": "41e4649b934ca495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae",
+        "processing_unit": "page",
+        "unit_identifier": "page_0005",
+        "raw_block_locator": "line:18",
+        "extractor_adapter": "pdf_ocr",
+        "extractor_version": "0.1.0-tesseract-pdftoppm",
+        "normalizer_version": "0.2.0-alpha",
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}

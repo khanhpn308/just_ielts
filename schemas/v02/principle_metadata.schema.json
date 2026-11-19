@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/principle_metadata.schema.json",
+  "title": "PrincipleMetadata",
+  "description": "Validation schema for YAML frontmatter in principles/**/*.md files.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[A-Z0-9]+-\\d{3}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 5
+    },
+    "type": {
+      "type": "string",
+      "enum": ["principle", "strategy", "heuristic"]
+    },
+    "skill": {
+      "type": "string",
+      "enum": ["reading", "listening", "writing", "speaking", "general"]
+    },
+    "question_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "triggers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_]+$"
+      },
+      "minItems": 1
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{2}-[A-Z0-9]+-\\d{3}$"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "reviewed", "verified"]
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "type",
+    "skill",
+    "question_types",
+    "triggers",
+    "dependencies",
+    "status",
+    "source_refs"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "id": "RD-TFNG-001",
+      "title": "Distinguish FALSE from NOT GIVEN",
+      "type": "strategy",
+      "skill": "reading",
+      "question_types": ["true-false-not-given"],
+      "triggers": ["confuse_false_not_given", "unsupported_inference"],
+      "dependencies": ["RD-CORE-001"],
+      "status": "draft",
+      "source_refs": []
+    }
+  ]
+}

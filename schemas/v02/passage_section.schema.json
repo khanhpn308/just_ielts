@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/passage_section.schema.json",
+  "title": "PassageOrSection",
+  "description": "Normalized Reading passage or Listening section within an IELTS test.",
+  "type": "object",
+  "properties": {
+    "passage_id": {
+      "type": "string",
+      "pattern": "^(PASSAGE|SECTION)-[A-Z0-9-]+-(RD|LS)\\d{2}$"
+    },
+    "test_id": {
+      "type": "string",
+      "pattern": "^TEST-IELTS-[A-Z0-9]+-\\d{2}-(ACAD|GT)$"
+    },
+    "skill": {
+      "type": "string",
+      "enum": ["reading", "listening"]
+    },
+    "sequence_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subtitle": {
+      "type": ["string", "null"]
+    },
+    "narrative_text": {
+      "type": "string",
+      "minLength": 100
+    },
+    "paragraphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Paragraph letter (A, B, C...) or numerical sequence label"
+          },
+          "sequence_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "char_start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "char_end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": ["label", "sequence_index", "char_start", "char_end", "text"],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "audio_track_ref": {
+      "type": ["string", "null"]
+    },
+    "word_count": {
+      "type": "integer",
+      "minimum": 50,
+      "maximum": 2000
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "passage_id",
+    "test_id",
+    "skill",
+    "sequence_number",
+    "title",
+    "narrative_text",
+    "paragraphs",
+    "word_count",
+    "verification_status",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "passage_id": "PASSAGE-VOL99-01-RD01",
+      "test_id": "TEST-IELTS-VOL99-01-ACAD",
+      "skill": "reading",
+      "sequence_number": 1,
+      "title": "The History of Synthetic Materials",
+      "subtitle": "How polymers revolutionized modern industrial production",
+      "narrative_text": "Synthetic polymers were first engineered during the twentieth century...",
+      "paragraphs": [
+        {
+          "label": "A",
+          "sequence_index": 0,
+          "char_start": 0,
+          "char_end": 72,
+          "text": "Synthetic polymers were first engineered during the twentieth century..."
+        }
+      ],
+      "audio_track_ref": null,
+      "word_count": 680,
+      "verification_status": "reviewed",
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "SRC-999",
+        "source_legacy_id": "SRC-999",
+        "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processing_unit": "document",
+        "unit_identifier": "raw_document",
+        "raw_block_locator": "para_index:2",
+        "extractor_adapter": "docx",
+        "extractor_version": "0.1.0-lxml-docx",
+        "normalizer_version": "0.2.0-alpha",
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}

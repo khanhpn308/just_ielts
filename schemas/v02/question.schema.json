@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://just-ielts.internal/schemas/v02/question.schema.json",
+  "title": "IELTSQuestion",
+  "description": "Normalized atomic test question item.",
+  "type": "object",
+  "properties": {
+    "question_id": {
+      "type": "string",
+      "pattern": "^Q-[A-Z0-9-]+-(RD|LS)-\\d{3}$"
+    },
+    "group_id": {
+      "type": "string",
+      "pattern": "^QG-[A-Z0-9-]+-G\\d{2}$"
+    },
+    "passage_id": {
+      "type": "string",
+      "pattern": "^(PASSAGE|SECTION)-[A-Z0-9-]+-(RD|LS)\\d{2}$"
+    },
+    "question_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 40
+    },
+    "question_type": {
+      "type": "string",
+      "enum": [
+        "true-false-not-given",
+        "yes-no-not-given",
+        "multiple-choice-single",
+        "multiple-choice-multi",
+        "matching-information",
+        "matching-headings",
+        "matching-features",
+        "matching-sentence-endings",
+        "sentence-completion",
+        "summary-completion",
+        "note-completion",
+        "table-completion",
+        "flow-chart-completion",
+        "diagram-label-completion",
+        "short-answer"
+      ]
+    },
+    "prompt_text": {
+      "type": "string",
+      "minLength": 3
+    },
+    "options": {
+      "type": ["object", "null"],
+      "description": "Options dictionary for multiple-choice questions (e.g. {'A': '...', 'B': '...'}).",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "blank_target": {
+      "type": ["string", "null"],
+      "description": "Token identifier inside prompt_text representing the gap to complete."
+    },
+    "linked_principle_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{2}-[A-Z0-9]+-\\d{3}$"
+      }
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": ["extracted", "review_required", "reviewed", "verified", "rejected"]
+    },
+    "_provenance": {
+      "$ref": "provenance.schema.json"
+    }
+  },
+  "required": [
+    "question_id",
+    "group_id",
+    "passage_id",
+    "question_number",
+    "question_type",
+    "prompt_text",
+    "linked_principle_ids",
+    "verification_status",
+    "_provenance"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "question_id": "Q-VOL99-01-RD-001",
+      "group_id": "QG-VOL99-01-RD01-G01",
+      "passage_id": "PASSAGE-VOL99-01-RD01",
+      "question_number": 1,
+      "question_type": "true-false-not-given",
+      "prompt_text": "Early synthetic polymers were more brittle than modern alternatives.",
+      "options": null,
+      "blank_target": null,
+      "linked_principle_ids": ["RD-TFNG-001"],
+      "verification_status": "reviewed",
+      "_provenance": {
+        "schema_version": "v0.2.0-normalized",
+        "source_file_id": "SRC-999",
+        "source_legacy_id": "SRC-999",
+        "relative_path": "private/raw/SYNTHETIC_VOL/reading_sample.docx",
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "processing_unit": "document",
+        "unit_identifier": "raw_document",
+        "raw_block_locator": "para_index:11",
+        "extractor_adapter": "docx",
+        "extractor_version": "0.1.0-lxml-docx",
+        "normalizer_version": "0.2.0-alpha",
+        "normalized_at": "2026-11-19T12:00:00Z"
+      }
+    }
+  ]
+}
