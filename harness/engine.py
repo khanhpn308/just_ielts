@@ -36,6 +36,7 @@ from harness.db import (
     record_checkpoint_failure,
     record_checkpoint_start,
 )
+from harness.inventory import compute_file_sha256
 
 logger = logging.getLogger("harness.engine")
 
@@ -197,21 +198,41 @@ class ExtractionEngine:
         output_dir = self.staging_dir / legacy_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Source freshness verification: ensure source fingerprint matches on-disk content
+        actual_path = (
+            Path(source_record["relative_path"])
+            if Path(source_record["relative_path"]).is_absolute()
+            else REPO_ROOT / source_record["relative_path"]
+        )
+        if actual_path.is_file():
+            disk_sha = compute_file_sha256(actual_path)
+            if disk_sha != source_record.get("content_sha256"):
+                logger.info(
+                    f"Source {legacy_id} modified externally on disk: updating fingerprint."
+                )
+                source_record["content_sha256"] = disk_sha
+                source_record["size_bytes"] = actual_path.stat().st_size
+                now = datetime.now(timezone.utc).isoformat()
+                with conn:
+                    conn.execute(
+                        "UPDATE sources SET content_sha256 = ?, size_bytes = ?, updated_at = ? WHERE file_id = ?",
+                        (disk_sha, actual_path.stat().st_size, now, source_record["file_id"]),
+                    )
+
         adapter = get_adapter_for_source(source_record, adapter_override)
-        units = adapter.get_processing_units(source_record)
+        all_units = adapter.get_processing_units(source_record)
 
         if specific_unit:
-            if specific_unit not in units:
+            if specific_unit not in all_units:
                 conn.close()
-                raise ValueError(f"Requested unit '{specific_unit}' not in valid units {units}")
-            units = [specific_unit]
+                raise ValueError(f"Requested unit '{specific_unit}' not in valid units {all_units}")
+            units_to_process = [specific_unit]
+        else:
+            units_to_process = all_units
 
-        results = []
-        completed_count = 0
-        skipped_count = 0
-        failed_count = 0
-
-        for unit_id in units:
+        # Execute extraction for targeted units
+        new_results = []
+        for unit_id in units_to_process:
             unit_res = self.process_unit(
                 conn=conn,
                 source_record=source_record,
@@ -220,8 +241,71 @@ class ExtractionEngine:
                 unit_id=unit_id,
                 force=force,
             )
-            results.append(unit_res)
-            st = unit_res["status"]
+            new_results.append(unit_res)
+
+        manifest_path = output_dir / "manifest.json"
+
+        # Load existing manifest to preserve other units when re-extracting specific units
+        existing_manifest_units = {}
+        if manifest_path.exists():
+            try:
+                manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                for u in manifest_data.get("units", []):
+                    existing_manifest_units[u["unit_identifier"]] = u
+            except Exception:
+                pass
+
+        # Merge updated unit results into the manifest map
+        merged_units_map = dict(existing_manifest_units)
+        for res in new_results:
+            merged_units_map[res["unit_identifier"]] = res
+
+        final_units = []
+        completed_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        for u_id in all_units:
+            if u_id in merged_units_map:
+                u_info = merged_units_map[u_id]
+            else:
+                p_unit = adapter.get_processing_unit_type(u_id)
+                cp = get_checkpoint(
+                    conn,
+                    source_record["file_id"],
+                    self.stage,
+                    adapter.version,
+                    adapter.config_hash,
+                    self.schema_version,
+                    p_unit,
+                    u_id,
+                )
+                if cp and cp.get("status") == "COMPLETED":
+                    u_info = {
+                        "unit_identifier": u_id,
+                        "status": "COMPLETED",
+                        "output_path": cp.get("output_path"),
+                        "output_sha256": cp.get("output_sha256"),
+                        "error": None,
+                    }
+                elif cp and cp.get("status") == "FAILED":
+                    u_info = {
+                        "unit_identifier": u_id,
+                        "status": "FAILED",
+                        "output_path": None,
+                        "output_sha256": None,
+                        "error": cp.get("error_message"),
+                    }
+                else:
+                    u_info = {
+                        "unit_identifier": u_id,
+                        "status": "PENDING",
+                        "output_path": None,
+                        "output_sha256": None,
+                        "error": None,
+                    }
+            final_units.append(u_info)
+            st = u_info.get("status")
             if st == "COMPLETED":
                 completed_count += 1
             elif st == "SKIPPED":
@@ -229,8 +313,6 @@ class ExtractionEngine:
             elif st == "FAILED":
                 failed_count += 1
 
-        # Write summary manifest for multi-unit or completed sources
-        manifest_path = output_dir / "manifest.json"
         manifest_payload = {
             "file_id": source_record["file_id"],
             "legacy_id": legacy_id,
@@ -240,25 +322,29 @@ class ExtractionEngine:
             "parser_version": adapter.version,
             "config_hash": adapter.config_hash,
             "output_schema_version": self.schema_version,
-            "total_units": len(units),
+            "total_units": len(all_units),
             "completed_units": completed_count,
             "skipped_units": skipped_count,
             "failed_units": failed_count,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "units": results,
+            "units": final_units,
         }
         adapter.atomic_write_json(manifest_path, manifest_payload)
+
+        run_completed = sum(1 for r in new_results if r["status"] == "COMPLETED")
+        run_skipped = sum(1 for r in new_results if r["status"] == "SKIPPED")
+        run_failed = sum(1 for r in new_results if r["status"] == "FAILED")
 
         conn.close()
         return {
             "source_id": legacy_id,
             "file_id": source_record["file_id"],
-            "total_units": len(units),
-            "completed": completed_count,
-            "skipped": skipped_count,
-            "failed": failed_count,
+            "total_units": len(all_units),
+            "completed": run_completed,
+            "skipped": run_skipped,
+            "failed": run_failed,
             "manifest_path": str(manifest_path),
-            "results": results,
+            "results": new_results,
         }
 
     def process_all_pilots(self, force: bool = False) -> List[Dict[str, Any]]:

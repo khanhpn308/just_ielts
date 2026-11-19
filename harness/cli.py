@@ -227,6 +227,8 @@ def cmd_validate(args):
         for s in res["sources"]:
             mark = s["status"]
             print(f"  [{mark:<15}] {s['source_id']}: {s['passed']}/{s['total_files']} files valid")
+            if s.get("empty_units"):
+                print(f"                  Notice: Review required for unit(s): {s['empty_units']}")
             if s["errors"]:
                 for e in s["errors"]:
                     print(f"                  Error: {e}")

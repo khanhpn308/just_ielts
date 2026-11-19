@@ -150,7 +150,10 @@ def sync_inventory_to_db(db_path: Path = None, raw_dir: Path = RAW_DIR) -> Tuple
     for s in sources:
         scanned_by_sha[s["content_sha256"]].append(s)
 
-    # 3. Preserve legacy source IDs for relocated files
+    # 3. Detect relocated files and reconcile legacy IDs
+    now = datetime.now(timezone.utc).isoformat()
+    relocated_mappings = []
+
     for s in sources:
         if not s.get("legacy_id"):
             candidates = existing_by_sha.get(s["content_sha256"], [])
@@ -158,32 +161,56 @@ def sync_inventory_to_db(db_path: Path = None, raw_dir: Path = RAW_DIR) -> Tuple
                 cand_legacy = cand.get("legacy_id")
                 if cand_legacy and cand["relative_path"] not in scanned_by_rel_path:
                     s["legacy_id"] = cand_legacy
+                    s["relocated_from"] = cand["file_id"]
+                    relocated_mappings.append((cand, s))
                     break
 
-    # 4. Upsert scanned sources
+    # 4. Clear legacy_id on old records to prevent UNIQUE constraint violation before upsert
+    for old_rec, new_src in relocated_mappings:
+        with conn:
+            conn.execute(
+                """
+                UPDATE sources SET
+                    legacy_id = NULL,
+                    accessibility_status = 'relocated',
+                    relocated_to = ?,
+                    updated_at = ?
+                WHERE file_id = ?
+                """,
+                (new_src["file_id"], now, old_rec["file_id"]),
+            )
+
+    # 5. Upsert scanned sources
     total_bytes = 0
     for src in sources:
         upsert_source(conn, src)
         total_bytes += src["size_bytes"]
 
-    # 5. Reconcile removed / relocated sources from prior inventory
-    now = datetime.now(timezone.utc).isoformat()
+    # 6. Preserve checkpoint lineage by updating foreign keys to new file_id
+    for old_rec, new_src in relocated_mappings:
+        with conn:
+            conn.execute(
+                """
+                UPDATE processing_checkpoints SET
+                    file_id = ?
+                WHERE file_id = ?
+                """,
+                (new_src["file_id"], old_rec["file_id"]),
+            )
+
+    # 7. Reconcile remaining removed sources from prior inventory
+    relocated_old_fids = {old_rec["file_id"] for old_rec, _ in relocated_mappings}
     for old_fid, old_rec in existing_by_file_id.items():
-        if old_fid not in scanned_by_file_id:
+        if old_fid not in scanned_by_file_id and old_fid not in relocated_old_fids:
             old_rel_path = old_rec["relative_path"]
             old_file_path = (
                 Path(old_rel_path) if Path(old_rel_path).is_absolute() else REPO_ROOT / old_rel_path
             )
             if not old_file_path.exists():
-                if old_rec["content_sha256"] in scanned_by_sha:
-                    new_status = "relocated"
-                else:
-                    new_status = "missing"
-
                 with conn:
                     conn.execute(
-                        "UPDATE sources SET accessibility_status = ?, updated_at = ? WHERE file_id = ?",
-                        (new_status, now, old_fid),
+                        "UPDATE sources SET accessibility_status = 'missing', updated_at = ? WHERE file_id = ?",
+                        (now, old_fid),
                     )
 
     conn.close()

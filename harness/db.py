@@ -40,6 +40,8 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 collection TEXT NOT NULL,
                 duplicate_group TEXT DEFAULT 'none',
                 accessibility_status TEXT NOT NULL,
+                relocated_from TEXT,
+                relocated_to TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -76,6 +78,13 @@ def init_db(db_path: Optional[Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_checkpoints_legacy_id ON processing_checkpoints(legacy_id);
             """
         )
+        # Migrate schema dynamically if table was created previously without relocation columns
+        cur = conn.execute("PRAGMA table_info(sources)")
+        existing_cols = {row["name"] for row in cur.fetchall()}
+        if "relocated_from" not in existing_cols:
+            conn.execute("ALTER TABLE sources ADD COLUMN relocated_from TEXT")
+        if "relocated_to" not in existing_cols:
+            conn.execute("ALTER TABLE sources ADD COLUMN relocated_to TEXT")
     conn.close()
 
 
@@ -86,11 +95,13 @@ def upsert_source(conn: sqlite3.Connection, source_data: Dict[str, Any]) -> None
         INSERT INTO sources (
             file_id, legacy_id, relative_path, filename, extension,
             detected_type, size_bytes, content_sha256, collection,
-            duplicate_group, accessibility_status, created_at, updated_at
+            duplicate_group, accessibility_status, relocated_from, relocated_to,
+            created_at, updated_at
         ) VALUES (
             :file_id, :legacy_id, :relative_path, :filename, :extension,
             :detected_type, :size_bytes, :content_sha256, :collection,
-            :duplicate_group, :accessibility_status, :created_at, :updated_at
+            :duplicate_group, :accessibility_status, :relocated_from, :relocated_to,
+            :created_at, :updated_at
         )
         ON CONFLICT(file_id) DO UPDATE SET
             legacy_id = excluded.legacy_id,
@@ -103,9 +114,13 @@ def upsert_source(conn: sqlite3.Connection, source_data: Dict[str, Any]) -> None
             collection = excluded.collection,
             duplicate_group = excluded.duplicate_group,
             accessibility_status = excluded.accessibility_status,
+            relocated_from = COALESCE(excluded.relocated_from, sources.relocated_from),
+            relocated_to = COALESCE(excluded.relocated_to, sources.relocated_to),
             updated_at = excluded.updated_at
     """
     params = dict(source_data)
+    params.setdefault("relocated_from", None)
+    params.setdefault("relocated_to", None)
     params.setdefault("created_at", now)
     params["updated_at"] = now
     with conn:
@@ -456,7 +471,11 @@ def check_checkpoint_validity(
         if not prov.get(k):
             return False
 
-    if prov.get("file_id") != file_id:
+    valid_file_ids = {file_id}
+    src_rec = get_source_by_file_id(conn, file_id)
+    if src_rec and src_rec.get("relocated_from"):
+        valid_file_ids.add(src_rec["relocated_from"])
+    if prov.get("file_id") not in valid_file_ids:
         return False
     if prov.get("source_sha256") != current_source_sha256:
         return False

@@ -764,3 +764,255 @@ def test_empty_staging_validation():
         assert res["total_sources"] == 0
         assert res["failed_sources"] == 0
         assert len(res["errors"]) > 0
+
+
+def test_partial_extraction_manifest_preservation():
+    """Verify that reprocessing a single unit does not overwrite the full document manifest."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        pdf_path = tmp_dir / "doc5.pdf"
+        make_digital_pdf(
+            pdf_path,
+            [f"Page {i} text content for full manifest test." for i in range(1, 6)],
+        )
+
+        db_path = tmp_dir / "test.db"
+        staging_dir = tmp_dir / "staging"
+        init_db(db_path)
+
+        src_record = {
+            "file_id": "FILE-synth-doc5",
+            "legacy_id": "SRC-DOC5",
+            "relative_path": str(pdf_path),
+            "filename": pdf_path.name,
+            "extension": ".pdf",
+            "detected_type": "digital_pdf",
+            "size_bytes": pdf_path.stat().st_size,
+            "content_sha256": compute_hash(pdf_path),
+            "collection": "test",
+            "duplicate_group": "none",
+            "accessibility_status": "accessible",
+        }
+        conn = get_db_connection(db_path)
+        upsert_source(conn, src_record)
+        conn.close()
+
+        engine = ExtractionEngine(db_path=db_path, staging_dir=staging_dir)
+
+        # 1. Extract full 5-page PDF
+        res_init = engine.process_source(src_record)
+        assert res_init["total_units"] == 5
+        assert res_init["completed"] == 5
+        assert res_init["failed"] == 0
+
+        manifest_file = staging_dir / "SRC-DOC5" / "manifest.json"
+        assert manifest_file.exists()
+        m_init = json.loads(manifest_file.read_text())
+        assert m_init["total_units"] == 5
+        assert len(m_init["units"]) == 5
+
+        # 2. Force re-extract page_0003 only
+        res_re = engine.process_source(src_record, specific_unit="page_0003", force=True)
+        assert res_re["completed"] == 1
+
+        # 3. Verify manifest still expects 5 pages
+        m_after = json.loads(manifest_file.read_text())
+        assert (
+            m_after["total_units"] == 5
+        ), f"Expected manifest to retain 5 total units, got {m_after['total_units']}"
+        assert (
+            len(m_after["units"]) == 5
+        ), f"Expected 5 unit entries in manifest, got {len(m_after['units'])}"
+        unit_ids = [u["unit_identifier"] for u in m_after["units"]]
+        assert unit_ids == [f"page_{i:04d}" for i in range(1, 6)]
+
+        # 4. Verify all 5 outputs remain valid on disk
+        for i in range(1, 6):
+            p_file = staging_dir / "SRC-DOC5" / f"page_{i:04d}.json"
+            assert p_file.exists(), f"page_{i:04d}.json missing on disk"
+            ok, msg, _ = validate_json_file(p_file)
+            assert ok, f"page_{i:04d}.json invalid: {msg}"
+
+        # 5. Verify source-level validation passes
+        val_res = validate_staged_source("SRC-DOC5", staging_dir=staging_dir, db_path=db_path)
+        assert val_res["status"] == "PASS"
+        assert val_res["passed"] == 5
+        assert val_res["failed"] == 0
+        assert len(val_res["errors"]) == 0
+
+
+def test_source_relocation_with_legacy_id():
+    """Verify inventory reconciliation when a source with existing legacy_id moves to a new path."""
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_dir = Path(tmp) / "raw"
+        old_file = raw_dir / "old_dir" / "exam.pdf"
+        old_file.parent.mkdir(parents=True, exist_ok=True)
+        make_digital_pdf(old_file, ["Exam page 1 text for relocation testing."])
+
+        db_path = Path(tmp) / "inventory.db"
+        init_db(db_path)
+
+        # Seed existing SRC-001 record in database at old_file path
+        file_sha = compute_hash(old_file)
+        old_rel = old_file.as_posix()
+        old_fid = f"FILE-{hashlib.sha256(old_rel.encode()).hexdigest()[:12]}"
+
+        conn = get_db_connection(db_path)
+        upsert_source(
+            conn,
+            {
+                "file_id": old_fid,
+                "legacy_id": "SRC-001",
+                "relative_path": old_rel,
+                "filename": old_file.name,
+                "extension": ".pdf",
+                "detected_type": "digital_pdf",
+                "size_bytes": old_file.stat().st_size,
+                "content_sha256": file_sha,
+                "collection": "test",
+                "duplicate_group": "none",
+                "accessibility_status": "accessible",
+            },
+        )
+        conn.close()
+
+        # Simulate extraction checkpoint under SRC-001 and old_fid
+        engine = ExtractionEngine(db_path=db_path, staging_dir=Path(tmp) / "staging")
+        conn = get_db_connection(db_path)
+        src_old = conn.execute("SELECT * FROM sources WHERE legacy_id = 'SRC-001'").fetchone()
+        engine.process_source(dict(src_old))
+        conn.close()
+
+        # Move file to new path with identical SHA-256
+        new_file = raw_dir / "new_dir" / "exam_relocated.pdf"
+        new_file.parent.mkdir(parents=True, exist_ok=True)
+        old_file.rename(new_file)
+        assert not old_file.exists()
+        assert new_file.exists()
+        assert compute_hash(new_file) == file_sha
+
+        # Re-run inventory sync without UNIQUE constraint violation
+        total_sources, total_bytes = sync_inventory_to_db(db_path=db_path, raw_dir=raw_dir)
+        assert total_sources == 1
+
+        conn = get_db_connection(db_path)
+        # 1. Database integrity checks
+        fk_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+        assert len(fk_errors) == 0, f"Foreign key violations found: {fk_errors}"
+        integrity_errors = conn.execute("PRAGMA integrity_check").fetchall()
+        assert integrity_errors[0][0] == "ok"
+
+        # 2. Check identity of active SRC-001
+        active_src = conn.execute("SELECT * FROM sources WHERE legacy_id = 'SRC-001'").fetchone()
+        assert active_src is not None
+        assert active_src["accessibility_status"] == "accessible"
+        assert active_src["relative_path"] == new_file.as_posix()
+        new_fid = active_src["file_id"]
+
+        # 3. Check lineage of old record
+        old_record = conn.execute("SELECT * FROM sources WHERE file_id = ?", (old_fid,)).fetchone()
+        assert old_record is not None
+        assert old_record["accessibility_status"] == "relocated"
+        assert old_record["legacy_id"] is None  # Freed to prevent UNIQUE conflict
+        assert old_record["relocated_to"] == new_fid
+        assert active_src["relocated_from"] == old_fid
+
+        # 4. Checkpoint lineage preservation
+        cp = conn.execute(
+            "SELECT * FROM processing_checkpoints WHERE legacy_id = 'SRC-001'"
+        ).fetchone()
+        assert cp is not None
+        assert cp["file_id"] == new_fid  # Linked to new active file_id
+        conn.close()
+
+        # 5. Checkpoint validity remains valid under relocated source
+        conn = get_db_connection(db_path)
+        is_valid = check_checkpoint_validity(
+            conn=conn,
+            file_id=new_fid,
+            stage="raw_extraction",
+            parser_version=cp["parser_version"],
+            config_hash=cp["config_hash"],
+            output_schema_version=cp["output_schema_version"],
+            processing_unit=cp["processing_unit"],
+            unit_identifier=cp["unit_identifier"],
+            current_source_sha256=file_sha,
+        )
+        conn.close()
+        assert is_valid is True, "Checkpoints must remain valid and reusable after source relocation"
+
+
+def test_source_freshness_external_modification():
+    """Verify that externally modifying raw source invalidates stale checkpoints even without inventory refresh."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        pdf_path = tmp_dir / "freshness.pdf"
+        make_digital_pdf(pdf_path, ["Original version of digital document."])
+
+        db_path = tmp_dir / "test.db"
+        staging_dir = tmp_dir / "staging"
+        init_db(db_path)
+
+        orig_sha = compute_hash(pdf_path)
+        src_record = {
+            "file_id": "FILE-freshness-01",
+            "legacy_id": "SRC-FRESH-01",
+            "relative_path": str(pdf_path),
+            "filename": pdf_path.name,
+            "extension": ".pdf",
+            "detected_type": "digital_pdf",
+            "size_bytes": pdf_path.stat().st_size,
+            "content_sha256": orig_sha,
+            "collection": "test",
+            "duplicate_group": "none",
+            "accessibility_status": "accessible",
+        }
+        conn = get_db_connection(db_path)
+        upsert_source(conn, src_record)
+        conn.close()
+
+        engine = ExtractionEngine(db_path=db_path, staging_dir=staging_dir)
+
+        # 1. Initial extraction
+        res1 = engine.process_source(src_record)
+        assert res1["completed"] == 1
+        assert res1["skipped"] == 0
+
+        # Verify second run skips idempotently
+        res1_idempotent = engine.process_source(src_record, force=False)
+        assert res1_idempotent["completed"] == 0
+        assert res1_idempotent["skipped"] == 1
+
+        # 2. Externally modify source content on disk WITHOUT running inventory
+        make_digital_pdf(pdf_path, ["Externally updated content with new text payload."])
+        new_sha = compute_hash(pdf_path)
+        assert new_sha != orig_sha
+
+        # Note: Database still holds orig_sha at this point
+        conn = get_db_connection(db_path)
+        db_src = conn.execute(
+            "SELECT * FROM sources WHERE file_id = ?", (src_record["file_id"],)
+        ).fetchone()
+        assert db_src["content_sha256"] == orig_sha
+        conn.close()
+
+        # 3. Call process_source without force: freshness check must detect change, invalidate stale checkpoint, and re-extract
+        stale_src_record = dict(db_src)  # Has stale content_sha256 from DB
+        res2 = engine.process_source(stale_src_record, force=False)
+        assert res2["completed"] == 1, "Must re-extract because on-disk source content changed"
+        assert res2["skipped"] == 0
+
+        # 4. Database source record is now updated with new SHA
+        conn = get_db_connection(db_path)
+        updated_db_src = conn.execute(
+            "SELECT * FROM sources WHERE file_id = ?", (src_record["file_id"],)
+        ).fetchone()
+        assert updated_db_src["content_sha256"] == new_sha
+        conn.close()
+
+        # 5. Output file contains updated content
+        out_file = staging_dir / "SRC-FRESH-01" / "page_0001.json"
+        data = json.loads(out_file.read_text())
+        assert "Externally updated content" in data["content"]["text"]
+        assert data["provenance"]["source_sha256"] == new_sha
+
