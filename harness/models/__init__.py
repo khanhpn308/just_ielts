@@ -27,6 +27,17 @@ from harness.models.question_bank import (
     SharedOption,
     WordLimitRule,
 )
+from harness.models.relationship import (
+    ConflictSeverity,
+    ConflictType,
+    RelationshipConflict,
+    RelationshipReview,
+    RelationshipStatus,
+    RelationshipType,
+    SCHEMA_VERSION_RELATIONSHIP,
+    SourceRelationship,
+    compute_relationship_id,
+)
 
 __all__ = [
     "ProvenanceEnvelope",
@@ -52,4 +63,13 @@ __all__ = [
     "ParaphrasePair",
     "IELTSExplanation",
     "AuthorType",
+    "SourceRelationship",
+    "RelationshipConflict",
+    "RelationshipReview",
+    "RelationshipType",
+    "RelationshipStatus",
+    "ConflictType",
+    "ConflictSeverity",
+    "compute_relationship_id",
+    "SCHEMA_VERSION_RELATIONSHIP",
 ]

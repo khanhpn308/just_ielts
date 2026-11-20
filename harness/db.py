@@ -101,6 +101,64 @@ def init_db(db_path: Optional[Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_status ON normalization_checkpoints(status);
             CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_source ON normalization_checkpoints(source_file_id);
             CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_lifecycle ON normalization_checkpoints(lifecycle_status);
+
+            CREATE TABLE IF NOT EXISTS source_relationships (
+                relationship_id TEXT PRIMARY KEY,
+                source_file_id TEXT NOT NULL REFERENCES sources(file_id),
+                target_file_id TEXT NOT NULL REFERENCES sources(file_id),
+                relationship_type TEXT NOT NULL,
+                collection TEXT NOT NULL,
+                volume TEXT NOT NULL,
+                test_number INTEGER,
+                passage_or_section INTEGER,
+                skill TEXT NOT NULL,
+                identity_evidence TEXT NOT NULL,
+                validation_flags TEXT NOT NULL,
+                match_confidence REAL NOT NULL,
+                relationship_status TEXT NOT NULL,
+                provenance TEXT NOT NULL,
+                source_content_sha256 TEXT,
+                target_content_sha256 TEXT,
+                config_fingerprint TEXT,
+                evidence_fingerprint TEXT,
+                schema_version TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rel_source ON source_relationships(source_file_id);
+            CREATE INDEX IF NOT EXISTS idx_rel_target ON source_relationships(target_file_id);
+            CREATE INDEX IF NOT EXISTS idx_rel_status ON source_relationships(relationship_status);
+            CREATE INDEX IF NOT EXISTS idx_rel_type ON source_relationships(relationship_type);
+            CREATE INDEX IF NOT EXISTS idx_rel_volume ON source_relationships(volume);
+
+            CREATE TABLE IF NOT EXISTS relationship_conflicts (
+                conflict_id TEXT PRIMARY KEY,
+                relationship_id TEXT REFERENCES source_relationships(relationship_id),
+                source_file_id TEXT NOT NULL REFERENCES sources(file_id),
+                target_file_id TEXT NOT NULL REFERENCES sources(file_id),
+                conflict_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                description TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_conflicts_rel ON relationship_conflicts(relationship_id);
+            CREATE INDEX IF NOT EXISTS idx_conflicts_src ON relationship_conflicts(source_file_id);
+            CREATE INDEX IF NOT EXISTS idx_conflicts_type ON relationship_conflicts(conflict_type);
+
+            CREATE TABLE IF NOT EXISTS relationship_reviews (
+                review_id TEXT PRIMARY KEY,
+                relationship_id TEXT NOT NULL REFERENCES source_relationships(relationship_id),
+                previous_status TEXT NOT NULL,
+                new_status TEXT NOT NULL,
+                reviewer TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reviews_rel ON relationship_reviews(relationship_id);
             """
         )
         # Migrate schema dynamically if table was created previously without relocation columns
@@ -110,6 +168,13 @@ def init_db(db_path: Optional[Path] = None) -> None:
             conn.execute("ALTER TABLE sources ADD COLUMN relocated_from TEXT")
         if "relocated_to" not in existing_cols:
             conn.execute("ALTER TABLE sources ADD COLUMN relocated_to TEXT")
+
+        # Migrate source_relationships dynamically if table was created without fingerprint columns
+        cur_rel = conn.execute("PRAGMA table_info(source_relationships)")
+        rel_cols = {row["name"] for row in cur_rel.fetchall()}
+        for col_name in ("source_content_sha256", "target_content_sha256", "config_fingerprint", "evidence_fingerprint"):
+            if col_name not in rel_cols:
+                conn.execute(f"ALTER TABLE source_relationships ADD COLUMN {col_name} TEXT")
     conn.close()
 
 
@@ -628,4 +693,235 @@ def count_normalization_by_lifecycle(conn: sqlite3.Connection) -> Dict[str, int]
         "SELECT lifecycle_status, COUNT(*) FROM normalization_checkpoints GROUP BY lifecycle_status"
     )
     return dict(cur.fetchall())
+
+
+# --- V0.3-A Source Relationship Registry Operations ---
+
+
+def upsert_source_relationship(conn: sqlite3.Connection, rel_data: Dict[str, Any]) -> None:
+    """Inserts or updates a source relationship record."""
+    now = datetime.now(timezone.utc).isoformat()
+    params = dict(rel_data)
+    params.setdefault("created_at", now)
+    params["updated_at"] = now
+
+    params.setdefault("source_content_sha256", None)
+    params.setdefault("target_content_sha256", None)
+    params.setdefault("config_fingerprint", None)
+    params.setdefault("evidence_fingerprint", None)
+
+    # Ensure JSON serializable fields are encoded
+    for json_field in ("identity_evidence", "validation_flags", "provenance"):
+        val = params.get(json_field)
+        if isinstance(val, (dict, list)):
+            params[json_field] = json.dumps(val, sort_keys=True)
+        elif val is None:
+            params[json_field] = "{}" if json_field != "validation_flags" else "[]"
+
+    sql = """
+        INSERT INTO source_relationships (
+            relationship_id, source_file_id, target_file_id, relationship_type,
+            collection, volume, test_number, passage_or_section, skill,
+            identity_evidence, validation_flags, match_confidence,
+            relationship_status, provenance, source_content_sha256, target_content_sha256,
+            config_fingerprint, evidence_fingerprint, schema_version, created_at, updated_at
+        ) VALUES (
+            :relationship_id, :source_file_id, :target_file_id, :relationship_type,
+            :collection, :volume, :test_number, :passage_or_section, :skill,
+            :identity_evidence, :validation_flags, :match_confidence,
+            :relationship_status, :provenance, :source_content_sha256, :target_content_sha256,
+            :config_fingerprint, :evidence_fingerprint, :schema_version, :created_at, :updated_at
+        )
+        ON CONFLICT(relationship_id) DO UPDATE SET
+            source_file_id = excluded.source_file_id,
+            target_file_id = excluded.target_file_id,
+            relationship_type = excluded.relationship_type,
+            collection = excluded.collection,
+            volume = excluded.volume,
+            test_number = excluded.test_number,
+            passage_or_section = excluded.passage_or_section,
+            skill = excluded.skill,
+            identity_evidence = excluded.identity_evidence,
+            validation_flags = excluded.validation_flags,
+            match_confidence = excluded.match_confidence,
+            relationship_status = excluded.relationship_status,
+            provenance = excluded.provenance,
+            source_content_sha256 = excluded.source_content_sha256,
+            target_content_sha256 = excluded.target_content_sha256,
+            config_fingerprint = excluded.config_fingerprint,
+            evidence_fingerprint = excluded.evidence_fingerprint,
+            schema_version = excluded.schema_version,
+            updated_at = excluded.updated_at
+    """
+    with conn:
+        conn.execute(sql, params)
+
+
+def _deserialize_rel_row(row: sqlite3.Row) -> Dict[str, Any]:
+    """Helper to convert sqlite3.Row to dict and parse JSON fields."""
+    d = dict(row)
+    for k in ("identity_evidence", "validation_flags", "provenance"):
+        if k in d and isinstance(d[k], str):
+            try:
+                d[k] = json.loads(d[k])
+            except Exception:
+                pass
+    return d
+
+
+def get_source_relationship(conn: sqlite3.Connection, relationship_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a source relationship by its unique ID."""
+    sql = "SELECT * FROM source_relationships WHERE relationship_id = ?"
+    cur = conn.execute(sql, (relationship_id,))
+    row = cur.fetchone()
+    return _deserialize_rel_row(row) if row else None
+
+
+def list_source_relationships(
+    conn: sqlite3.Connection,
+    status: Optional[str] = None,
+    relationship_type: Optional[str] = None,
+    source_file_id: Optional[str] = None,
+    target_file_id: Optional[str] = None,
+    volume: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Lists source relationships with optional filtering."""
+    clauses = []
+    params = []
+    if status:
+        clauses.append("relationship_status = ?")
+        params.append(status)
+    if relationship_type:
+        clauses.append("relationship_type = ?")
+        params.append(relationship_type)
+    if source_file_id:
+        clauses.append("source_file_id = ?")
+        params.append(source_file_id)
+    if target_file_id:
+        clauses.append("target_file_id = ?")
+        params.append(target_file_id)
+    if volume:
+        clauses.append("volume = ?")
+        params.append(volume)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT * FROM source_relationships {where_sql} ORDER BY created_at ASC"
+    cur = conn.execute(sql, params)
+    return [_deserialize_rel_row(r) for r in cur.fetchall()]
+
+
+def count_relationships_by_status(conn: sqlite3.Connection) -> Dict[str, int]:
+    """Returns relationship counts grouped by relationship_status."""
+    cur = conn.execute(
+        "SELECT relationship_status, COUNT(*) FROM source_relationships GROUP BY relationship_status"
+    )
+    return dict(cur.fetchall())
+
+
+def count_relationships_by_type(conn: sqlite3.Connection) -> Dict[str, int]:
+    """Returns relationship counts grouped by relationship_type."""
+    cur = conn.execute(
+        "SELECT relationship_type, COUNT(*) FROM source_relationships GROUP BY relationship_type"
+    )
+    return dict(cur.fetchall())
+
+
+def record_relationship_conflict(conn: sqlite3.Connection, conflict_data: Dict[str, Any]) -> None:
+    """Inserts a relationship conflict record."""
+    params = dict(conflict_data)
+    now = datetime.now(timezone.utc).isoformat()
+    params.setdefault("created_at", now)
+
+    evidence_val = params.get("evidence")
+    if isinstance(evidence_val, (dict, list)):
+        params["evidence"] = json.dumps(evidence_val, sort_keys=True)
+    elif evidence_val is None:
+        params["evidence"] = "{}"
+
+    sql = """
+        INSERT INTO relationship_conflicts (
+            conflict_id, relationship_id, source_file_id, target_file_id,
+            conflict_type, severity, description, evidence, created_at
+        ) VALUES (
+            :conflict_id, :relationship_id, :source_file_id, :target_file_id,
+            :conflict_type, :severity, :description, :evidence, :created_at
+        )
+        ON CONFLICT(conflict_id) DO UPDATE SET
+            relationship_id = excluded.relationship_id,
+            conflict_type = excluded.conflict_type,
+            severity = excluded.severity,
+            description = excluded.description,
+            evidence = excluded.evidence
+    """
+    with conn:
+        conn.execute(sql, params)
+
+
+def list_relationship_conflicts(
+    conn: sqlite3.Connection,
+    relationship_id: Optional[str] = None,
+    conflict_type: Optional[str] = None,
+    source_file_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Lists conflict records with optional filtering."""
+    clauses = []
+    params = []
+    if relationship_id:
+        clauses.append("relationship_id = ?")
+        params.append(relationship_id)
+    if conflict_type:
+        clauses.append("conflict_type = ?")
+        params.append(conflict_type)
+    if source_file_id:
+        clauses.append("source_file_id = ?")
+        params.append(source_file_id)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT * FROM relationship_conflicts {where_sql} ORDER BY created_at ASC"
+    cur = conn.execute(sql, params)
+    res = []
+    for r in cur.fetchall():
+        d = dict(r)
+        if "evidence" in d and isinstance(d["evidence"], str):
+            try:
+                d["evidence"] = json.loads(d["evidence"])
+            except Exception:
+                pass
+        res.append(d)
+    return res
+
+
+def record_relationship_review(conn: sqlite3.Connection, review_data: Dict[str, Any]) -> None:
+    """Inserts a relationship review event."""
+    params = dict(review_data)
+    now = datetime.now(timezone.utc).isoformat()
+    params.setdefault("created_at", now)
+
+    sql = """
+        INSERT INTO relationship_reviews (
+            review_id, relationship_id, previous_status, new_status,
+            reviewer, reason, created_at
+        ) VALUES (
+            :review_id, :relationship_id, :previous_status, :new_status,
+            :reviewer, :reason, :created_at
+        )
+        ON CONFLICT(review_id) DO NOTHING
+    """
+    with conn:
+        conn.execute(sql, params)
+
+
+def list_relationship_reviews(
+    conn: sqlite3.Connection, relationship_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Lists review events."""
+    if relationship_id:
+        cur = conn.execute(
+            "SELECT * FROM relationship_reviews WHERE relationship_id = ? ORDER BY created_at ASC",
+            (relationship_id,),
+        )
+    else:
+        cur = conn.execute("SELECT * FROM relationship_reviews ORDER BY created_at ASC")
+    return [dict(r) for r in cur.fetchall()]
+
 

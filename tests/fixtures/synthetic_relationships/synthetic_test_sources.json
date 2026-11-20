@@ -1,0 +1,202 @@
+{
+  "schema_version": "v0.3.0-synthetic-relationships",
+  "description": "Synthetic source documents and manifests for V0.3-A testing without private/raw/",
+  "sources": [
+    {
+      "file_id": "FILE-a00000000001",
+      "legacy_id": "SRC-SYN-01",
+      "relative_path": "data/synthetic/VOL99/Reading/test_1.docx",
+      "filename": "test_1.docx",
+      "extension": ".docx",
+      "detected_type": "docx",
+      "size_bytes": 10240,
+      "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]},
+        "passage_titles": {"1": {"1": "Marine Energy Systems"}},
+        "paragraphs": [
+          {"text": "READING TEST 1\nREADING PASSAGE 1\nMarine Energy Systems"}
+        ]
+      }
+    },
+    {
+      "file_id": "FILE-a00000000002",
+      "legacy_id": "SRC-SYN-02",
+      "relative_path": "data/synthetic/VOL99/Reading/key_test_1.pdf",
+      "filename": "key_test_1.pdf",
+      "extension": ".pdf",
+      "detected_type": "pdf",
+      "size_bytes": 20480,
+      "content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]},
+        "passage_titles": {"1": {"1": "Marine Energy Systems"}},
+        "answer_keys": {
+          "1": {
+            "1": "TRUE",
+            "2": "FALSE",
+            "3": "NOT GIVEN",
+            "4": "TRUE"
+          }
+        }
+      }
+    },
+    {
+      "file_id": "FILE-a00000000003",
+      "legacy_id": "SRC-SYN-03",
+      "relative_path": "data/synthetic/VOL88/Reading/key_test_1.xlsx",
+      "filename": "key_test_1.xlsx",
+      "extension": ".xlsx",
+      "detected_type": "xlsx",
+      "size_bytes": 15000,
+      "content_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "collection": "VOL 88",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]},
+        "answer_keys": {
+          "1": {
+            "1": "FALSE",
+            "2": "TRUE",
+            "3": "TRUE",
+            "4": "FALSE"
+          }
+        }
+      }
+    },
+    {
+      "file_id": "FILE-a00000000004",
+      "legacy_id": "SRC-SYN-04",
+      "relative_path": "data/synthetic/VOL99/Reading/key_test_2.pdf",
+      "filename": "key_test_2.pdf",
+      "extension": ".pdf",
+      "detected_type": "pdf",
+      "size_bytes": 20480,
+      "content_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [2],
+        "passages_or_sections": {"2": [1]},
+        "answer_keys": {
+          "2": {
+            "1": "TRUE",
+            "2": "FALSE"
+          }
+        }
+      }
+    },
+    {
+      "file_id": "FILE-a00000000005",
+      "legacy_id": "SRC-SYN-05",
+      "relative_path": "data/synthetic/VOL99/Reading/key_test_1_p3.pdf",
+      "filename": "key_test_1_p3.pdf",
+      "extension": ".pdf",
+      "detected_type": "pdf",
+      "size_bytes": 20480,
+      "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [3]},
+        "answer_keys": {
+          "1": {
+            "28": "YES",
+            "29": "NO"
+          }
+        }
+      }
+    },
+    {
+      "file_id": "FILE-a00000000006",
+      "legacy_id": "SRC-SYN-06",
+      "relative_path": "data/synthetic/VOL99/Reading/corrupt_key_test_1.pdf",
+      "filename": "corrupt_key_test_1.pdf",
+      "extension": ".pdf",
+      "detected_type": "pdf",
+      "size_bytes": 20480,
+      "content_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]},
+        "passage_titles": {"1": {"1": "Marine Energy Systems"}},
+        "answer_keys": {
+          "1": {
+            "1": "FALSE",
+            "2": "TRUE",
+            "3": "TRUE",
+            "4": "FALSE"
+          }
+        }
+      }
+    },
+    {
+      "file_id": "FILE-a00000000007",
+      "legacy_id": "SRC-SYN-07",
+      "relative_path": "data/synthetic/unlabeled_key.pdf",
+      "filename": "unlabeled_key.pdf",
+      "extension": ".pdf",
+      "detected_type": "pdf",
+      "size_bytes": 12000,
+      "content_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "collection": "Miscellaneous",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [],
+        "passages_or_sections": {},
+        "answer_keys": {}
+      }
+    },
+    {
+      "file_id": "FILE-a00000000008",
+      "legacy_id": "SRC-SYN-08",
+      "relative_path": "data/synthetic/VOL99/Listening/AudioTrack 01.mp3",
+      "filename": "AudioTrack 01.mp3",
+      "extension": ".mp3",
+      "detected_type": "mp3",
+      "size_bytes": 5000000,
+      "content_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]}
+      }
+    },
+    {
+      "file_id": "FILE-a00000000009",
+      "legacy_id": "SRC-SYN-09",
+      "relative_path": "data/synthetic/VOL99/Listening/Transcript Test 1.docx",
+      "filename": "Transcript Test 1.docx",
+      "extension": ".docx",
+      "detected_type": "docx",
+      "size_bytes": 15000,
+      "content_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible",
+      "staged_data": {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]}
+      }
+    }
+  ]
+}
