@@ -341,9 +341,7 @@ class SourceReferenceValidator:
         # 4. Check synthetic fixtures (only in isolated test contexts)
         if not trusted_extraction_found and not reasons:
             is_isolated = self.is_isolated_test_context()
-            can_use_synthetic = self.allow_synthetic_fixtures is True or (
-                self.allow_synthetic_fixtures is None and is_isolated
-            )
+            can_use_synthetic = is_isolated and (self.allow_synthetic_fixtures is not False)
 
             lid = ref_rec.get("legacy_id") or ""
             fid = ref_rec.get("file_id") or ""
@@ -436,6 +434,7 @@ class SourceReferenceValidator:
         candidate_target_file_id: Optional[str] = None,
         meta: Optional[SourceDocumentMetadata] = None,
         traceable_locations: Optional[Dict[str, Any]] = None,
+        candidate_source_file_id: Optional[str] = None,
     ) -> Tuple[bool, List[str], List[str], Optional[Dict[int, str]], Dict[str, Any]]:
         """Verifies test identity, question/section alignment, and positive content evidence."""
         flags: List[str] = []
@@ -562,31 +561,226 @@ class SourceReferenceValidator:
                 elif has_matching_answers:
                     trace_locs["matching_questions"] = sorted(list(test_keys.keys()))
 
-        # 4. Content alignment with Candidate Target (Check for contradictions)
-        if candidate_target_file_id and test_keys and expected_test_number is not None:
-            target_rec = get_source_by_file_id(self.conn, candidate_target_file_id)
-            if target_rec:
-                tgt_ok, tgt_meta, _, _, _ = self.load_source_evidence(target_rec)
-                if tgt_ok and tgt_meta and tgt_meta.answer_keys and expected_test_number in tgt_meta.answer_keys:
-                    tgt_keys = tgt_meta.answer_keys[expected_test_number]
-                    relevant_ref_keys = in_range_keys if in_range_keys else test_keys
-                    overlap = set(relevant_ref_keys.keys()).intersection(set(tgt_keys.keys()))
-                    if overlap:
-                        from harness.matching.engine import normalize_answer_value
-                        contradictions = []
-                        for q in sorted(overlap):
-                            r_val, _, _ = normalize_answer_value(relevant_ref_keys[q])
-                            t_val, _, _ = normalize_answer_value(tgt_keys[q])
-                            if r_val is not None and t_val is not None and r_val != t_val:
-                                contradictions.append((q, r_val, t_val))
-                        if contradictions:
-                            reasons.append(
-                                f"Contradictory answer key evidence: reference source contradicts candidate target answers "
-                                f"on {len(contradictions)} questions: {[f'Q{q}' for q, _, _ in contradictions[:5]]}."
-                            )
-                            flags.append("CONFLICTING_ANSWER_KEYS")
+        # 4. Content alignment between Actual Relationship Participants
+        target_rec = get_source_by_file_id(self.conn, candidate_target_file_id) if candidate_target_file_id else None
+        tgt_meta: Optional[SourceDocumentMetadata] = None
+        if target_rec:
+            tgt_ok, t_m, _, _, _ = self.load_source_evidence(target_rec)
+            if tgt_ok:
+                tgt_meta = t_m
 
-        is_valid = len(reasons) == 0
+        source_rec = get_source_by_file_id(self.conn, candidate_source_file_id) if candidate_source_file_id else None
+        src_meta: Optional[SourceDocumentMetadata] = None
+        if source_rec:
+            src_ok, s_m, _, _, _ = self.load_source_evidence(source_rec)
+            if src_ok:
+                src_meta = s_m
+
+        # Synthetic evidence isolation check: never allow synthetic evidence to validate production relationships
+        is_synthetic_ref = not ref_rec.get("relative_path", "").startswith("private/") and (
+            ref_rec.get("collection") in ("synthetic", "VOL 99", "VOL 88")
+            or (ref_rec.get("legacy_id") or "").startswith("SRC-SYN-")
+            or (ref_rec.get("file_id") or "").startswith("FILE-a0")
+        )
+        target_is_prod = bool(
+            target_rec and (
+                target_rec.get("relative_path", "").startswith("private/")
+                or target_rec.get("collection") not in ("synthetic", "VOL 99", "VOL 88")
+            )
+        )
+        source_is_prod = bool(
+            source_rec and (
+                source_rec.get("relative_path", "").startswith("private/")
+                or source_rec.get("collection") not in ("synthetic", "VOL 99", "VOL 88")
+            )
+        )
+        expected_is_prod = bool(
+            expected_collection and expected_collection not in ("synthetic", "VOL 99", "VOL 88")
+        )
+        if is_synthetic_ref and (target_is_prod or source_is_prod or expected_is_prod):
+            reasons.append(
+                "Synthetic evidence isolation violation: Synthetic evidence is strictly prohibited from validating "
+                "production relationships or sources."
+            )
+            flags.append("SYNTHETIC_EVIDENCE_FORBIDDEN_IN_PRODUCTION")
+
+        # Title alignment check
+        s_title = None
+        t_title = None
+        ref_title = None
+        if expected_test_number is not None:
+            if expected_passage_or_section is not None:
+                if src_meta and src_meta.passage_titles:
+                    s_title = src_meta.passage_titles.get(expected_test_number, {}).get(expected_passage_or_section)
+                if tgt_meta and tgt_meta.passage_titles:
+                    t_title = tgt_meta.passage_titles.get(expected_test_number, {}).get(expected_passage_or_section)
+                if meta and meta.passage_titles:
+                    ref_title = meta.passage_titles.get(expected_test_number, {}).get(expected_passage_or_section)
+            else:
+                if src_meta and src_meta.passage_titles and expected_test_number in src_meta.passage_titles:
+                    s_title = next(iter(src_meta.passage_titles[expected_test_number].values()), None)
+                if tgt_meta and tgt_meta.passage_titles and expected_test_number in tgt_meta.passage_titles:
+                    t_title = next(iter(tgt_meta.passage_titles[expected_test_number].values()), None)
+                if meta and meta.passage_titles and expected_test_number in meta.passage_titles:
+                    ref_title = next(iter(meta.passage_titles[expected_test_number].values()), None)
+
+        def _clean_title(t: Optional[str]) -> str:
+            if not t:
+                return ""
+            return re.sub(r"[^\w\s]", "", t.lower()).strip()
+
+        norm_s = _clean_title(s_title)
+        norm_t = _clean_title(t_title)
+        norm_ref = _clean_title(ref_title)
+
+        has_title_match = False
+        title_contradiction = False
+
+        if norm_s and norm_t:
+            if norm_s in norm_t or norm_t in norm_s:
+                has_title_match = True
+            else:
+                title_contradiction = True
+                reasons.append(
+                    f"Contradictory passage titles: source participant title '{s_title}' "
+                    f"contradicts target participant title '{t_title}'."
+                )
+                flags.append("PASSAGE_TITLE_MISMATCH")
+
+        if norm_ref:
+            if norm_s:
+                if norm_s in norm_ref or norm_ref in norm_s:
+                    has_title_match = True
+                elif not title_contradiction:
+                    title_contradiction = True
+                    reasons.append(
+                        f"Passage title mismatch: reference source title '{ref_title}' "
+                        f"contradicts source candidate title '{s_title}'."
+                    )
+                    flags.append("PASSAGE_TITLE_MISMATCH")
+            if norm_t:
+                if norm_t in norm_ref or norm_ref in norm_t:
+                    has_title_match = True
+                elif not title_contradiction:
+                    title_contradiction = True
+                    reasons.append(
+                        f"Passage title mismatch: reference source title '{ref_title}' "
+                        f"contradicts target candidate title '{t_title}'."
+                    )
+                    flags.append("PASSAGE_TITLE_MISMATCH")
+
+        # Answer key alignment check
+        relevant_ref_keys = in_range_keys if in_range_keys else test_keys
+        has_verified_answer_match = False
+        from harness.matching.engine import normalize_answer_value
+
+        if tgt_meta and expected_test_number is not None and expected_test_number in tgt_meta.answer_keys:
+            tgt_keys = tgt_meta.answer_keys[expected_test_number]
+            overlap_tgt = set(relevant_ref_keys.keys()).intersection(set(tgt_keys.keys()))
+            if overlap_tgt:
+                contradictions = []
+                matching_ans = []
+                for q in sorted(overlap_tgt):
+                    r_val, _, _ = normalize_answer_value(relevant_ref_keys[q])
+                    t_val, _, _ = normalize_answer_value(tgt_keys[q])
+                    if r_val is not None and t_val is not None:
+                        if r_val == t_val:
+                            matching_ans.append(q)
+                        else:
+                            contradictions.append((q, r_val, t_val))
+                if contradictions:
+                    reasons.append(
+                        f"Contradictory answer key evidence: reference source contradicts candidate target answers "
+                        f"on {len(contradictions)} questions: {[f'Q{q}' for q, _, _ in contradictions[:5]]}."
+                    )
+                    flags.append("CONFLICTING_ANSWER_KEYS")
+                elif matching_ans:
+                    has_verified_answer_match = True
+
+        if src_meta and expected_test_number is not None and expected_test_number in src_meta.answer_keys:
+            src_keys = src_meta.answer_keys[expected_test_number]
+            overlap_src = set(relevant_ref_keys.keys()).intersection(set(src_keys.keys()))
+            if overlap_src:
+                contradictions = []
+                matching_ans = []
+                for q in sorted(overlap_src):
+                    r_val, _, _ = normalize_answer_value(relevant_ref_keys[q])
+                    s_val, _, _ = normalize_answer_value(src_keys[q])
+                    if r_val is not None and s_val is not None:
+                        if r_val == s_val:
+                            matching_ans.append(q)
+                        else:
+                            contradictions.append((q, r_val, s_val))
+                if contradictions:
+                    reasons.append(
+                        f"Contradictory answer key evidence: reference source contradicts candidate source answers "
+                        f"on {len(contradictions)} questions: {[f'Q{q}' for q, _, _ in contradictions[:5]]}."
+                    )
+                    flags.append("CONFLICTING_ANSWER_KEYS")
+                elif matching_ans:
+                    has_verified_answer_match = True
+
+        if (
+            src_meta and tgt_meta and expected_test_number is not None
+            and expected_test_number in src_meta.answer_keys
+            and expected_test_number in tgt_meta.answer_keys
+        ):
+            s_k = src_meta.answer_keys[expected_test_number]
+            t_k = tgt_meta.answer_keys[expected_test_number]
+            overlap_st = set(s_k.keys()).intersection(set(t_k.keys()))
+            if overlap_st:
+                contradictions = []
+                matching_ans = []
+                for q in sorted(overlap_st):
+                    s_val, _, _ = normalize_answer_value(s_k[q])
+                    t_val, _, _ = normalize_answer_value(t_k[q])
+                    if s_val is not None and t_val is not None:
+                        if s_val == t_val:
+                            matching_ans.append(q)
+                        else:
+                            contradictions.append((q, s_val, t_val))
+                if contradictions:
+                    reasons.append(
+                        f"Contradictory answer key evidence: candidate source contradicts candidate target answers "
+                        f"on {len(contradictions)} questions: {[f'Q{q}' for q, _, _ in contradictions[:5]]}."
+                    )
+                    flags.append("CONFLICTING_ANSWER_KEYS")
+                elif matching_ans:
+                    has_verified_answer_match = True
+
+        # Audio / transcript alignment
+        has_audio_transcript_match = False
+        if relationship_type in ("listening_to_audio", "listening_to_transcript"):
+            if (
+                meta.raw_content_summary.get("audio_track") is not None
+                and expected_passage_or_section is not None
+                and meta.raw_content_summary.get("audio_track") == expected_passage_or_section
+            ):
+                has_audio_transcript_match = True
+            elif (
+                meta.passages_or_sections
+                and expected_passage_or_section is not None
+                and any(expected_passage_or_section in s for s in meta.passages_or_sections.values())
+            ):
+                has_audio_transcript_match = True
+
+        # Content alignment between relationship participants
+        # An independent answer key merely containing question numbers in the same range
+        # is NOT sufficient to verify content alignment between participants.
+        is_content_aligned = bool(
+            has_title_match or has_verified_answer_match or has_audio_transcript_match
+        )
+
+        if not is_content_aligned:
+            reasons.append(
+                "Independently verifiable alignment between the actual relationship participants is required. "
+                "Relationship matches only on Volume, Test, Passage, and question numbers without verified "
+                "content alignment (no matching title, verified answers, or transcript/audio); retaining review_required."
+            )
+            flags.append("INSUFFICIENT_CONTENT_ALIGNMENT")
+            flags.append("REVIEW_REQUIRED_RETAINED")
+
+        is_valid = len(reasons) == 0 and is_content_aligned
         if is_valid:
             flags.append("RELATIONSHIP_EVIDENCE_VERIFIED")
             flags.append("CONTENT_ALIGNMENT_VERIFIED")
@@ -656,6 +850,7 @@ class SourceReferenceValidator:
             relationship_type=relationship_type,
             evidence_references=eff_refs,
             candidate_target_file_id=candidate_target_file_id,
+            candidate_source_file_id=candidate_source_file_id,
             meta=meta,
             traceable_locations=traceable_locations,
         )

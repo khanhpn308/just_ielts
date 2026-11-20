@@ -1436,4 +1436,191 @@ def test_synthetic_fixture_injection_rejected_outside_test_context(populated_db)
     assert "SYNTHETIC_FIXTURE_NOT_PERMITTED" in val_res.flags
 
 
+def test_negative_regression_unrelated_sources_sharing_volume_test_passage_and_questions_retain_review_required(populated_db):
+    """Regression test: Two unrelated sources sharing Volume, Test, Passage, and question numbers
+
+    must NOT receive CONTENT_ALIGNMENT_VERIFIED and must retain review_required.
+    An independent answer key merely containing question numbers in the same range cannot confirm it.
+    """
+    conn = get_db_connection(populated_db)
+    # Source A: Reading passage in VOL 99 Test 1 Passage 1, covering questions 1-13
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000091",
+        "legacy_id": "SRC-SYN-UNRELATED-A",
+        "relative_path": "data/synthetic/VOL99/Reading/unrelated_test_1_passage_1_a.docx",
+        "filename": "unrelated_test_1_passage_1_a.docx",
+        "extension": ".docx",
+        "detected_type": "docx",
+        "size_bytes": 2048,
+        "content_sha256": "9191919191919191919191919191919191919191919191919191919191919191",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    # Source B: Unrelated answer key in VOL 99 Test 1 Passage 1, covering questions 1-13 with different/unaligned topic
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000092",
+        "legacy_id": "SRC-SYN-UNRELATED-B",
+        "relative_path": "data/synthetic/VOL99/Reading/unrelated_test_1_passage_1_b.pdf",
+        "filename": "unrelated_test_1_passage_1_b.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 2048,
+        "content_sha256": "9292929292929292929292929292929292929292929292929292929292929292",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+
+    # Synthetic metadata fixtures: sharing Volume, Test, Passage, and question range [1, 14],
+    # but distinct unrelated passage titles ("The History of Tea" vs "Underground Railway Networks")
+    synthetic_fixtures = {
+        "SRC-SYN-UNRELATED-A": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [1]},
+            "passage_titles": {"1": {"1": "The History of Tea"}},
+            "paragraphs": [{"text": "Passage 1: The History of Tea"}],
+        },
+        "SRC-SYN-UNRELATED-B": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [1]},
+            "passage_titles": {"1": {"1": "Underground Railway Networks"}},
+            "answer_keys": {
+                "1": {1: "NO", 2: "YES", 3: "NOT GIVEN"}
+            },
+        },
+    }
+
+    rel_id = compute_relationship_id(
+        "FILE-a00000000091", "FILE-a00000000092", "question_to_answer_key", "VOL 99", 1, 1
+    )
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": "FILE-a00000000091",
+        "target_file_id": "FILE-a00000000092",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": 1,
+        "skill": "reading",
+        "identity_evidence": {"expected_question_range": [1, 14]},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH", "QUESTION_RANGE_ALIGNED"],
+        "match_confidence": 0.5,
+        "relationship_status": "review_required",
+        "provenance": {"matcher_version": "0.3.0-a", "evaluated_at": "2026-11-20T10:00:00Z"},
+        "source_content_sha256": "9191919191919191919191919191919191919191919191919191919191919191",
+        "target_content_sha256": "9292929292929292929292929292929292929292929292929292929292929292",
+        "schema_version": "v0.3.0-relationship",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db, synthetic_fixtures=synthetic_fixtures)
+
+    # 1. Attempt approval using an independent answer key (SRC-SYN-02) that contains Q1-Q4
+    # in the same test/passage range
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="OPERATOR-01",
+            reason="Attempting approval using independent answer key sharing question range",
+            evidence_source_id="SRC-SYN-02",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-02",
+                    "provenance_type": "independent_key",
+                    "authority": "official",
+                }
+            },
+        )
+
+    assert "retaining review_required" in str(exc_info.value) or "Missing independent supporting evidence" in str(exc_info.value)
+
+    # 2. Relationship retains review_required status in SQLite DB
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "review_required"
+
+    # 3. Direct validator call verifies CONTENT_ALIGNMENT_VERIFIED is NOT marked
+    validator = SourceReferenceValidator(conn, synthetic_fixtures=synthetic_fixtures)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-02",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_source_file_id="FILE-a00000000091",
+        candidate_target_file_id="FILE-a00000000092",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={"source_id": "SRC-SYN-02", "provenance_type": "key", "authority": "test"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "CONTENT_ALIGNMENT_VERIFIED" not in val_res.flags
+    assert "CONTENT_ALIGNMENT_ESTABLISHED" not in val_res.flags
+    assert "INSUFFICIENT_CONTENT_ALIGNMENT" in val_res.flags
+    assert "REVIEW_REQUIRED_RETAINED" in val_res.flags
+
+
+def test_negative_regression_allow_synthetic_fixtures_explicit_true_outside_test_env_rejected(populated_db, monkeypatch):
+    """Regression test: allow_synthetic_fixtures=True must NOT override the isolated-test-context requirement.
+
+    Synthetic fixtures must strictly be rejected outside isolated test contexts.
+    """
+    # 1. Simulate running outside of test environment
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("JUST_IELTS_TEST_ENV", raising=False)
+
+    conn = get_db_connection(populated_db)
+    validator = SourceReferenceValidator(conn, allow_synthetic_fixtures=True)
+
+    # 2. Verify isolated test context is detected as False
+    assert validator.is_isolated_test_context() is False
+
+    # 3. Attempt reference validation with synthetic fixture; must be rejected despite allow_synthetic_fixtures=True
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-02",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_target_file_id="FILE-a00000000004",
+        candidate_source_file_id="FILE-a00000000001",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={
+            "source_id": "SRC-SYN-02",
+            "provenance_type": "independent_key",
+            "authority": "cambridge",
+        },
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "SYNTHETIC_FIXTURE_NOT_PERMITTED" in val_res.flags
+    assert any("Synthetic fixture injection is permitted only in isolated test contexts" in r for r in val_res.rejection_reasons)
+
+    # 4. Also verify through RelationshipReviewService that decide() rejects approval outside test environment
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+    service = RelationshipReviewService(db_path=populated_db, allow_synthetic_fixtures=True)
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="OPERATOR-01",
+            reason="Attempting approval outside test environment with allow_synthetic_fixtures=True",
+            evidence_source_id="SRC-SYN-02",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-02",
+                    "authority": "cambridge",
+                    "provenance_type": "independent_key",
+                }
+            },
+        )
+    assert "Synthetic fixture injection is permitted only in isolated test contexts" in str(exc_info.value)
+
+
+
 
