@@ -446,6 +446,97 @@ def cmd_retrieve(args):
         print(f"Disclosure: {unc.get('disclosure_text')}")
 
 
+def cmd_match_sources(args):
+    """Executes multi-source matching and relationship resolution."""
+    from harness.matching.service import RelationshipMatchingService
+
+    output_p = Path(args.output_dir) if args.output_dir else None
+    service = RelationshipMatchingService()
+
+    print(">>> Executing Multi-Source Relationship Resolver (Phase V0.3-A)...")
+    try:
+        res = service.match_sources(
+            pilot=args.pilot,
+            source_id=args.source_id,
+            target_id=args.target_id,
+            dry_run=args.dry_run,
+            force=args.force,
+            resume=not args.force,
+            output_dir=output_p,
+        )
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"\n=== SOURCE RELATIONSHIP MATCHING SUMMARY ===")
+    print(f"Total Evaluated Relationships : {res['total_evaluated']}")
+    print(f"  - Confirmed                 : {res['confirmed']}")
+    print(f"  - Rejected                  : {res['rejected']}")
+    print(f"  - Review Required           : {res['review_required']}")
+    print(f"  - Candidate                 : {res['candidate']}")
+    print(f"  - Resumed/Skipped           : {res['skipped_resumed']}")
+    print(f"Total Conflicts Recorded      : {len(res['conflicts'])}")
+
+    print(f"\n{'Rel ID':<20} | {'Type':<25} | {'Vol':<6} | {'Test':<5} | {'Status':<15} | {'Flags'}")
+    print("-" * 95)
+    for r in res["relationships"]:
+        flags_str = ",".join(r.validation_flags[:2])
+        t_str = f"T{r.test_number}" if r.test_number else "-"
+        print(
+            f"{r.relationship_id:<20} | {r.relationship_type:<25} | {r.volume:<6} | {t_str:<5} | "
+            f"{r.relationship_status:<15} | {flags_str}"
+        )
+
+    if res["conflicts"]:
+        print(f"\n=== CONFLICT SAMPLES ({min(5, len(res['conflicts']))} of {len(res['conflicts'])}) ===")
+        for c in res["conflicts"][:5]:
+            print(f"[{c.conflict_type}] ({c.severity.upper()}): {c.description}")
+
+
+def cmd_relationship_status(args):
+    """Displays SQLite registry status for source relationships and conflicts."""
+    from harness.db import (
+        count_relationships_by_status,
+        count_relationships_by_type,
+        get_db_connection,
+        list_relationship_conflicts,
+        list_source_relationships,
+    )
+
+    conn = get_db_connection()
+    status_counts = count_relationships_by_status(conn)
+    type_counts = count_relationships_by_type(conn)
+    conflicts = list_relationship_conflicts(conn)
+    confirmed_rels = list_source_relationships(conn, status="confirmed")
+    rejected_rels = list_source_relationships(conn, status="rejected")
+    unresolved_rels = list_source_relationships(conn, status="review_required")
+    conn.close()
+
+    total_rels = sum(status_counts.values())
+
+    print("=== SOURCE RELATIONSHIP REGISTRY STATUS (V0.3-A) ===")
+    print(f"Total Registered Relationships: {total_rels}")
+    print("\n[Status Distribution]")
+    for st in ("confirmed", "review_required", "candidate", "rejected"):
+        cnt = status_counts.get(st, 0)
+        pct = (cnt / total_rels * 100) if total_rels else 0.0
+        print(f"  {st:<16}: {cnt:>4} ({pct:>5.1f}%)")
+
+    print("\n[Relationship Types]")
+    for tp, cnt in sorted(type_counts.items()):
+        print(f"  {tp:<28}: {cnt:>4}")
+
+    print(f"\n[Conflict Ledger]")
+    print(f"  Total Active Conflicts    : {len(conflicts)}")
+
+    if confirmed_rels:
+        print(f"\n[Confirmed Relationships]")
+        for r in confirmed_rels[:10]:
+            t_str = f"Test {r['test_number']}" if r.get('test_number') else "All Tests"
+            p_str = f"P{r['passage_or_section']}" if r.get('passage_or_section') else ""
+            print(f"  - [{r['relationship_id']}] {r['relationship_type']} ({r['volume']} {t_str} {p_str})")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="harness",
@@ -515,6 +606,19 @@ def main():
     parser_ret.add_argument("--normalized-dir", type=str, help="Directory containing normalized JSONs")
     parser_ret.add_argument("--format", choices=["text", "json"], default="text", help="Output format (default: text)")
 
+    # match-sources (Phase V0.3-A)
+    parser_match = subparsers.add_parser("match-sources", help="Resolve relationships between IELTS sources")
+    parser_match.add_argument("--pilot", action="store_true", help="Match the approved pilot sources")
+    parser_match.add_argument("--source-id", type=str, help="Specific source ID to match (e.g. SRC-138)")
+    parser_match.add_argument("--target-id", type=str, help="Specific target source ID to match against")
+    parser_match.add_argument("--dry-run", action="store_true", help="Evaluate matches without saving to SQLite")
+    parser_match.add_argument("--force", action="store_true", help="Force re-evaluation, ignoring existing records")
+    parser_match.add_argument("--resume", action="store_true", default=True, help="Resume from existing records (default: True)")
+    parser_match.add_argument("--output-dir", type=str, help="Custom output directory for reports")
+
+    # relationship-status (Phase V0.3-A)
+    subparsers.add_parser("relationship-status", help="Show source relationship registry status")
+
     args = parser.parse_args()
 
     if args.subcommand == "inventory":
@@ -539,6 +643,10 @@ def main():
         cmd_normalization_status(args)
     elif args.subcommand == "retrieve":
         cmd_retrieve(args)
+    elif args.subcommand == "match-sources":
+        cmd_match_sources(args)
+    elif args.subcommand == "relationship-status":
+        cmd_relationship_status(args)
     else:
         parser.print_help()
 
