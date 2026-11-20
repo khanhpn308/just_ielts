@@ -1,0 +1,51 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "658f9fe0940519a1e62469a9ab613f32eca714da25737f63ac170623a967843c",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "audio_track_ref": null,
+  "narrative_text": "Submerged tidal turbines generate predictable electrical current from marine channels. The kinetic energy of coastal waters offers high predictability compared to wind generation.\n\nTurbine installation remains limited to four experimental demonstration sites worldwide. Engineers continue monitoring blade integrity under extreme hydrodynamic loads and saline corrosion. Global capital expenditure records for 2020 were not published in the environmental assessment.",
+  "paragraphs": [
+    {
+      "char_end": 179,
+      "char_start": 0,
+      "label": "1",
+      "sequence_index": 0,
+      "text": "Submerged tidal turbines generate predictable electrical current from marine channels. The kinetic energy of coastal waters offers high predictability compared to wind generation."
+    },
+    {
+      "char_end": 466,
+      "char_start": 181,
+      "label": "2",
+      "sequence_index": 1,
+      "text": "Turbine installation remains limited to four experimental demonstration sites worldwide. Engineers continue monitoring blade integrity under extreme hydrodynamic loads and saline corrosion. Global capital expenditure records for 2020 were not published in the environmental assessment."
+    }
+  ],
+  "passage_id": "PASSAGE-VOL99-01-RD01",
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "reviewed",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "sequence_number": 1,
+  "skill": "reading",
+  "subtitle": null,
+  "test_id": "TEST-IELTS-VOL99-01-ACAD",
+  "title": "Marine Energy Systems",
+  "word_count": 58
+}

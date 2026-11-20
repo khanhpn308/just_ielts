@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "33244f180ea585cfdae13441370e518052378839ba50971e28374d63e177af9f",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "blank_target": null,
+  "group_id": "QG-VOL99-01-RD01-G01",
+  "linked_principle_ids": [
+    "RD-TFNG-001"
+  ],
+  "options": null,
+  "passage_id": "PASSAGE-VOL99-01-RD01",
+  "prompt_text": "Turbine installation remains limited to four experimental demonstration sites.",
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "verified",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "question_id": "Q-VOL99-01-RD-004",
+  "question_number": 4,
+  "question_type": "true-false-not-given"
+}

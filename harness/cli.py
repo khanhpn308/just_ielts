@@ -386,6 +386,66 @@ def cmd_normalization_status(args):
     conn.close()
 
 
+def cmd_retrieve(args):
+    """Retrieves full question learning context with uncertainty disclosure."""
+    from harness.retrieval import TutorRetriever, STAGING_NORMALIZED_DIR
+
+    norm_dir = Path(args.normalized_dir) if args.normalized_dir else STAGING_NORMALIZED_DIR
+    try:
+        retriever = TutorRetriever(normalized_dir=norm_dir)
+        res = retriever.retrieve_question(args.question_id)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.format == "json":
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(f"=== RETRIEVAL RESULT: {res['question_id']} ===")
+        print(f"Question #{res['question_number']} ({res['question_type']}):")
+        print(f"  Prompt: {res['prompt_text']}")
+        if res.get("group") and res["group"].get("instruction_text"):
+            print(f"  Instructions: {res['group']['instruction_text']}")
+
+        ans = res.get("answer")
+        if ans:
+            print(f"\nAnswer Key: {ans.get('target_value')} (Status: {ans.get('verification_status')}, Missing: {ans.get('is_missing')})")
+            if ans.get("validation_flags"):
+                print(f"  Flags: {ans['validation_flags']}")
+        else:
+            print("\nAnswer Key: NOT FOUND")
+
+        ev = res.get("evidence")
+        if ev:
+            print(f"\nEvidence ({ev.get('evidence_type')}):")
+            if ev.get("verbatim_quote"):
+                print(f"  Quote: \"{ev['verbatim_quote']}\"")
+                print(f"  Offsets: chars {ev.get('char_start')}-{ev.get('char_end')}, paragraph {ev.get('paragraph_label')}")
+            elif ev.get("missing_information_rationale"):
+                print(f"  Rationale: {ev['missing_information_rationale']}")
+        else:
+            print("\nEvidence: None available")
+
+        ex = res.get("explanation")
+        if ex:
+            print(f"\nPedagogical Explanation ({ex.get('author_type')} / {ex.get('explanation_verification')}):")
+            print(f"  EN: {ex.get('rationale_en')}")
+            if ex.get("paraphrase_map"):
+                print(f"  Paraphrases: {ex['paraphrase_map']}")
+        else:
+            print("\nPedagogical Explanation: None available")
+
+        if res.get("linked_principles"):
+            print("\nLinked Principles:")
+            for p in res["linked_principles"]:
+                print(f"  - [{p['id']}] {p['title']} ({p['file_path']})")
+
+        unc = res.get("uncertainty_disclosure", {})
+        print(f"\n=== UNCERTAINTY & READINESS ===")
+        print(f"Readiness: {unc.get('readiness')} - {unc.get('readiness_reason')}")
+        print(f"Disclosure: {unc.get('disclosure_text')}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="harness",
@@ -449,6 +509,12 @@ def main():
     # normalization-status
     subparsers.add_parser("normalization-status", help="Show V0.2 normalization checkpoint status")
 
+    # retrieve
+    parser_ret = subparsers.add_parser("retrieve", help="Retrieve normalized question bundle for AI Tutor")
+    parser_ret.add_argument("--question-id", type=str, required=True, help="Question ID to retrieve (e.g. Q-VOL06-05-RD-004)")
+    parser_ret.add_argument("--normalized-dir", type=str, help="Directory containing normalized JSONs")
+    parser_ret.add_argument("--format", choices=["text", "json"], default="text", help="Output format (default: text)")
+
     args = parser.parse_args()
 
     if args.subcommand == "inventory":
@@ -471,6 +537,8 @@ def main():
         cmd_verify(args)
     elif args.subcommand == "normalization-status":
         cmd_normalization_status(args)
+    elif args.subcommand == "retrieve":
+        cmd_retrieve(args)
     else:
         parser.print_help()
 

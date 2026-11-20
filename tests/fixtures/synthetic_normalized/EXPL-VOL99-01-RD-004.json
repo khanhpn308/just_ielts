@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "25e9997c9282fd3f030ce6d18ed526aedf54a451dc70642757b3316492311aa3",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "answer_id": "ANS-VOL99-01-RD-004-KEY",
+  "author_type": "machine_drafted",
+  "distractor_notes": null,
+  "evidence_id": "EVID-VOL99-01-RD-004-01",
+  "explanation_id": "EXPL-VOL99-01-RD-004",
+  "paraphrase_map": [],
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "machine_drafted_unverified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "review_required",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "secondary_reputable",
+    "validation_flags": [
+      "MACHINE_DRAFTED_EXPLANATION"
+    ]
+  },
+  "question_id": "Q-VOL99-01-RD-004",
+  "rationale_en": "Machine drafted explanation without human verification.",
+  "rationale_vi": "Giải thích tự động chưa qua kiểm duyệt."
+}

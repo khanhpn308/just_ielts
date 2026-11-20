@@ -1,0 +1,34 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "1c8a7fee62e2f7f7d0483a09accd4eb7e7b7cf6b19d3fc4a4a0a3e175f57725c",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "acceptable_alternates": [],
+  "answer_id": "ANS-VOL99-01-RD-003-KEY",
+  "case_sensitive": false,
+  "quality_profile": {
+    "answer_verification": "missing_key",
+    "explanation_verification": "missing_explanation",
+    "extraction_quality": "truncated_missing_pages",
+    "lifecycle_status": "review_required",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": [
+      "MISSING_SOURCE_ANSWER_KEY"
+    ]
+  },
+  "question_id": "Q-VOL99-01-RD-003",
+  "source_key_ref": "Missing in source sheet",
+  "target_value": null
+}

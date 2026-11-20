@@ -1,0 +1,35 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "812f5a8ceb38595f432e889d8e1a9377e90e639cc6086f150b1e31ae8074c56d",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "answer_id": "ANS-VOL99-01-RD-002-KEY",
+  "author_type": "expert_teacher",
+  "distractor_notes": null,
+  "evidence_id": "EVID-VOL99-01-RD-002-01",
+  "explanation_id": "EXPL-VOL99-01-RD-002",
+  "paraphrase_map": [],
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "verified",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "question_id": "Q-VOL99-01-RD-002",
+  "rationale_en": "The text only states that records were not published, so it is impossible to verify whether expenditure exceeded five million dollars.",
+  "rationale_vi": "Bài đọc chỉ nêu hồ sơ chi tiêu không được công bố, không thể biết con số có vượt 5 triệu đô hay không."
+}
