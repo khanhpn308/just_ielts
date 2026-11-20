@@ -84,6 +84,13 @@ class ReviewPolicyValidator:
         elif len(str(reviewer_id).strip()) < 2:
             rejection_reasons.append(f"Reviewer identity '{reviewer_id}' is too short (min 2 chars).")
 
+        # Enforce expert verification integrity: caller-provided expert_verified=True is not permitted
+        if expert_verified:
+            rejection_reasons.append(
+                "Unauthenticated expert verification: caller-provided expert_verified=True is not permitted. "
+                "Until an authenticated expert-review mechanism exists, expert_verified=False is enforced."
+            )
+
         # 2. Validate Documented Reason
         if not reason or not str(reason).strip():
             rejection_reasons.append("Documented review rationale (reason) is mandatory.")
@@ -163,7 +170,7 @@ class ReviewPolicyValidator:
                 source_fingerprint=current_s_sha or rel_s_sha,
                 target_fingerprint=current_t_sha or rel_t_sha,
                 is_fresh=is_fresh,
-                expert_verified=expert_verified,
+                expert_verified=False,
             )
 
         if decision == "reject":
@@ -179,7 +186,7 @@ class ReviewPolicyValidator:
                 source_fingerprint=current_s_sha or rel_s_sha,
                 target_fingerprint=current_t_sha or rel_t_sha,
                 is_fresh=is_fresh,
-                expert_verified=expert_verified,
+                expert_verified=False,
             )
 
         if decision == "approve":
@@ -248,7 +255,11 @@ class ReviewPolicyValidator:
                     expected_collection=relationship.get("collection") or "",
                     expected_test_number=relationship.get("test_number"),
                     candidate_target_file_id=t_fid,
+                    candidate_target_legacy_id=tgt_rec.get("legacy_id") if tgt_rec else None,
                     evidence_provenance=ev_prov,
+                    expected_passage_or_section=relationship.get("passage_or_section"),
+                    relationship_type=relationship.get("relationship_type"),
+                    evidence_references=evidence_references,
                 )
                 if val_res.is_valid:
                     has_independent_evidence = True
@@ -281,7 +292,7 @@ class ReviewPolicyValidator:
                 source_fingerprint=current_s_sha or rel_s_sha,
                 target_fingerprint=current_t_sha or rel_t_sha,
                 is_fresh=is_fresh,
-                expert_verified=expert_verified,
+                expert_verified=False,
             )
 
         raise ValueError(f"Unsupported review decision '{decision}'.")

@@ -311,6 +311,14 @@ class RelationshipReview(BaseModel):
 
         d = dict(data)
 
+        # Enforce expert verification integrity: caller-provided expert_verified=True is blocked
+        if bool(d.get("expert_verified")):
+            raise ValueError(
+                "Caller-provided expert_verified=True is not permitted: "
+                "no authenticated expert-review mechanism exists."
+            )
+        d["expert_verified"] = False
+
         # 1. Sync reviewer_id and reviewer
         rev_id = d.get("reviewer_id") or d.get("reviewer") or ""
         if rev_id:

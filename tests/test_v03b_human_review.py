@@ -34,9 +34,11 @@ from harness.db import (
     list_relationship_reviews,
     list_source_relationships,
     record_relationship_conflict,
+    record_relationship_review,
     upsert_source,
     upsert_source_relationship,
 )
+from harness.matching.service import RelationshipMatchingService
 from harness.models.relationship import (
     RelationshipReview,
     SourceRelationship,
@@ -700,4 +702,449 @@ def test_cli_relationship_review_history(populated_db, capsys, monkeypatch):
     assert f"IMMUTABLE REVIEW AUDIT HISTORY: {rel_id}" in captured.out
     assert "Total Review Events: 1" in captured.out
     assert "Decision         : defer" in captured.out
+
+
+# --------------------------------------------------------------------------
+# 17. Independent Evidence Validation & Negative Tests (P0 Remediation)
+# --------------------------------------------------------------------------
+def test_negative_unrelated_doc_same_collection_missing_test_metadata(populated_db):
+    """Negative test: Document in same collection with missing test metadata cannot confirm."""
+    conn = get_db_connection(populated_db)
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000099",
+        "legacy_id": "SRC-SYN-UNRELATED-01",
+        "relative_path": "data/synthetic/VOL99/General/policy_notes.txt",
+        "filename": "policy_notes.txt",
+        "extension": ".txt",
+        "detected_type": "text",
+        "size_bytes": 1024,
+        "content_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting approval using unrelated doc in same collection",
+            evidence_source_id="SRC-SYN-UNRELATED-01",
+            evidence_references={"provenance": {"source_id": "SRC-SYN-UNRELATED-01", "provenance_type": "test_note"}},
+        )
+
+    assert "Missing test metadata" in str(exc_info.value)
+
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    conn.close()
+    assert rel["relationship_status"] == "candidate"
+
+
+def test_negative_unrelated_doc_same_collection_test_mismatch(populated_db):
+    """Negative test: Document in same collection covering wrong test number cannot confirm."""
+    service = RelationshipReviewService(db_path=populated_db)
+    # Target is FILE-a00000000002 (Test 1), reference evidence is SRC-SYN-04 (Test 2)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+    )
+
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting approval using Test 2 key for Test 1 relationship",
+            evidence_source_id="SRC-SYN-04",
+            evidence_references={"provenance": {"source_id": "SRC-SYN-04", "provenance_type": "test_key"}},
+        )
+
+    assert "Test number mismatch" in str(exc_info.value)
+
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    conn.close()
+    assert rel["relationship_status"] == "candidate"
+
+
+def test_negative_same_collection_no_content_evidence(populated_db):
+    """Negative test: Registered source from same volume without content evidence is NOT sufficient."""
+    conn = get_db_connection(populated_db)
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000098",
+        "legacy_id": "SRC-SYN-EMPTY-KEY",
+        "relative_path": "data/synthetic/VOL99/Reading/test_1_cover.pdf",
+        "filename": "test_1_cover.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 2048,
+        "content_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting approval using cover page without content evidence",
+            evidence_source_id="SRC-SYN-EMPTY-KEY",
+            evidence_references={"provenance": {"source_id": "SRC-SYN-EMPTY-KEY", "provenance_type": "cover_page"}},
+        )
+
+    assert "no answer key or content evidence" in str(exc_info.value)
+
+
+def test_negative_invalid_source_sha_rejected(populated_db):
+    """Negative test: Source reference with invalid/malformed SHA-256 hash is rejected."""
+    conn = get_db_connection(populated_db)
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000097",
+        "legacy_id": "SRC-SYN-BAD-SHA",
+        "relative_path": "data/synthetic/VOL99/Reading/test_1_badsha.pdf",
+        "filename": "test_1_badsha.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 2048,
+        "content_sha256": "not-a-valid-sha256",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    conn = get_db_connection(populated_db)
+    validator = SourceReferenceValidator(conn)
+    res = validator.validate_reference(
+        reference_source_id="SRC-SYN-BAD-SHA",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        candidate_target_file_id="FILE-a00000000004",
+    )
+    conn.close()
+
+    assert res.is_valid is False
+    assert "INVALID_SOURCE_HASH" in res.flags
+
+
+# --------------------------------------------------------------------------
+# 18. Expert Verification Integrity Tests (P0 Remediation)
+# --------------------------------------------------------------------------
+def test_expert_verification_caller_provided_true_rejected_by_service(populated_db):
+    """Regression test: Caller-provided expert_verified=True is blocked by review service."""
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+    )
+
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting unauthenticated expert verification claim",
+            expert_verified=True,
+        )
+
+    assert "caller-provided expert_verified=True is not permitted" in str(exc_info.value)
+
+
+def test_expert_verification_caller_provided_true_rejected_by_policy(populated_db):
+    """Regression test: ReviewPolicyValidator rejects unauthenticated expert_verified=True."""
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(
+        conn,
+        compute_relationship_id(
+            "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+        ),
+    )
+    validator = ReviewPolicyValidator(conn)
+    result = validator.evaluate_decision(
+        relationship=rel,
+        decision="approve",
+        reviewer_id="USER-001",
+        reason="Testing policy evaluation for expert verification",
+        reviewed_at="2026-11-20T17:30:00+07:00",
+        expert_verified=True,
+    )
+    conn.close()
+
+    assert result.can_proceed is False
+    assert result.expert_verified is False
+    assert any("expert_verified=False is enforced" in r for r in result.rejection_reasons)
+
+
+def test_expert_verification_model_raises_on_true():
+    """Regression test: RelationshipReview model rejects caller-provided expert_verified=True."""
+    with pytest.raises(ValueError, match="Caller-provided expert_verified=True is not permitted"):
+        RelationshipReview(
+            review_id="REV-0000000000000001",
+            relationship_id="REL-0000000000000001",
+            reviewer_id="USER-001",
+            previous_status="candidate",
+            final_status="confirmed",
+            decision="approve",
+            reason="Attempting expert model instantiation",
+            reviewed_at="2026-11-20T17:30:00+07:00",
+            expert_verified=True,
+        )
+
+
+def test_expert_verification_database_enforces_zero(populated_db):
+    """Regression test: Database persistence layer strictly enforces expert_verified=0."""
+    conn = get_db_connection(populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+    )
+
+    record_relationship_review(
+        conn,
+        {
+            "review_id": "REV-TEST-FORCE-EXPERT",
+            "relationship_id": rel_id,
+            "previous_status": "candidate",
+            "new_status": "confirmed",
+            "reviewer": "attacker",
+            "reason": "Attempting direct SQL bypass of expert flag",
+            "expert_verified": True,
+        },
+    )
+
+    reviews = list_relationship_reviews(conn, rel_id)
+    conn.close()
+
+    test_rev = [r for r in reviews if r["review_id"] == "REV-TEST-FORCE-EXPERT"][0]
+    assert test_rev["expert_verified"] is False
+
+
+# --------------------------------------------------------------------------
+# 19. Preserve Human Review Decisions Across Matcher Reruns (P0 Remediation)
+# --------------------------------------------------------------------------
+def test_matcher_rerun_preserves_human_approval_when_fresh(populated_db, synthetic_sources_map):
+    """Regression test: Matcher reruns on unchanged inputs preserve human approved status and review history."""
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_answer_key", "VOL 99", 1, 1
+    )
+    conn = get_db_connection(populated_db)
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": "FILE-a00000000001",
+        "target_file_id": "FILE-a00000000002",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": 1,
+        "skill": "reading",
+        "identity_evidence": {"passage_title": "Marine Energy Systems"},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH", "CONTENT_TITLE_MATCH"],
+        "match_confidence": 0.8,
+        "relationship_status": "candidate",
+        "provenance": {"matcher_version": "0.3.0-a", "evaluated_at": "2026-11-20T10:00:00Z"},
+        "source_content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "target_content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "schema_version": "v0.3.0-relationship",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db)
+
+    # 1. Human reviews and approves candidate
+    res_approve = service.decide(
+        relationship_id=rel_id,
+        decision="approve",
+        reviewer_id="HUMAN-EXPERT-01",
+        reason="Human forensic review approved based on title match",
+        reviewed_at="2026-11-20T10:00:00Z",
+    )
+    assert res_approve["final_status"] == "confirmed"
+
+    # 2. Run matcher rerun with unchanged inputs
+    matching_service = RelationshipMatchingService(db_path=populated_db)
+    sources = list(synthetic_sources_map.values())[:2]
+    rerun_res = matching_service.match_sources(sources_override=sources, resume=True)
+
+    # 3. Verify human review decision is preserved in returned results and database
+    rerun_rel = [r for r in rerun_res["relationships"] if r.relationship_id == rel_id][0]
+    assert rerun_rel.relationship_status == "confirmed"
+    assert "HUMAN_REVIEW_APPROVED" in rerun_rel.validation_flags
+
+    conn = get_db_connection(populated_db)
+    db_rel = get_source_relationship(conn, rel_id)
+    history = list_relationship_reviews(conn, rel_id)
+    conn.close()
+
+    assert db_rel["relationship_status"] == "confirmed"
+    assert "HUMAN_REVIEW_APPROVED" in db_rel["validation_flags"]
+    assert len(history) == 1
+    assert history[0]["reviewer_id"] == "HUMAN-EXPERT-01"
+
+
+def test_matcher_rerun_marks_stale_confirmed_for_revalidation(populated_db, synthetic_sources_map):
+    """Regression test: When inputs become stale, confirmed relationships are marked for revalidation."""
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_answer_key", "VOL 99", 1, 1
+    )
+    conn = get_db_connection(populated_db)
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": "FILE-a00000000001",
+        "target_file_id": "FILE-a00000000002",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": 1,
+        "skill": "reading",
+        "identity_evidence": {"passage_title": "Marine Energy Systems"},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH", "CONTENT_TITLE_MATCH"],
+        "match_confidence": 0.8,
+        "relationship_status": "candidate",
+        "provenance": {"matcher_version": "0.3.0-a", "evaluated_at": "2026-11-20T10:00:00Z"},
+        "source_content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "target_content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "schema_version": "v0.3.0-relationship",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db)
+
+    # 1. Human reviews and approves candidate
+    service.decide(
+        relationship_id=rel_id,
+        decision="approve",
+        reviewer_id="HUMAN-EXPERT-01",
+        reason="Human forensic review approved based on initial snapshot",
+        reviewed_at="2026-11-20T10:00:00Z",
+    )
+
+    # 2. Modify target source content SHA (making relationship inputs stale)
+    modified_sources = [dict(s) for s in list(synthetic_sources_map.values())[:2]]
+    modified_sources[1]["content_sha256"] = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    # Also strip title so matcher does not re-confirm on its own
+    modified_sources[1]["staged_data"] = {
+        "test_numbers": [1],
+        "passages_or_sections": {"1": [1]},
+        "passage_titles": {"1": {"1": "Different Title Completely"}},
+    }
+
+    matching_service = RelationshipMatchingService(db_path=populated_db)
+    rerun_res = matching_service.match_sources(sources_override=modified_sources, resume=True)
+
+    # 3. Verify relationship is marked review_required and NOT active confirmed
+    rerun_rel = [r for r in rerun_res["relationships"] if r.relationship_id == rel_id][0]
+    assert rerun_rel.relationship_status == "review_required"
+    assert "STALE_REVALIDATION_REQUIRED" in rerun_rel.validation_flags
+    assert "HUMAN_REVIEW_APPROVED" not in rerun_rel.validation_flags
+
+    # 4. Verify transition review event was recorded in audit log
+    conn = get_db_connection(populated_db)
+    db_rel = get_source_relationship(conn, rel_id)
+    history = list_relationship_reviews(conn, rel_id)
+    conflicts = list_relationship_conflicts(conn, relationship_id=rel_id)
+    conn.close()
+
+    assert db_rel["relationship_status"] == "review_required"
+    assert len(history) == 2
+    transition_event = history[1]
+    assert transition_event["reviewer_id"] == "SYSTEM-MATCHER"
+    assert transition_event["previous_status"] == "confirmed"
+    assert transition_event["final_status"] == "review_required"
+    assert "Stale relationship inputs/evidence detected" in transition_event["reason"]
+
+    assert any(c["conflict_type"] == "STALE_SOURCE_HASH" for c in conflicts)
+
+
+# --------------------------------------------------------------------------
+# 20. Audit Immutability Enforcement (P1 Remediation)
+# --------------------------------------------------------------------------
+def test_audit_immutability_blocks_sql_update(populated_db):
+    """P1: SQLite trigger strictly blocks UPDATE operations on relationship_reviews."""
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+    )
+    service.decide(
+        relationship_id=rel_id,
+        decision="defer",
+        reviewer_id="USER-001",
+        reason="Audit immutability test record",
+    )
+
+    conn = get_db_connection(populated_db)
+    with pytest.raises(sqlite3.DatabaseError) as exc_info:
+        conn.execute("UPDATE relationship_reviews SET reason = 'tampered rationale' WHERE relationship_id = ?", (rel_id,))
+    conn.close()
+
+    assert "Audit log immutability violation: UPDATE operations" in str(exc_info.value)
+
+
+def test_audit_immutability_blocks_sql_delete(populated_db):
+    """P1: SQLite trigger strictly blocks DELETE operations on relationship_reviews."""
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+    )
+    service.decide(
+        relationship_id=rel_id,
+        decision="defer",
+        reviewer_id="USER-001",
+        reason="Audit immutability delete test record",
+    )
+
+    conn = get_db_connection(populated_db)
+    with pytest.raises(sqlite3.DatabaseError) as exc_info:
+        conn.execute("DELETE FROM relationship_reviews WHERE relationship_id = ?", (rel_id,))
+    conn.close()
+
+    assert "Audit log immutability violation: DELETE operations" in str(exc_info.value)
+
+
+def test_audit_immutability_safe_migrations(populated_db):
+    """P1: Safe SQLite migrations (init_db re-runs and ALTER TABLE) succeed without breaking immutability."""
+    # 1. Rerunning init_db on populated database is idempotent and non-destructive
+    init_db(populated_db)
+
+    # 2. ALTER TABLE ADD COLUMN succeeds
+    conn = get_db_connection(populated_db)
+    conn.execute("ALTER TABLE relationship_reviews ADD COLUMN test_migration_col TEXT")
+    conn.close()
+
+    # 3. New append-only reviews can be inserted and audited
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000002", "question_to_explanation", "VOL 99", 1, 1
+    )
+    service.decide(
+        relationship_id=rel_id,
+        decision="defer",
+        reviewer_id="USER-002",
+        reason="Second append-only review event after migration",
+    )
+
+    history = service.get_history(rel_id)
+    assert len(history) == 1
+    assert history[0]["reviewer_id"] == "USER-002"
+
+    # 4. Triggers still block UPDATE after migration
+    conn = get_db_connection(populated_db)
+    with pytest.raises(sqlite3.DatabaseError):
+        conn.execute("UPDATE relationship_reviews SET reason = 'unauthorized'")
+    conn.close()
+
 

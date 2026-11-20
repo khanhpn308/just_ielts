@@ -323,3 +323,31 @@ All 20 test scenarios are implemented in `tests/test_v03b_human_review.py`:
 - **Listening Audio Interval Extraction:** Detailed audio interval segmentation and tapscript alignment remain deferred to Phase V0.3-C.
 - **Web Interface:** Web/UI dashboard is explicitly out of scope; human reviews are conducted exclusively via the CLI and programmatic service.
 - **Bulk Corpus Normalization:** Full ingestion of all 206 raw documents remains deferred until all volume relationships are reviewed and confirmed.
+
+---
+
+## 11. Review-Integrity Remediation Addendum (PR #6 Final Invariants)
+
+Following PR review integrity analysis, the following critical defects were resolved:
+
+1. **Independent Evidence Validation (P0):**
+   - Explicitly separated source identity verification (`validate_source_identity`) from relationship evidence verification (`validate_relationship_evidence`).
+   - Enforced non-empty, valid 64-hex SHA-256 and fresh source fingerprint on disk.
+   - Mandated positive evidence of required test identity: missing test metadata strictly fails and never matches.
+   - Enforced relevant question/section alignment and verified content evidence (answers, titles, audio/transcript).
+   - Proven: A registered source from the same volume is strictly insufficient proof of a relationship; unverifiable references remain unresolved.
+   - Added negative tests for unrelated documents with matching collection metadata.
+
+2. **Expert Verification Integrity (P0):**
+   - Caller-provided `expert_verified=True` is categorically rejected across API, policy, and domain model layers.
+   - Enforced `expert_verified=False` across `RelationshipReviewService`, `ReviewPolicyValidator`, `RelationshipReview`, and SQLite write persistence boundaries.
+
+3. **Preserve Human Review Decisions (P0):**
+   - Protected human review decisions from silent overwrites during matcher reruns.
+   - When inputs remain unchanged, approved status, review history, and flags are preserved.
+   - When inputs or evidence become stale, previously confirmed relationships are transitioned to `review_required` with `STALE_REVALIDATION_REQUIRED` flags and prevented from active confirmation consumption.
+   - System transition event and rationale are permanently recorded in `relationship_reviews`.
+
+4. **Audit Immutability (P1):**
+   - Enforced append-only immutability at SQLite persistence boundary via `BEFORE UPDATE` and `BEFORE DELETE` triggers.
+   - Direct UPDATE and DELETE attempts raise `sqlite3.DatabaseError` abort exceptions while preserving safe schema migrations (`init_db` idempotency and `ALTER TABLE ADD COLUMN`).

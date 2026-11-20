@@ -203,7 +203,7 @@ class RelationshipReviewService:
             target_fingerprint=policy_result.target_fingerprint,
             evidence_references=ev_refs,
             review_policy_version=policy_result.policy_version,
-            expert_verified=expert_verified,
+            expert_verified=False,
         )
 
         if dry_run:

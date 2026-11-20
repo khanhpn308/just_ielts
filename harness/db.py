@@ -169,6 +169,18 @@ def init_db(db_path: Optional[Path] = None) -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_reviews_rel ON relationship_reviews(relationship_id);
+
+            CREATE TRIGGER IF NOT EXISTS trg_prevent_review_update
+            BEFORE UPDATE ON relationship_reviews
+            BEGIN
+                SELECT RAISE(ABORT, 'Audit log immutability violation: UPDATE operations on relationship_reviews are strictly prohibited.');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_prevent_review_delete
+            BEFORE DELETE ON relationship_reviews
+            BEGIN
+                SELECT RAISE(ABORT, 'Audit log immutability violation: DELETE operations on relationship_reviews are strictly prohibited.');
+            END;
             """
         )
         # Migrate schema dynamically if table was created previously without relocation columns
@@ -949,10 +961,8 @@ def record_relationship_review(conn: sqlite3.Connection, review_data: Dict[str, 
     params.setdefault("source_fingerprint", None)
     params.setdefault("target_fingerprint", None)
     params.setdefault("review_policy_version", "v0.3.0-b")
-    params.setdefault("expert_verified", 0)
-
-    if isinstance(params.get("expert_verified"), bool):
-        params["expert_verified"] = 1 if params["expert_verified"] else 0
+    # Enforce expert_verified=False until authenticated expert mechanism exists
+    params["expert_verified"] = 0
 
     ev_val = params.get("evidence_references")
     if isinstance(ev_val, (dict, list)):
@@ -1003,10 +1013,8 @@ def apply_relationship_review_atomic(
     params.setdefault("source_fingerprint", None)
     params.setdefault("target_fingerprint", None)
     params.setdefault("review_policy_version", "v0.3.0-b")
-    params.setdefault("expert_verified", 0)
-
-    if isinstance(params.get("expert_verified"), bool):
-        params["expert_verified"] = 1 if params["expert_verified"] else 0
+    # Enforce expert_verified=False until authenticated expert mechanism exists
+    params["expert_verified"] = 0
 
     ev_ref = params.get("evidence_references")
     if isinstance(ev_ref, (dict, list)):
