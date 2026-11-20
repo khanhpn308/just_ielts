@@ -1,0 +1,78 @@
+{
+  "schema_version": "v0.3.0-synthetic-listening",
+  "description": "Synthetic fixtures for V0.3-C listening and audio alignment tests without private files",
+  "sources": {
+    "question_doc": {
+      "file_id": "FILE-a00000000001",
+      "legacy_id": "SRC-9901",
+      "relative_path": "data/synthetic/VOL99/Test_1.pdf",
+      "filename": "Test_1.pdf",
+      "extension": ".pdf",
+      "detected_type": "pdf",
+      "size_bytes": 1048576,
+      "content_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible"
+    },
+    "transcript_doc": {
+      "file_id": "FILE-a00000000002",
+      "legacy_id": "SRC-9902",
+      "relative_path": "data/synthetic/VOL99/Transcript_1.docx",
+      "filename": "Transcript_1.docx",
+      "extension": ".docx",
+      "detected_type": "docx",
+      "size_bytes": 16384,
+      "content_sha256": "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible"
+    },
+    "audio_track_1": {
+      "file_id": "FILE-a00000000003",
+      "legacy_id": "SRC-9903",
+      "relative_path": "data/synthetic/VOL99/AudioTrack_01.mp3",
+      "filename": "AudioTrack_01.mp3",
+      "extension": ".mp3",
+      "detected_type": "mp3",
+      "size_bytes": 5242880,
+      "content_sha256": "cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333",
+      "collection": "VOL 99",
+      "duplicate_group": "none",
+      "accessibility_status": "accessible"
+    }
+  },
+  "transcript_paragraphs": [
+    {"text": "Speaker 1 [00:00:05] Welcome to the synthetic festival information session."},
+    {"text": "Speaker 2 [00:00:25] Hello, could you tell me where the opening ceremony is held?"},
+    {"text": "Speaker 1 [00:00:40] Certainly, it takes place at the community library."},
+    {"text": "Speaker 2 [00:01:10] And what time does the youth concert start?"},
+    {"text": "Speaker 1 [00:01:25] The concert begins at 6.15 pm in the auditorium."},
+    {"text": "That is the end of Section one. You now have half a minute to check your answers."},
+    {"text": "Speaker 3 [00:02:00] Good morning hikers, my name is Alex and I will guide today's mountain excursion."},
+    {"text": "Speaker 3 [00:02:30] Please ensure you carry extra water and wear sturdy hiking boots."},
+    {"text": "That is the end of Section two. You now have half a minute to check your answers."},
+    {"text": "Speaker 1 I cannot find the project review guidelines, David."},
+    {"text": "Speaker 4 [00:04:15] They are available on the student intranet portal."},
+    {"text": "Speaker 1 [00:04:45] Do students prefer formative feedback over peer evaluation?"},
+    {"text": "Speaker 4 [00:05:10] Yes, initial survey data showed strong preference for tutor feedback."},
+    {"text": "That is the end of Section three. You now have half a minute to check your answers."},
+    {"text": "Speaker 3 [00:06:00] Today we examine the syntactic evolution of creole languages across the Pacific basin."},
+    {"text": "Speaker 1 [00:07:30] That is the end of Section four. You now have half a minute to check your answers."}
+  ],
+  "anomaly_paragraphs": {
+    "impossible_timestamps": [
+      {"text": "Speaker 1 [02:30:00] This timestamp is two and a half hours into a five minute track."},
+      {"text": "Speaker 2 [03:00:00] Another impossible timestamp far exceeding audio duration."}
+    ],
+    "out_of_order_timestamps": [
+      {"text": "Speaker 1 [00:03:00] Chronological segment one."},
+      {"text": "Speaker 2 [00:01:30] Out of order segment going backwards in time."},
+      {"text": "Speaker 1 [00:04:00] Next segment."}
+    ],
+    "missing_timestamps": [
+      {"text": "Speaker 1 Here is a turn with a speaker label but zero timestamps."},
+      {"text": "And here is a plain continuation line without speaker or timestamp."}
+    ]
+  }
+}

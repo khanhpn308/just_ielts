@@ -1,5 +1,16 @@
 """Pydantic data models for IELTS Data Harness V0.2."""
 
+from harness.models.listening import (
+    SCHEMA_VERSION_LISTENING,
+    AudioAsset,
+    ListeningAnswer,
+    ListeningEvidence,
+    ListeningQuestion,
+    ListeningSection,
+    ListeningTest,
+    SpeakerTurn,
+    TranscriptSegment,
+)
 from harness.models.provenance import ProvenanceEnvelope
 from harness.models.quality import (
     AnswerVerification,
@@ -72,4 +83,13 @@ __all__ = [
     "ConflictSeverity",
     "compute_relationship_id",
     "SCHEMA_VERSION_RELATIONSHIP",
+    "SCHEMA_VERSION_LISTENING",
+    "AudioAsset",
+    "TranscriptSegment",
+    "SpeakerTurn",
+    "ListeningSection",
+    "ListeningQuestion",
+    "ListeningAnswer",
+    "ListeningEvidence",
+    "ListeningTest",
 ]
