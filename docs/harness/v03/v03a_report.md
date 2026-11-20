@@ -118,10 +118,10 @@ The pilot was executed against the real inventory of the IELTS corpus:
 - **`SRC-138` -> `SRC-137`:**
   - `VOLUME_MATCH`: Both belong to canonical `VOL 6`.
   - `SKILL_MATCH`: Both target `reading`.
-  - `TEST_NUMBER_MATCH`: Both cover Test 5.
-  - `PASSAGE_MATCH`: Both address Passage 1.
-  - `QUESTION_RANGE_ALIGNED`: Passage 1 questions cover range Q1–Q14.
-  - `GATE_CONFIRMED_PASSED`: **CONFIRMED** (`match_confidence = 1.0`).
+  - `TEST_NUMBER_MATCH`: Both cover Test 5 (and Test 6).
+  - `QUESTION_RANGE_ALIGNED`: Passage questions align with expected numbering ranges.
+  - `CONTENT_GROUNDING_AUDIT`: Passage titles between `SRC-138` and `SRC-137` do not match, and `SRC-138` contains no answer keys.
+  - **Status:** **CANDIDATE** (`match_confidence = 0.7`). In accordance with strict non-circularity invariants, an answer key cannot confirm itself. In the absence of independent ground truth or passage title agreement, these relationships are properly preserved as `candidate` rather than falsely inflated to `confirmed`.
 - **`SRC-138` -> `SRC-077`:**
   - `VOLUME_MISMATCH`: `SRC-138` belongs to `VOL 6`, whereas `SRC-077` belongs to `VOL 3`.
   - `CONFLICTING_ANSWER_KEYS`: Overlapping questions for Test 5 directly contradict verified pilot keys across all items:
@@ -214,6 +214,17 @@ Following architectural audit, six core remediation invariants were implemented 
 5. **Privacy Isolation & Dry-Run Enforcement (P1):**
    - Strict validation of `output_dir` rejecting public directories (`docs/`, `tests/`, `harness/`, repo root) and symlink escapes.
    - `dry_run=True` verified to never mutate SQLite or write persistent outputs unless explicitly requested.
+
+### 7.1 Final Blocking Fixes
+1. **GitHub CI Fixture Remediation (Fix 1):**
+   - Fixed `test_privacy_output_dir_validation_negative` failure on clean GitHub checkouts where `private/` is gitignored and does not exist.
+   - Replaced workspace references with isolated `tmp_path` fixtures verifying valid private output, forbidden public output, path traversal (`..`), and symlink escapes without modifying the corpus or touching real workspace roots.
+2. **Circular Answer Confirmation Remediation (Fix 2):**
+   - `RelationshipMatchingService` strictly prohibits passing `target_meta.answer_keys` as independent ground truth.
+   - `MatchingEngine` requires independent source identification, source provenance, explicit test and question alignment, and zero circularity for `ANSWERS_ALIGNED`.
+   - An answer key cannot confirm itself. Unprovenanced keys or self-referential inputs trigger `CIRCULAR_ANSWER_EVIDENCE_REJECTED` and are preserved as `candidate` (`match_confidence = 0.7`) rather than inflated to `confirmed`.
+   - Added negative regression test verifying that question booklets and unrelated answer keys sharing Volume, Test, and question numbers are never falsely aligned or confirmed.
+   - Reconciled pilot relationship status distribution: 6 confirmed listening links, 12 candidate reading links, 105 rejected pairs.
 
 ---
 

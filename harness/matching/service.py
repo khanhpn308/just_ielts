@@ -33,27 +33,27 @@ from harness.models.relationship import (
 DEFAULT_REPORTS_DIR = REPO_ROOT / "private" / "reports" / "v03a"
 
 
-def validate_output_directory(output_dir: Path) -> Path:
+def validate_output_directory(output_dir: Path, repo_root: Optional[Path] = None) -> Path:
     """Validates that output_dir resolves to an approved private or temp directory.
 
     Rejects paths that escape to public directories (docs/, tests/, harness/) or via symlinks.
     """
     resolved = output_dir.resolve()
-    repo_root = REPO_ROOT.resolve()
-    private_root = (repo_root / "private").resolve()
+    base_root = (repo_root or REPO_ROOT).resolve()
+    private_root = (base_root / "private").resolve()
 
     # Reject if resolved path escapes or points to known public code/doc paths
     forbidden_names = ["docs", "tests", "harness", "scripts", "templates", "principles"]
     for forb in forbidden_names:
-        forb_path = (repo_root / forb).resolve()
+        forb_path = (base_root / forb).resolve()
         if resolved == forb_path or forb_path in resolved.parents:
             raise ValueError(
                 f"Security violation: output directory '{output_dir}' resolves to public directory '{resolved}'. "
                 "Private corpus details must never be written to public directories."
             )
 
-    # If within repo_root, it MUST be within repo_root / private
-    if repo_root in resolved.parents or resolved == repo_root:
+    # If within base_root, it MUST be within base_root / private
+    if base_root in resolved.parents or resolved == base_root:
         if private_root not in resolved.parents and resolved != private_root:
             raise ValueError(
                 f"Security violation: output directory '{output_dir}' resolves to '{resolved}' inside repo root "
@@ -418,6 +418,7 @@ class RelationshipMatchingService:
         resume: bool = True,
         output_dir: Optional[Path] = None,
         sources_override: Optional[List[Dict[str, Any]]] = None,
+        known_ground_truth_map: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Executes multi-source matching and provenance registration."""
         conn = get_db_connection(self.db_path)
@@ -481,12 +482,21 @@ class RelationshipMatchingService:
             s_meta = meta_cache[s_fid]
             t_meta = meta_cache[t_fid]
 
-            # Invariant known ground truth if available
+            # Invariant known ground truth if independently available
             gt_answers = None
-            if t_num and t_num in t_meta.answer_keys:
-                gt_answers = t_meta.answer_keys.get(t_num)
+            gt_source_id = None
+            gt_prov = None
+            if known_ground_truth_map and t_num:
+                gt_entry = known_ground_truth_map.get(t_num) or known_ground_truth_map.get(str(t_num))
+                if isinstance(gt_entry, dict) and "answers" in gt_entry:
+                    gt_answers = gt_entry.get("answers")
+                    gt_source_id = gt_entry.get("source_id")
+                    gt_prov = gt_entry.get("provenance")
+                elif isinstance(gt_entry, dict):
+                    gt_answers = gt_entry
 
             # Evaluate with Matching Engine
+            # Note: Never pass target_meta.answer_keys as independent known_ground_truth_answers
             rel, confs = self.matcher.evaluate_relationship(
                 source_meta=s_meta,
                 target_meta=t_meta,
@@ -494,6 +504,8 @@ class RelationshipMatchingService:
                 test_number=t_num,
                 passage_or_section=p_num,
                 known_ground_truth_answers=gt_answers,
+                ground_truth_source_id=gt_source_id,
+                ground_truth_provenance=gt_prov,
             )
 
             # Resume & Source Freshness check

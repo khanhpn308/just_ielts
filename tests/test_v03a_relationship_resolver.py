@@ -674,28 +674,208 @@ def test_quality_gates_runtime_evaluation(populated_temp_db, synthetic_sources_m
 
 
 def test_privacy_output_dir_validation_negative(tmp_path):
-    """P1: validate_output_directory strictly blocks public directories and symlink escapes."""
-    # Attempting to write into docs/
-    with pytest.raises(ValueError, match="Security violation"):
-        validate_output_directory(REPO_ROOT / "docs" / "leaked_reports")
+    """P1: validate_output_directory strictly blocks public directories, path traversal, and symlink escapes."""
+    fake_repo = tmp_path / "mock_repo"
+    fake_repo.mkdir()
+    fake_private = fake_repo / "private"
+    fake_private.mkdir()
+    fake_docs = fake_repo / "docs"
+    fake_docs.mkdir()
+    fake_tests = fake_repo / "tests"
+    fake_tests.mkdir()
 
-    # Attempting to write into tests/
-    with pytest.raises(ValueError, match="Security violation"):
-        validate_output_directory(REPO_ROOT / "tests" / "leaked_reports")
+    # 1. Valid private output (both within mock repo private/ and external temp path)
+    valid_private = fake_private / "reports" / "v03a"
+    res_priv = validate_output_directory(valid_private, repo_root=fake_repo)
+    assert res_priv == valid_private.resolve()
 
-    # Attempting to write into repo root directly
-    with pytest.raises(ValueError, match="Security violation"):
-        validate_output_directory(REPO_ROOT / "escaped_reports")
+    valid_external_temp = tmp_path / "isolated_external_reports"
+    res_ext = validate_output_directory(valid_external_temp, repo_root=fake_repo)
+    assert res_ext == valid_external_temp.resolve()
 
-    # Symlink escape: symlink in private pointing to docs
-    symlink_path = REPO_ROOT / "private" / "test_symlink_escape"
-    try:
-        symlink_path.symlink_to(REPO_ROOT / "docs")
-        with pytest.raises(ValueError, match="Security violation"):
-            validate_output_directory(symlink_path)
-    finally:
-        if symlink_path.is_symlink() or symlink_path.exists():
-            symlink_path.unlink()
+    # 2. Forbidden public output
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(fake_docs / "leaked_reports", repo_root=fake_repo)
+
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(fake_tests / "leaked_reports", repo_root=fake_repo)
+
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(fake_repo / "escaped_reports", repo_root=fake_repo)
+
+    # 3. Path traversal
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(fake_private / ".." / "docs", repo_root=fake_repo)
+
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(fake_private / ".." / "escaped_reports", repo_root=fake_repo)
+
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(fake_private / "nested" / ".." / ".." / "tests", repo_root=fake_repo)
+
+    # 4. Symlink escape
+    symlink_path = fake_private / "test_symlink_escape"
+    symlink_path.symlink_to(fake_docs)
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(symlink_path, repo_root=fake_repo)
+
+
+def test_negative_circular_answer_confirmation_and_unrelated_key(synthetic_sources_map, tmp_path):
+    """Fix 2 Negative Regression Test: Question booklet and unrelated answer key.
+
+    A question booklet and unrelated answer key share the same Volume, Test, and question numbers.
+    Must verify:
+    - No false ANSWERS_ALIGNED
+    - No false CONFIRMED
+    - No confidence inflation
+    - Preserve candidate or review_required when independent evidence is unavailable
+    - Rejection of circular self-confirmation
+    - Preservation of legitimate confirmed relationships when independent evidence actually exists
+    """
+    engine = MatchingEngine()
+
+    # 1. Question booklet: VOL 99, Test 1, Questions 1-14, Title: "Marine Energy Systems"
+    # Question booklet has NO answer keys.
+    meta_booklet = _make_meta(synthetic_sources_map["SRC-SYN-01"])
+
+    # 2. Unrelated answer key sharing same Volume (VOL 99), Test (1), and Questions (1-14),
+    # but with an unrelated passage title and unrelated answers.
+    unrelated_key_dict = {
+        "file_id": "FILE-a00000000099",
+        "legacy_id": "SRC-SYN-UNRELATED-KEY",
+        "relative_path": "data/synthetic/VOL99/Reading/unrelated_key.pdf",
+        "filename": "unrelated_key.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 10240,
+        "content_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+        "staged_data": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [1]},
+            "passage_titles": {"1": {"1": "Completely Unrelated Roman Architecture"}},
+            "question_ranges": {"1": {"1": [1, 14]}},
+            "answer_keys": {
+                "1": {
+                    "1": "TRUE",
+                    "2": "FALSE",
+                    "3": "NOT GIVEN",
+                    "4": "TRUE",
+                }
+            },
+        },
+    }
+    meta_unrelated_key = _make_meta(unrelated_key_dict)
+
+    # 3. Direct evaluation with MatchingEngine:
+    rel, confs = engine.evaluate_relationship(
+        source_meta=meta_booklet,
+        target_meta=meta_unrelated_key,
+        relationship_type="question_to_answer_key",
+        test_number=1,
+        passage_or_section=1,
+    )
+
+    # Expected:
+    # - No false ANSWERS_ALIGNED
+    assert "ANSWERS_ALIGNED" not in rel.validation_flags
+    # - No false CONFIRMED
+    assert rel.relationship_status != "confirmed"
+    assert rel.relationship_status == "candidate"
+    assert "GATE_CONFIRMED_PASSED" not in rel.validation_flags
+    # - No confidence inflation: match_confidence must be 0.7 (candidate), not 1.0
+    assert rel.match_confidence == 0.7
+    assert rel.match_confidence < 1.0
+
+    # 4. Circular confirmation attempt (passing target key's own answers as ground truth):
+    rel_circ, _ = engine.evaluate_relationship(
+        source_meta=meta_booklet,
+        target_meta=meta_unrelated_key,
+        relationship_type="question_to_answer_key",
+        test_number=1,
+        passage_or_section=1,
+        known_ground_truth_answers=meta_unrelated_key.answer_keys.get(1),
+    )
+    # An answer key cannot confirm itself
+    assert "ANSWERS_ALIGNED" not in rel_circ.validation_flags
+    assert "CIRCULAR_ANSWER_EVIDENCE_REJECTED" in rel_circ.validation_flags
+    assert rel_circ.relationship_status == "candidate"
+    assert rel_circ.match_confidence == 0.7
+
+    # 5. Pipeline evaluation via RelationshipMatchingService.match_sources:
+    db_path = tmp_path / "test_unrelated.db"
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    upsert_source(conn, {
+        "file_id": meta_booklet.file_id,
+        "legacy_id": meta_booklet.legacy_id,
+        "relative_path": meta_booklet.relative_path,
+        "filename": meta_booklet.filename,
+        "extension": ".docx",
+        "detected_type": "docx",
+        "size_bytes": 1024,
+        "content_sha256": meta_booklet.content_sha256 or "1111",
+        "collection": meta_booklet.collection,
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    upsert_source(conn, {
+        "file_id": meta_unrelated_key.file_id,
+        "legacy_id": meta_unrelated_key.legacy_id,
+        "relative_path": meta_unrelated_key.relative_path,
+        "filename": meta_unrelated_key.filename,
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1024,
+        "content_sha256": meta_unrelated_key.content_sha256 or "9999",
+        "collection": meta_unrelated_key.collection,
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    service = RelationshipMatchingService(db_path=db_path)
+    res = service.match_sources(
+        sources_override=[synthetic_sources_map["SRC-SYN-01"], unrelated_key_dict],
+        output_dir=tmp_path / "service_out",
+        force=True,
+    )
+    assert res["confirmed"] == 0
+    assert res["candidate"] > 0
+    assert res["rejected"] == 0
+
+    # 6. Preserve legitimate confirmed relationships when independent evidence actually exists:
+    # Case A: Content title alignment
+    meta_key_valid = _make_meta(synthetic_sources_map["SRC-SYN-02"])
+    rel_legit_title, _ = engine.evaluate_relationship(
+        source_meta=meta_booklet,
+        target_meta=meta_key_valid,
+        relationship_type="question_to_answer_key",
+        test_number=1,
+        passage_or_section=1,
+    )
+    assert rel_legit_title.relationship_status == "confirmed"
+    assert rel_legit_title.match_confidence == 1.0
+    assert "CONTENT_TITLE_MATCH" in rel_legit_title.validation_flags
+    assert "GATE_CONFIRMED_PASSED" in rel_legit_title.validation_flags
+
+    # Case B: Genuinely independent external ground truth authority
+    rel_legit_gt, _ = engine.evaluate_relationship(
+        source_meta=meta_booklet,
+        target_meta=meta_unrelated_key,
+        relationship_type="question_to_answer_key",
+        test_number=1,
+        passage_or_section=1,
+        known_ground_truth_answers={1: "TRUE", 2: "FALSE", 3: "NOT GIVEN", 4: "TRUE"},
+        ground_truth_source_id="EXT-INDEPENDENT-AUTHORITY",
+        ground_truth_provenance={"authority": "cambridge_esol_verified"},
+    )
+    assert rel_legit_gt.relationship_status == "confirmed"
+    assert rel_legit_gt.match_confidence == 1.0
+    assert "ANSWERS_ALIGNED" in rel_legit_gt.validation_flags
+    assert "GATE_CONFIRMED_PASSED" in rel_legit_gt.validation_flags
 
 
 def test_dry_run_does_not_mutate_db_or_persistent_outputs(temp_db_path, synthetic_sources_map):

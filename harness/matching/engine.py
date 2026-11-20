@@ -45,6 +45,8 @@ class MatchingEngine:
         test_number: Optional[int] = None,
         passage_or_section: Optional[int] = None,
         known_ground_truth_answers: Optional[Dict[int, str]] = None,
+        ground_truth_source_id: Optional[str] = None,
+        ground_truth_provenance: Optional[Dict[str, Any]] = None,
     ) -> Tuple[SourceRelationship, List[RelationshipConflict]]:
         """Evaluates relationship across 4 deterministic layers."""
         conflicts: List[RelationshipConflict] = []
@@ -151,7 +153,9 @@ class MatchingEngine:
         # -------------------------------------------------------------
         self._verify_content_and_answers(
             source_meta, target_meta, eff_test_number, eff_passage_sec,
-            known_ground_truth_answers, conflicts, validation_flags, identity_evidence, now_iso
+            known_ground_truth_answers, conflicts, validation_flags, identity_evidence, now_iso,
+            ground_truth_source_id=ground_truth_source_id,
+            ground_truth_provenance=ground_truth_provenance,
         )
 
         # -------------------------------------------------------------
@@ -565,6 +569,8 @@ class MatchingEngine:
         validation_flags: List[str],
         identity_evidence: Dict[str, Any],
         now_iso: str,
+        ground_truth_source_id: Optional[str] = None,
+        ground_truth_provenance: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Audits content titles and compares answers against known keys to detect contradictions."""
         # 1. Content Title / Passage Name Check
@@ -590,28 +596,82 @@ class MatchingEngine:
                 validation_flags.append("TRANSCRIPT_AUDIO_ALIGNED")
 
         # 3. Answer Key Alignment & Contradiction Auditing
-        # Known keys can come from:
-        # a) ground_truth_answers passed directly
-        # b) source_meta.answer_keys if present
-        s_keys: Dict[int, str] = {}
-        if ground_truth_answers:
-            s_keys.update(ground_truth_answers)
-        elif test_number and test_number in source_meta.answer_keys:
-            s_keys.update(source_meta.answer_keys[test_number])
-
+        # An answer key cannot confirm itself.
+        # Requires:
+        # - Independent source identification
+        # - Source provenance
+        # - Explicit test and question alignment
+        # - No circular evidence
+        # When independent evidence is unavailable, preserve candidate or review_required.
         t_keys: Dict[int, str] = {}
         if test_number and test_number in target_meta.answer_keys:
             t_keys.update(target_meta.answer_keys[test_number])
 
-        if s_keys and t_keys:
-            overlapping_qs = set(s_keys.keys()).intersection(set(t_keys.keys()))
+        ref_answers: Dict[int, str] = {}
+        ref_source_id: Optional[str] = None
+        ref_provenance: Dict[str, Any] = {}
+        is_independent_source = False
+        is_circular = False
+
+        # Option A: From source_meta (if source_meta has answer keys for test_number)
+        if test_number and test_number in source_meta.answer_keys:
+            same_file = source_meta.file_id == target_meta.file_id
+            same_legacy = bool(source_meta.legacy_id and source_meta.legacy_id == target_meta.legacy_id)
+            same_path = bool(source_meta.relative_path and source_meta.relative_path == target_meta.relative_path)
+            same_content = bool(
+                source_meta.content_sha256
+                and target_meta.content_sha256
+                and source_meta.content_sha256 == target_meta.content_sha256
+            )
+            if same_file or same_legacy or same_path or same_content:
+                is_circular = True
+            else:
+                ref_answers = dict(source_meta.answer_keys[test_number])
+                ref_source_id = source_meta.file_id
+                ref_provenance = {
+                    "source_file_id": source_meta.file_id,
+                    "source_legacy_id": source_meta.legacy_id,
+                    "source_path": source_meta.relative_path,
+                    "source_content_sha256": source_meta.content_sha256 or "",
+                    "provenance_type": "independent_source_document",
+                }
+                is_independent_source = True
+
+        # Option B: From ground_truth_answers passed explicitly
+        elif ground_truth_answers:
+            same_file = bool(ground_truth_source_id and ground_truth_source_id == target_meta.file_id)
+            same_legacy = bool(ground_truth_source_id and ground_truth_source_id == target_meta.legacy_id)
+            is_same_object = (test_number in target_meta.answer_keys) and (ground_truth_answers is target_meta.answer_keys[test_number])
+
+            if same_file or same_legacy or is_same_object:
+                is_circular = True
+                ref_answers = dict(ground_truth_answers)
+            elif ground_truth_source_id:
+                # Genuinely independent ground truth with explicit source identification & provenance
+                ref_answers = dict(ground_truth_answers)
+                ref_source_id = ground_truth_source_id
+                ref_provenance = ground_truth_provenance or {
+                    "source_id": ground_truth_source_id,
+                    "provenance_type": "independent_ground_truth",
+                }
+                is_independent_source = True
+            else:
+                # ground_truth_answers passed without independent source identification.
+                # Can be used to audit contradictions against candidate keys, but cannot confirm
+                ref_answers = dict(ground_truth_answers)
+                ref_source_id = None
+                ref_provenance = {}
+                is_independent_source = False
+
+        if ref_answers and t_keys:
+            overlapping_qs = set(ref_answers.keys()).intersection(set(t_keys.keys()))
             if overlapping_qs:
                 matching_qs = []
                 contradictory_qs = []
                 details = {}
 
                 for q in sorted(overlapping_qs):
-                    s_val, _, s_flags = normalize_answer_value(s_keys[q])
+                    s_val, _, s_flags = normalize_answer_value(ref_answers[q])
                     t_val, _, t_flags = normalize_answer_value(t_keys[q])
 
                     if s_val is not None and t_val is not None:
@@ -620,14 +680,21 @@ class MatchingEngine:
                         else:
                             contradictory_qs.append(q)
                             details[f"Q{q}"] = {
-                                "source_answer": s_val,
+                                "reference_answer": s_val,
                                 "target_answer": t_val,
                             }
 
                 identity_evidence["answer_audit"] = {
+                    "target_source_id": target_meta.file_id,
+                    "target_legacy_id": target_meta.legacy_id,
+                    "reference_source_id": ref_source_id,
+                    "reference_provenance": ref_provenance,
+                    "test_number": test_number,
                     "overlapping_count": len(overlapping_qs),
                     "matching_count": len(matching_qs),
                     "contradictory_count": len(contradictory_qs),
+                    "independent_source_verified": is_independent_source,
+                    "circular_evidence_detected": is_circular,
                 }
 
                 if contradictory_qs:
@@ -652,6 +719,9 @@ class MatchingEngine:
                     )
                     conflicts.append(conf)
                     validation_flags.append("CONFLICTING_ANSWER_KEYS")
-                elif matching_qs:
+                elif matching_qs and not is_circular and is_independent_source:
+                    # Only genuinely independent sources can produce ANSWERS_ALIGNED
                     validation_flags.append("ANSWERS_ALIGNED")
                     identity_evidence["matching_answers"] = matching_qs
+                elif is_circular:
+                    validation_flags.append("CIRCULAR_ANSWER_EVIDENCE_REJECTED")
