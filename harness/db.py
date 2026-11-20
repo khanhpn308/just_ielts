@@ -76,6 +76,31 @@ def init_db(db_path: Optional[Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_checkpoints_lookup ON processing_checkpoints(file_id, stage, unit_identifier);
             CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON processing_checkpoints(status);
             CREATE INDEX IF NOT EXISTS idx_checkpoints_legacy_id ON processing_checkpoints(legacy_id);
+
+            CREATE TABLE IF NOT EXISTS normalization_checkpoints (
+                checkpoint_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                source_file_id TEXT NOT NULL REFERENCES sources(file_id),
+                source_legacy_id TEXT NOT NULL,
+                normalizer_version TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                config_hash TEXT NOT NULL,
+                raw_sha256 TEXT NOT NULL,
+                canonical_content_sha256 TEXT NOT NULL,
+                output_path TEXT NOT NULL,
+                output_sha256 TEXT NOT NULL,
+                lifecycle_status TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(entity_id, normalizer_version, raw_sha256)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_entity ON normalization_checkpoints(entity_id);
+            CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_status ON normalization_checkpoints(status);
+            CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_source ON normalization_checkpoints(source_file_id);
+            CREATE INDEX IF NOT EXISTS idx_norm_checkpoints_lifecycle ON normalization_checkpoints(lifecycle_status);
             """
         )
         # Migrate schema dynamically if table was created previously without relocation columns
@@ -491,3 +516,116 @@ def check_checkpoint_validity(
         return False
 
     return True
+
+
+def upsert_normalization_checkpoint(conn: sqlite3.Connection, cp_data: Dict[str, Any]) -> None:
+    """Inserts or updates a normalization checkpoint record."""
+    now = datetime.now(timezone.utc).isoformat()
+    sql = """
+        INSERT INTO normalization_checkpoints (
+            entity_id, entity_type, source_file_id, source_legacy_id,
+            normalizer_version, schema_version, config_hash, raw_sha256,
+            canonical_content_sha256, output_path, output_sha256,
+            lifecycle_status, status, created_at, updated_at
+        ) VALUES (
+            :entity_id, :entity_type, :source_file_id, :source_legacy_id,
+            :normalizer_version, :schema_version, :config_hash, :raw_sha256,
+            :canonical_content_sha256, :output_path, :output_sha256,
+            :lifecycle_status, :status, :created_at, :updated_at
+        )
+        ON CONFLICT(entity_id, normalizer_version, raw_sha256) DO UPDATE SET
+            schema_version = excluded.schema_version,
+            config_hash = excluded.config_hash,
+            canonical_content_sha256 = excluded.canonical_content_sha256,
+            output_path = excluded.output_path,
+            output_sha256 = excluded.output_sha256,
+            lifecycle_status = excluded.lifecycle_status,
+            status = excluded.status,
+            updated_at = excluded.updated_at
+    """
+    params = dict(cp_data)
+    params.setdefault("created_at", now)
+    params["updated_at"] = now
+    with conn:
+        conn.execute(sql, params)
+
+
+def get_normalization_checkpoint(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    normalizer_version: str,
+    raw_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """Retrieves a normalization checkpoint by its unique key."""
+    sql = """
+        SELECT * FROM normalization_checkpoints
+        WHERE entity_id = ? AND normalizer_version = ? AND raw_sha256 = ?
+    """
+    cur = conn.execute(sql, (entity_id, normalizer_version, raw_sha256))
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def is_normalization_checkpoint_valid(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    normalizer_version: str,
+    raw_sha256: str,
+    config_hash: str,
+    schema_version: str,
+) -> bool:
+    """Checks whether an existing normalization checkpoint is fresh and valid on disk."""
+    cp = get_normalization_checkpoint(conn, entity_id, normalizer_version, raw_sha256)
+    if not cp:
+        return False
+    if cp.get("status") != "COMPLETED":
+        return False
+    if cp.get("config_hash") != config_hash:
+        return False
+    if cp.get("schema_version") != schema_version:
+        return False
+
+    out_path = Path(cp["output_path"])
+    if not out_path.exists():
+        return False
+
+    try:
+        content_bytes = out_path.read_bytes()
+    except OSError:
+        return False
+
+    actual_sha = hashlib.sha256(content_bytes).hexdigest()
+    if actual_sha != cp["output_sha256"]:
+        return False
+
+    return True
+
+
+def list_normalization_checkpoints(
+    conn: sqlite3.Connection,
+    entity_type: Optional[str] = None,
+    status: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Lists normalization checkpoints with optional filtering."""
+    clauses = []
+    params = []
+    if entity_type:
+        clauses.append("entity_type = ?")
+        params.append(entity_type)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT * FROM normalization_checkpoints {where_sql} ORDER BY checkpoint_id ASC"
+    cur = conn.execute(sql, params)
+    return [dict(r) for r in cur.fetchall()]
+
+
+def count_normalization_by_lifecycle(conn: sqlite3.Connection) -> Dict[str, int]:
+    """Returns counts of normalization checkpoints grouped by lifecycle_status."""
+    cur = conn.execute(
+        "SELECT lifecycle_status, COUNT(*) FROM normalization_checkpoints GROUP BY lifecycle_status"
+    )
+    return dict(cur.fetchall())
+

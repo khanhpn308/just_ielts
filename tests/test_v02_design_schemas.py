@@ -251,10 +251,11 @@ def test_v01_source_identity_pattern_compatibility():
     assert not re.match(legacy_id_pattern, "INVALID_SRC")
 
 
+@pytest.mark.corpus
 def test_local_sqlite_source_id_mappings():
     """Verify real source ID mappings locally against SQLite database when present."""
     if not HARNESS_DB_PATH.exists():
-        pytest.skip(f"Local harness database not present at {HARNESS_DB_PATH}")
+        pytest.fail(f"Corpus testing is enabled but SQLite database not found at {HARNESS_DB_PATH}")
 
     import sqlite3
     from harness.inventory import compute_file_id
@@ -276,7 +277,7 @@ def test_local_sqlite_source_id_mappings():
     rows = {r["legacy_id"]: dict(r) for r in cur.fetchall()}
 
     for leg_id in pilot_legacy_ids:
-        assert leg_id in rows, f"Legacy source {leg_id} missing from SQLite sources table"
+        assert leg_id in rows, f"Required source {leg_id} missing from SQLite sources table"
         rec = rows[leg_id]
         expected_file_id = compute_file_id(rec["relative_path"])
         assert rec["file_id"] == expected_file_id, (

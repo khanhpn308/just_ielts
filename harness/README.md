@@ -1,6 +1,6 @@
-# IELTS Data Harness V0.1 — Technical Reference & Environment Guide
+# IELTS Data Harness V0.1 & V0.2-B — Technical Reference & Environment Guide
 
-This directory contains the IELTS Data Harness V0.1 engine for ingestion, classification, and raw structured extraction of learning materials.
+This directory contains the IELTS Data Harness engine for ingestion, classification, raw structured extraction (V0.1), and normalization into canonical, validated learning entities (V0.2-B).
 
 ---
 
@@ -10,7 +10,7 @@ Per repository instructions in [AGENTS.md](file:///home/khanh/projects/just_ielt
 
 - Never install packages into the global system Python.
 - Always execute commands explicitly using `./.venv/bin/python`.
-- Verify the environment health before running batch extractions.
+- Verify the environment health before running batch operations.
 
 ---
 
@@ -28,8 +28,6 @@ Install direct dependencies from [requirements-harness.txt](file:///home/khanh/p
 ```bash
 ./.venv/bin/pip install -r requirements-harness.txt
 ```
-
-A complete reproducible lockfile is archived under `private/requirements-harness.lock`.
 
 ### 2.3 System Prerequisites (Ubuntu / Debian / WSL2)
 The harness utilizes standard Linux system utilities for media inspection and OCR:
@@ -84,8 +82,9 @@ All required Python and system dependencies are satisfied.
 
 All commands run through `./.venv/bin/python -m harness.cli`:
 
+### 4.1 Phase V0.1 — Ingestion & Raw Extraction Commands
 ```bash
-# Display CLI help (works with zero third-party packages installed via lazy imports)
+# Display CLI help
 ./.venv/bin/python -m harness.cli --help
 
 # 1. Scan private/raw/ and synchronize metadata to SQLite sources table
@@ -95,13 +94,13 @@ All commands run through `./.venv/bin/python -m harness.cli`:
 ./.venv/bin/python -m harness.cli classify --pilot
 ./.venv/bin/python -m harness.cli classify --source-id SRC-011
 
-# 3. Execute extraction
+# 3. Execute raw extraction
 ./.venv/bin/python -m harness.cli extract --pilot                 # Extract all 7 pilot files
 ./.venv/bin/python -m harness.cli extract --source-id SRC-004      # Extract specific source
 ./.venv/bin/python -m harness.cli extract --source-id SRC-004 --unit page_0001 # Extract single page
 ./.venv/bin/python -m harness.cli extract --pilot --force          # Ignore checkpoints
 
-# 4. Resume incomplete or interrupted tasks
+# 4. Resume incomplete or interrupted extraction tasks
 ./.venv/bin/python -m harness.cli resume
 
 # 5. Display processing status and checkpoint metrics
@@ -112,24 +111,45 @@ All commands run through `./.venv/bin/python -m harness.cli`:
 ./.venv/bin/python -m harness.cli validate --source-id SRC-011
 ```
 
+### 4.2 Phase V0.2-B — Normalization & Quality Verification Commands
+```bash
+# 1. Run Reading Pilot normalization (SRC-138 + SRC-137)
+./.venv/bin/python -m harness.cli normalize --pilot
+
+# Dry-run normalization without writing files to disk
+./.venv/bin/python -m harness.cli normalize --pilot --dry-run
+
+# Force re-normalization, bypassing existing normalization checkpoints
+./.venv/bin/python -m harness.cli normalize --pilot --force
+
+# Normalize a specific source and test
+./.venv/bin/python -m harness.cli normalize --source-id SRC-138 --test-number 5 --passage-number 1
+
+# 2. Run Quality Gates G1-G7 verification and output JSON quality report
+./.venv/bin/python -m harness.cli verify --test-id TEST-IELTS-VOL06-05-ACAD --report
+
+# 3. Check normalization status and lifecycle breakdown
+./.venv/bin/python -m harness.cli normalization-status
+```
+
 ---
 
 ## 5. Architectural Principles
 
 1. **Lazy Loading & Fault Tolerance:**
-   Top-level imports are restricted to standard library modules. Extraction adapters and classifiers import external packages (`pikepdf`, `pdfminer`, `lxml`) only when executing tasks for that specific format. If an optional dependency is missing, CLI `--help` and unrelated extractors remain fully functional.
+   Top-level imports are restricted to standard library modules. Heavy modules (`pikepdf`, `pdfminer`, `lxml`) are imported only on demand. CLI help remains functional regardless of environment state.
 
-2. **Actionable Diagnostics:**
-   When an adapter encounters a missing Python package or system binary, it raises `MissingPythonDependencyError` or `MissingSystemDependencyError` with the exact pip or apt command to install it.
+2. **Deterministic Content Hashing & Storage:**
+   All canonical normalized entities have execution timestamps (`normalized_at`) excluded from their `canonical_content_sha256` digest. Output files are serialized with 2-space indentation, sorted keys, and written atomically.
 
-3. **Per-Page Checkpoints & Idempotency:**
-   Each PDF page, DOCX document, XLSX sheet, or audio metadata block is checkpointed individually in SQLite (`harness/state/harness.db`). Already completed units are skipped in O(1) time.
+3. **Multi-Tier Quality Lifecycle:**
+   Entities progress through strict lifecycle states: `extracted` $\to$ `review_required` / `reviewed` $\to$ `verified` / `rejected`. No machine-generated or automated script can promote records directly to `verified`; human tutor review is required.
 
-4. **Source & Repository Protection:**
-   - Raw files under `private/raw/` are opened exclusively in read-only mode (`rb`).
-   - Staged outputs reside in `private/staging/raw_extracted/` (gitignored).
-   - Checkpoint state resides in `harness/state/` (gitignored).
-   - Zero private data is tracked or committed to Git.
+4. **Zero Guessing Policy:**
+   Missing answer keys, missing evidence quotes, and OCR ambiguities are recorded as `null` with explicit diagnostic flags (e.g. `MISSING_SOURCE_ANSWER_KEY`, `OCR_TYPO_CORRECTED`). Content is never hallucinated or invented.
+
+5. **Copyright & Privacy Isolation:**
+   Authentic examination papers, passages, question prompts, and answer booklets reside strictly under gitignored `private/` directories (`private/raw/`, `private/staging/raw_extracted/`, `private/staging/normalized/`). Zero proprietary content is committed to Git. Public test fixtures and examples are strictly synthetic.
 
 ---
 

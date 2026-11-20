@@ -1,0 +1,55 @@
+"""Pydantic data models for IELTS Data Harness V0.2."""
+
+from harness.models.provenance import ProvenanceEnvelope
+from harness.models.quality import (
+    AnswerVerification,
+    ExplanationVerification,
+    ExtractionQuality,
+    LifecycleStatus,
+    PublicationPermission,
+    QualityProfile,
+    SourceFidelity,
+)
+from harness.models.question_bank import (
+    AudioInterval,
+    AuthorType,
+    EvidenceType,
+    IELTSAnswer,
+    IELTSEvidence,
+    IELTSExplanation,
+    IELTSQuestion,
+    IELTSTest,
+    ParagraphItem,
+    ParaphrasePair,
+    PassageOrSection,
+    QuestionGroup,
+    QuestionType,
+    SharedOption,
+    WordLimitRule,
+)
+
+__all__ = [
+    "ProvenanceEnvelope",
+    "QualityProfile",
+    "LifecycleStatus",
+    "ExtractionQuality",
+    "SourceFidelity",
+    "AnswerVerification",
+    "ExplanationVerification",
+    "PublicationPermission",
+    "IELTSTest",
+    "ParagraphItem",
+    "PassageOrSection",
+    "SharedOption",
+    "QuestionGroup",
+    "QuestionType",
+    "WordLimitRule",
+    "IELTSQuestion",
+    "IELTSAnswer",
+    "AudioInterval",
+    "IELTSEvidence",
+    "EvidenceType",
+    "ParaphrasePair",
+    "IELTSExplanation",
+    "AuthorType",
+]
