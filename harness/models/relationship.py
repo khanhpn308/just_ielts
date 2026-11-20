@@ -38,6 +38,8 @@ ConflictType = Literal[
     "MISSING_METADATA",
     "AMBIGUOUS_TEST_IDENTITY",
     "UNSUPPORTED_RELATIONSHIP",
+    "UNGROUNDED_IDENTITY",
+    "STALE_SOURCE_HASH",
 ]
 
 ConflictSeverity = Literal[
@@ -135,6 +137,22 @@ class SourceRelationship(BaseModel):
     provenance: Dict[str, Any] = Field(
         ...,
         description="Audit provenance tracking generator versions, config, and source hashes.",
+    )
+    source_content_sha256: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of primary source content.",
+    )
+    target_content_sha256: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of target source content.",
+    )
+    config_fingerprint: Optional[str] = Field(
+        default=None,
+        description="Configuration and rule version fingerprint.",
+    )
+    evidence_fingerprint: Optional[str] = Field(
+        default=None,
+        description="Deterministic SHA-256 digest of identity evidence.",
     )
     schema_version: str = Field(
         default=SCHEMA_VERSION_RELATIONSHIP,

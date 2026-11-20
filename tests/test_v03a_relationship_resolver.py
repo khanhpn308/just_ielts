@@ -34,6 +34,7 @@ from harness.db import (
     get_source_relationship,
     init_db,
     list_relationship_conflicts,
+    list_relationship_reviews,
     list_source_relationships,
     record_relationship_conflict,
     record_relationship_review,
@@ -42,7 +43,7 @@ from harness.db import (
 )
 from harness.matching.engine import MatchingEngine
 from harness.matching.metadata import SourceDocumentMetadata, extract_source_metadata
-from harness.matching.service import RelationshipMatchingService
+from harness.matching.service import RelationshipMatchingService, validate_output_directory
 from harness.models.relationship import (
     RelationshipConflict,
     RelationshipReview,
@@ -413,3 +414,305 @@ def test_privacy_isolation():
     assert "Ngoc Bach" not in fixture_text
     assert "Cam 16" not in fixture_text
     assert "Beechen Festival" not in fixture_text
+
+
+# --------------------------------------------------------------------------
+# Regression Tests for V0.3-A Correctness Remediation
+# --------------------------------------------------------------------------
+
+def test_generic_candidate_generation_multitest_multipassage():
+    """P0: Candidates generated across multiple tests and passages without hardcoding 5, 1."""
+    service = RelationshipMatchingService()
+    s1 = {
+        "file_id": "FILE-dyn000000001",
+        "legacy_id": "SRC-REG-01",
+        "relative_path": "data/synthetic/VOL2/Reading/test_booklet.docx",
+        "filename": "test_booklet.docx",
+        "extension": ".docx",
+        "collection": "VOL 2",
+        "staged_data": {
+            "test_numbers": [3, 4],
+            "passages_or_sections": {"3": [1, 2], "4": [1, 2, 3]},
+            "paragraphs": [{"text": "READING TEST 3\nREADING PASSAGE 1\nTitle A"}],
+        },
+    }
+    s2 = {
+        "file_id": "FILE-dyn000000002",
+        "legacy_id": "SRC-REG-02",
+        "relative_path": "data/synthetic/VOL2/Reading/key.pdf",
+        "filename": "key.pdf",
+        "extension": ".pdf",
+        "collection": "VOL 2",
+        "staged_data": {
+            "test_numbers": [3, 4],
+            "passages_or_sections": {"3": [2], "4": [1]},
+            "answer_keys": {"3": {"15": "A"}, "4": {"1": "TRUE"}},
+        },
+    }
+
+    pairs = service.generate_candidate_pairs([s1, s2])
+    # Expect candidates for (T3, P2), (T4, P1) because those are the intersection
+    # Zero hardcoded 5, 1
+    assert not any(p[3] == 5 for p in pairs)
+    t3_candidates = [p for p in pairs if p[3] == 3]
+    t4_candidates = [p for p in pairs if p[3] == 4]
+    assert len(t3_candidates) > 0
+    assert any(p[4] == 2 for p in t3_candidates)
+    assert len(t4_candidates) > 0
+    assert any(p[4] == 1 for p in t4_candidates)
+
+
+def test_candidate_generation_preserves_ambiguity():
+    """P0: Ambiguous test or passage identities are preserved as None rather than guessed."""
+    service = RelationshipMatchingService()
+    s1 = {
+        "file_id": "FILE-dyn000000003",
+        "legacy_id": "SRC-AMB-01",
+        "relative_path": "data/synthetic/VOL5/Reading/general_reading.docx",
+        "filename": "general_reading.docx",
+        "extension": ".docx",
+        "collection": "VOL 5",
+        "staged_data": {"paragraphs": [{"text": "Some general notes without test markers"}]},
+    }
+    s2 = {
+        "file_id": "FILE-dyn000000004",
+        "legacy_id": "SRC-AMB-02",
+        "relative_path": "data/synthetic/VOL5/Reading/key.pdf",
+        "filename": "key.pdf",
+        "extension": ".pdf",
+        "collection": "VOL 5",
+        "staged_data": {"answer_keys": {}},
+    }
+
+    pairs = service.generate_candidate_pairs([s1, s2])
+    assert len(pairs) > 0
+    # Both test_number and passage_or_section must be None (preserved ambiguity)
+    for p in pairs:
+        assert p[3] is None
+        assert p[4] is None
+
+
+def test_question_range_aligned_alone_does_not_confirm():
+    """P0: Structural compatibility (QUESTION_RANGE_ALIGNED) alone must stay candidate."""
+    engine = MatchingEngine()
+    # Source question booklet with range Q1-14 but no titles or answers
+    meta_q = SourceDocumentMetadata(
+        file_id="FILE-a00000000031",
+        relative_path="data/VOL10/Reading/test_1.docx",
+        filename="test_1.docx",
+        collection="VOL 10",
+        volume="VOL 10",
+        skill="reading",
+        document_role="question_booklet",
+        test_numbers=[1],
+        passages_or_sections={1: [1]},
+        passage_titles={},  # No title!
+    )
+    # Target answer key with Q1-Q14, but no overlapping answers or titles to verify content
+    meta_k = SourceDocumentMetadata(
+        file_id="FILE-a00000000032",
+        relative_path="data/VOL10/Reading/key_1.pdf",
+        filename="key_1.pdf",
+        collection="VOL 10",
+        volume="VOL 10",
+        skill="reading",
+        document_role="answer_key",
+        test_numbers=[1],
+        passages_or_sections={1: [1]},
+        answer_keys={1: {1: "TRUE", 2: "FALSE", 3: "NOT GIVEN"}},
+        passage_titles={},  # No title!
+    )
+
+    rel, confs = engine.evaluate_relationship(
+        source_meta=meta_q,
+        target_meta=meta_k,
+        relationship_type="question_to_answer_key",
+        test_number=1,
+        passage_or_section=1,
+    )
+
+    # Must NOT be confirmed because QUESTION_RANGE_ALIGNED alone does not provide content proof
+    assert "QUESTION_RANGE_ALIGNED" in rel.validation_flags
+    assert "GATE_CONFIRMED_PASSED" not in rel.validation_flags
+    assert rel.relationship_status == "candidate"
+    assert rel.match_confidence < 1.0
+
+
+def test_transcript_audio_aligned_requires_independent_evidence():
+    """P0: TRANSCRIPT_AUDIO_ALIGNED requires audio track verification, not just requested section."""
+    engine = MatchingEngine()
+    meta_audio_unverified = SourceDocumentMetadata(
+        file_id="FILE-a00000000041",
+        relative_path="data/VOL1/audio.mp3",
+        filename="audio.mp3",
+        collection="VOL 1",
+        volume="VOL 1",
+        skill="listening",
+        document_role="audio",
+        test_numbers=[1],
+        raw_content_summary={},  # No audio_track extracted!
+    )
+    meta_transcript = SourceDocumentMetadata(
+        file_id="FILE-a00000000042",
+        relative_path="data/VOL1/transcript.docx",
+        filename="transcript.docx",
+        collection="VOL 1",
+        volume="VOL 1",
+        skill="listening",
+        document_role="transcript",
+        test_numbers=[1],
+        passages_or_sections={1: [1]},
+    )
+
+    rel, _ = engine.evaluate_relationship(
+        source_meta=meta_transcript,
+        target_meta=meta_audio_unverified,
+        relationship_type="listening_to_audio",
+        test_number=1,
+        passage_or_section=1,  # Requested section number only!
+    )
+
+    # Must NOT have TRANSCRIPT_AUDIO_ALIGNED, and must NOT be confirmed
+    assert "TRANSCRIPT_AUDIO_ALIGNED" not in rel.validation_flags
+    assert "SECTION_REQUESTED_UNVERIFIED" in rel.validation_flags
+    assert rel.relationship_status in {"candidate", "review_required"}
+    assert rel.relationship_status != "confirmed"
+
+
+def test_source_freshness_and_reevaluation(populated_temp_db, synthetic_sources_map, tmp_path):
+    """P0: Stale relationships are reevaluated on content SHA change while fresh ones are skipped."""
+    service = RelationshipMatchingService(db_path=populated_temp_db)
+    sources = list(synthetic_sources_map.values())[:2]
+    out_dir = tmp_path / "freshness_test"
+
+    # Initial run
+    res1 = service.match_sources(sources_override=sources, output_dir=out_dir, force=True)
+    assert res1["confirmed"] > 0
+    rel1 = res1["relationships"][0]
+
+    # Run again without changes -> fresh, skipped_resumed > 0
+    res2 = service.match_sources(sources_override=sources, output_dir=out_dir, resume=True)
+    assert res2["skipped_resumed"] > 0
+
+    # Modify source content SHA in memory to simulate upstream content edit
+    modified_sources = [dict(s) for s in sources]
+    modified_sources[0]["content_sha256"] = "9999999999999999999999999999999999999999999999999999999999999999"
+
+    # Run again: should detect staleness and reevaluate rather than skip
+    res3 = service.match_sources(sources_override=modified_sources, output_dir=out_dir, resume=True)
+    assert res3["skipped_resumed"] == 0
+    rel3 = [r for r in res3["relationships"] if r.relationship_id == rel1.relationship_id][0]
+    assert rel3.source_content_sha256 == "9999999999999999999999999999999999999999999999999999999999999999"
+
+
+def test_source_changes_status_unchanged_preserves_id_and_reviews(populated_temp_db, synthetic_sources_map, tmp_path):
+    """P0: Content changes that still confirm preserve relationship_id and review history."""
+    conn = get_db_connection(populated_temp_db)
+    service = RelationshipMatchingService(db_path=populated_temp_db)
+    sources = list(synthetic_sources_map.values())[:2]
+    out_dir = tmp_path / "review_preservation"
+
+    res1 = service.match_sources(sources_override=sources, output_dir=out_dir, force=True)
+    rel1 = res1["relationships"][0]
+
+    # Record a human review transition for this relationship
+    record_relationship_review(
+        conn,
+        {
+            "review_id": "REV-0000000000000001",
+            "relationship_id": rel1.relationship_id,
+            "previous_status": "candidate",
+            "new_status": "confirmed",
+            "reviewer": "expert_tutor",
+            "reason": "Forensically validated pilot pair",
+        },
+    )
+    conn.close()
+
+    # Change source hash while preserving valid content
+    modified_sources = [dict(s) for s in sources]
+    modified_sources[0]["content_sha256"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    res2 = service.match_sources(sources_override=modified_sources, output_dir=out_dir, resume=True)
+    rel2 = [r for r in res2["relationships"] if r.relationship_id == rel1.relationship_id][0]
+
+    # Deterministic ID preserved
+    assert rel2.relationship_id == rel1.relationship_id
+    assert rel2.relationship_status == "confirmed"
+
+    # Review history preserved
+    conn2 = get_db_connection(populated_temp_db)
+    reviews = list_relationship_reviews(conn2, rel1.relationship_id)
+    conn2.close()
+    assert len(reviews) == 1
+    assert reviews[0]["reviewer"] == "expert_tutor"
+
+
+def test_quality_gates_runtime_evaluation(populated_temp_db, synthetic_sources_map, tmp_path):
+    """P1: Quality gates return real runtime PASS/PASS_WITH_UNRESOLVED/FAIL with counts."""
+    service = RelationshipMatchingService(db_path=populated_temp_db)
+    sources = list(synthetic_sources_map.values())
+    out_dir = tmp_path / "gates_test"
+
+    res = service.match_sources(sources_override=sources, output_dir=out_dir, force=True)
+    assert "quality_gates" in res
+    gates = res["quality_gates"]
+
+    for gid in ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]:
+        assert gid in gates
+        assert gates[gid]["status"] in {"PASS", "PASS_WITH_UNRESOLVED", "FAIL", "NOT_EVALUATED"}
+        assert "counts" in gates[gid]
+        assert "note" in gates[gid]
+
+    # R2 must pass (zero cross-volume confirmed)
+    assert gates["R2"]["status"] == "PASS"
+    assert gates["R2"]["counts"]["cross_volume_confirmed"] == 0
+
+    # R7 should reflect unresolved items if review_required exists
+    if res["review_required"] > 0:
+        assert gates["R7"]["status"] == "PASS_WITH_UNRESOLVED"
+
+
+def test_privacy_output_dir_validation_negative(tmp_path):
+    """P1: validate_output_directory strictly blocks public directories and symlink escapes."""
+    # Attempting to write into docs/
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(REPO_ROOT / "docs" / "leaked_reports")
+
+    # Attempting to write into tests/
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(REPO_ROOT / "tests" / "leaked_reports")
+
+    # Attempting to write into repo root directly
+    with pytest.raises(ValueError, match="Security violation"):
+        validate_output_directory(REPO_ROOT / "escaped_reports")
+
+    # Symlink escape: symlink in private pointing to docs
+    symlink_path = REPO_ROOT / "private" / "test_symlink_escape"
+    try:
+        symlink_path.symlink_to(REPO_ROOT / "docs")
+        with pytest.raises(ValueError, match="Security violation"):
+            validate_output_directory(symlink_path)
+    finally:
+        if symlink_path.is_symlink() or symlink_path.exists():
+            symlink_path.unlink()
+
+
+def test_dry_run_does_not_mutate_db_or_persistent_outputs(temp_db_path, synthetic_sources_map):
+    """P1: dry_run=True must not write to SQLite or default reports dir."""
+    service = RelationshipMatchingService(db_path=temp_db_path)
+    sources = list(synthetic_sources_map.values())[:2]
+
+    # Dry run without explicit output_dir
+    res = service.match_sources(sources_override=sources, dry_run=True, output_dir=None)
+
+    # SQLite must have 0 rows
+    conn = get_db_connection(temp_db_path)
+    rels = list_source_relationships(conn)
+    confs = list_relationship_conflicts(conn)
+    conn.close()
+
+    assert len(rels) == 0
+    assert len(confs) == 0
+    assert res["total_evaluated"] > 0
+

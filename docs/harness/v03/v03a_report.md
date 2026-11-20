@@ -176,16 +176,16 @@ All 13 test scenarios specified in Section 8 of the requirement were implemented
 12. `test_source_relocation_and_hash_invalidation`: Provenance updates on relocated source files.
 13. `test_privacy_isolation`: Verification of zero copyrighted text in public fixtures.
 
-### Test Results
+### Test Results (Post-Remediation)
 - **Clean Checkout (Synthetic Only):**
   ```bash
   ./.venv/bin/python -m pytest -q tests/
-  # Output: 130 passed, 9 skipped in 6.76s
+  # Output: 139 passed, 9 skipped in 10.12s
   ```
 - **Local Corpus Acceptance:**
   ```bash
   ./.venv/bin/python -m pytest -q tests/ --corpus
-  # Output: 139 passed in 26.83s
+  # Output: 148 passed in 29.05s
   ```
 - **Environment Check:**
   ```bash
@@ -195,11 +195,33 @@ All 13 test scenarios specified in Section 8 of the requirement were implemented
 
 ---
 
-## 7. CLI Usage
+## 7. PR #5 Correctness Remediation
+
+Following architectural audit, six core remediation invariants were implemented and verified:
+1. **Generic Candidate Generation (P0):**
+   - Removed all hardcoded test/section assumptions (Reading Test 5, Passage 1; Listening Test 1, Section 1; SRC-138 / SRC-077 special branches).
+   - Candidate pairs are dynamically synthesized from document metadata and content extraction.
+   - For multi-test and multi-passage sources, distinct candidates are generated where supported, preserving ambiguity when metadata is unstated.
+2. **Strict Relationship Confirmation (P0):**
+   - Separated metadata compatibility, structural compatibility, and actual content alignment.
+   - `QUESTION_RANGE_ALIGNED` alone never confirms a relationship without content grounding (`ANSWERS_ALIGNED` or `CONTENT_TITLE_MATCH`).
+   - `TRANSCRIPT_AUDIO_ALIGNED` requires independent physical audio track or verified transcript section content; requested section numbers alone cannot confirm.
+3. **Cryptographic Resume & Freshness Audit (P0):**
+   - Tracked `source_content_sha256`, `target_content_sha256`, `matcher_version`, `config_fingerprint`, and `evidence_fingerprint`.
+   - Stale relationships reevaluated on content modifications; review history and deterministic IDs preserved.
+4. **Real Runtime Quality Gate Evaluation (P1):**
+   - Quality gates R1–R9 evaluated at runtime supporting `PASS`, `PASS_WITH_UNRESOLVED`, `FAIL`, and `NOT_EVALUATED` with structured evidence and counts.
+5. **Privacy Isolation & Dry-Run Enforcement (P1):**
+   - Strict validation of `output_dir` rejecting public directories (`docs/`, `tests/`, `harness/`, repo root) and symlink escapes.
+   - `dry_run=True` verified to never mutate SQLite or write persistent outputs unless explicitly requested.
+
+---
+
+## 8. CLI Usage
 
 The harness CLI was extended with two subcommands:
 
-### 7.1 Match Sources
+### 8.1 Match Sources
 ```bash
 ./.venv/bin/python -m harness.cli match-sources --pilot
 ./.venv/bin/python -m harness.cli match-sources --source-id SRC-138
@@ -207,14 +229,14 @@ The harness CLI was extended with two subcommands:
 ./.venv/bin/python -m harness.cli match-sources --pilot --dry-run
 ```
 
-### 7.2 Relationship Status
+### 8.2 Relationship Status
 ```bash
 ./.venv/bin/python -m harness.cli relationship-status
 ```
 
 ---
 
-## 8. Limitations & Scope Boundary
+## 9. Limitations & Scope Boundary
 
 - **Listening Normalization:** Listening audio intervals and transcript paragraph segmentation are out of scope for V0.3-A and deferred to V0.3-B.
 - **Human Review CLI:** Interactive human-in-the-loop review interface is out of scope and scheduled for Sprint 3 (V0.3-C).

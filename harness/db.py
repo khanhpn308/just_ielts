@@ -117,6 +117,10 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 match_confidence REAL NOT NULL,
                 relationship_status TEXT NOT NULL,
                 provenance TEXT NOT NULL,
+                source_content_sha256 TEXT,
+                target_content_sha256 TEXT,
+                config_fingerprint TEXT,
+                evidence_fingerprint TEXT,
                 schema_version TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -164,6 +168,13 @@ def init_db(db_path: Optional[Path] = None) -> None:
             conn.execute("ALTER TABLE sources ADD COLUMN relocated_from TEXT")
         if "relocated_to" not in existing_cols:
             conn.execute("ALTER TABLE sources ADD COLUMN relocated_to TEXT")
+
+        # Migrate source_relationships dynamically if table was created without fingerprint columns
+        cur_rel = conn.execute("PRAGMA table_info(source_relationships)")
+        rel_cols = {row["name"] for row in cur_rel.fetchall()}
+        for col_name in ("source_content_sha256", "target_content_sha256", "config_fingerprint", "evidence_fingerprint"):
+            if col_name not in rel_cols:
+                conn.execute(f"ALTER TABLE source_relationships ADD COLUMN {col_name} TEXT")
     conn.close()
 
 
@@ -694,6 +705,11 @@ def upsert_source_relationship(conn: sqlite3.Connection, rel_data: Dict[str, Any
     params.setdefault("created_at", now)
     params["updated_at"] = now
 
+    params.setdefault("source_content_sha256", None)
+    params.setdefault("target_content_sha256", None)
+    params.setdefault("config_fingerprint", None)
+    params.setdefault("evidence_fingerprint", None)
+
     # Ensure JSON serializable fields are encoded
     for json_field in ("identity_evidence", "validation_flags", "provenance"):
         val = params.get(json_field)
@@ -707,12 +723,14 @@ def upsert_source_relationship(conn: sqlite3.Connection, rel_data: Dict[str, Any
             relationship_id, source_file_id, target_file_id, relationship_type,
             collection, volume, test_number, passage_or_section, skill,
             identity_evidence, validation_flags, match_confidence,
-            relationship_status, provenance, schema_version, created_at, updated_at
+            relationship_status, provenance, source_content_sha256, target_content_sha256,
+            config_fingerprint, evidence_fingerprint, schema_version, created_at, updated_at
         ) VALUES (
             :relationship_id, :source_file_id, :target_file_id, :relationship_type,
             :collection, :volume, :test_number, :passage_or_section, :skill,
             :identity_evidence, :validation_flags, :match_confidence,
-            :relationship_status, :provenance, :schema_version, :created_at, :updated_at
+            :relationship_status, :provenance, :source_content_sha256, :target_content_sha256,
+            :config_fingerprint, :evidence_fingerprint, :schema_version, :created_at, :updated_at
         )
         ON CONFLICT(relationship_id) DO UPDATE SET
             source_file_id = excluded.source_file_id,
@@ -728,6 +746,10 @@ def upsert_source_relationship(conn: sqlite3.Connection, rel_data: Dict[str, Any
             match_confidence = excluded.match_confidence,
             relationship_status = excluded.relationship_status,
             provenance = excluded.provenance,
+            source_content_sha256 = excluded.source_content_sha256,
+            target_content_sha256 = excluded.target_content_sha256,
+            config_fingerprint = excluded.config_fingerprint,
+            evidence_fingerprint = excluded.evidence_fingerprint,
             schema_version = excluded.schema_version,
             updated_at = excluded.updated_at
     """

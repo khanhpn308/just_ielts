@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import json
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from harness.matching.metadata import SourceDocumentMetadata
@@ -172,40 +174,49 @@ class MatchingEngine:
             c.relationship_id = rel_id
 
         # Epistemic Status Determination
+        is_volume_ok = ("VOLUME_MATCH" in validation_flags) or ("COLLECTION_MATCH" in validation_flags)
+        is_skill_ok = "SKILL_MATCH" in validation_flags
+        is_test_ok = "TEST_NUMBER_MATCH" in validation_flags or "TEST_NUMBER_CONTAINED" in validation_flags
+
+        # Structural compatibility
+        is_struct_ok = (
+            "QUESTION_RANGE_ALIGNED" in validation_flags
+            or "AUDIO_TRACK_VERIFIED" in validation_flags
+            or "TRANSCRIPT_SECTION_VERIFIED" in validation_flags
+        )
+
+        # Actual content alignment (QUESTION_RANGE_ALIGNED alone NEVER counts as content alignment)
+        is_content_aligned = (
+            "ANSWERS_ALIGNED" in validation_flags
+            or "CONTENT_TITLE_MATCH" in validation_flags
+            or "TRANSCRIPT_AUDIO_ALIGNED" in validation_flags
+        )
+
+        config_fp = hashlib.sha256(f"{self.matcher_version}:strict-v03a".encode("utf-8")).hexdigest()[:16]
+        evidence_fp = hashlib.sha256(json.dumps(identity_evidence, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
         if has_critical:
             status: RelationshipStatus = "rejected"
             confidence = 0.0
         elif has_medium or ("VOLUME_PARTIAL_MISSING" in validation_flags) or ("AMBIGUOUS_TEST_IDENTITY" in validation_flags):
             status = "review_required"
             confidence = 0.5
+        elif is_volume_ok and is_skill_ok and is_test_ok and is_struct_ok and is_content_aligned:
+            # Confirmed: metadata compatibility + structural compatibility + actual content alignment
+            status = "confirmed"
+            confidence = 1.0
+            validation_flags.append("GATE_CONFIRMED_PASSED")
+        elif is_volume_ok and is_skill_ok and is_test_ok and is_struct_ok:
+            # Plausible candidate with structural compatibility, awaiting independent content grounding
+            status = "candidate"
+            confidence = 0.7
+        elif is_volume_ok and is_skill_ok:
+            # Candidate under preliminary metadata verification
+            status = "candidate"
+            confidence = 0.6
         else:
-            # Check confirmation gate criteria:
-            # 1. Exact volume match (or matching collection)
-            # 2. Skill match
-            # 3. Verified test number
-            # 4. Zero critical or medium conflicts
-            # 5. Positive structural or content alignment
-            is_volume_ok = ("VOLUME_MATCH" in validation_flags) or ("COLLECTION_MATCH" in validation_flags)
-            is_skill_ok = "SKILL_MATCH" in validation_flags
-            is_test_ok = "TEST_NUMBER_MATCH" in validation_flags or "TEST_NUMBER_CONTAINED" in validation_flags
-            is_content_or_struct_ok = (
-                "ANSWERS_ALIGNED" in validation_flags
-                or "CONTENT_TITLE_MATCH" in validation_flags
-                or "TRANSCRIPT_AUDIO_ALIGNED" in validation_flags
-                or "QUESTION_RANGE_ALIGNED" in validation_flags
-            )
-
-            if is_volume_ok and is_skill_ok and is_test_ok and is_content_or_struct_ok:
-                status = "confirmed"
-                confidence = 1.0
-                validation_flags.append("GATE_CONFIRMED_PASSED")
-            elif is_volume_ok and is_skill_ok:
-                # Plausible candidate but needs further verification or human review
-                status = "candidate"
-                confidence = 0.7
-            else:
-                status = "review_required"
-                confidence = 0.4
+            status = "review_required"
+            confidence = 0.4
 
         provenance_dict = {
             "matcher_name": "SourceMatchingEngine",
@@ -217,6 +228,10 @@ class MatchingEngine:
             "target_legacy_id": target_meta.legacy_id,
             "source_path": source_meta.relative_path,
             "target_path": target_meta.relative_path,
+            "source_content_sha256": source_meta.content_sha256 or "",
+            "target_content_sha256": target_meta.content_sha256 or "",
+            "config_fingerprint": config_fp,
+            "evidence_fingerprint": evidence_fp,
             "conflicts_detected": len(conflicts),
             "layers_passed": [
                 layer for layer in ["metadata", "structural", "content"]
@@ -239,6 +254,10 @@ class MatchingEngine:
             match_confidence=confidence,
             relationship_status=status,
             provenance=provenance_dict,
+            source_content_sha256=source_meta.content_sha256,
+            target_content_sha256=target_meta.content_sha256,
+            config_fingerprint=config_fp,
+            evidence_fingerprint=evidence_fp,
             schema_version=SCHEMA_VERSION_RELATIONSHIP,
         )
 
@@ -487,11 +506,35 @@ class MatchingEngine:
         identity_evidence: Dict[str, Any],
     ) -> None:
         """Checks question ranges and section boundary compatibility."""
-        if relationship_type in {"listening_to_audio", "listening_to_transcript"}:
-            # Audio / Transcript structural check: section track alignment
+        if relationship_type == "listening_to_audio":
+            audio_track = target_meta.raw_content_summary.get("audio_track")
+            if audio_track is not None and passage_or_section is not None:
+                if audio_track == passage_or_section:
+                    identity_evidence["audio_track_verified"] = audio_track
+                    validation_flags.append("AUDIO_TRACK_VERIFIED")
+                else:
+                    validation_flags.append("AUDIO_TRACK_MISMATCH")
+            elif audio_track is not None:
+                identity_evidence["audio_track_verified"] = audio_track
+                validation_flags.append("AUDIO_TRACK_VERIFIED")
+            elif passage_or_section is not None:
+                # Requested section only, without independent audio track verification
+                identity_evidence["requested_section_unverified"] = passage_or_section
+                validation_flags.append("SECTION_REQUESTED_UNVERIFIED")
+            return
+
+        if relationship_type == "listening_to_transcript":
+            t_sections = target_meta.passages_or_sections.get(test_number or 1, [])
             if passage_or_section is not None:
-                identity_evidence["section_number"] = passage_or_section
-                validation_flags.append("TRANSCRIPT_AUDIO_ALIGNED")
+                if passage_or_section in t_sections:
+                    identity_evidence["transcript_section_verified"] = passage_or_section
+                    validation_flags.append("TRANSCRIPT_SECTION_VERIFIED")
+                else:
+                    identity_evidence["requested_section_unverified"] = passage_or_section
+                    validation_flags.append("SECTION_REQUESTED_UNVERIFIED")
+            elif t_sections:
+                validation_flags.append("TRANSCRIPT_SECTION_VERIFIED")
+                identity_evidence["transcript_section_verified"] = t_sections[0]
             return
 
         # Reading passage structural checks: question numbering
@@ -529,13 +572,24 @@ class MatchingEngine:
             s_title = source_meta.passage_titles.get(test_number, {}).get(passage_or_section)
             t_title = target_meta.passage_titles.get(test_number, {}).get(passage_or_section)
             if s_title and t_title:
-                clean_s = s_title.lower().strip()
-                clean_t = t_title.lower().strip()
-                if clean_s in clean_t or clean_t in clean_s:
+                clean_s = re.sub(r"[^\w\s]", "", s_title.lower()).strip()
+                clean_t = re.sub(r"[^\w\s]", "", t_title.lower()).strip()
+                if (clean_s and clean_t) and (clean_s in clean_t or clean_t in clean_s):
                     validation_flags.append("CONTENT_TITLE_MATCH")
                     identity_evidence["passage_title"] = s_title
 
-        # 2. Answer Key Alignment & Contradiction Auditing
+        # 2. Audio / Transcript Independent Identity Alignment
+        # TRANSCRIPT_AUDIO_ALIGNED is NEVER added when only a requested section number is available.
+        # It requires independent physical audio track verification or verified transcript section content.
+        if ("AUDIO_TRACK_VERIFIED" in validation_flags) or ("TRANSCRIPT_SECTION_VERIFIED" in validation_flags):
+            if "CONTENT_TITLE_MATCH" in validation_flags:
+                validation_flags.append("TRANSCRIPT_AUDIO_ALIGNED")
+            elif "AUDIO_TRACK_VERIFIED" in validation_flags and "AUDIO_TRACK_MISMATCH" not in validation_flags:
+                validation_flags.append("TRANSCRIPT_AUDIO_ALIGNED")
+            elif "TRANSCRIPT_SECTION_VERIFIED" in validation_flags:
+                validation_flags.append("TRANSCRIPT_AUDIO_ALIGNED")
+
+        # 3. Answer Key Alignment & Contradiction Auditing
         # Known keys can come from:
         # a) ground_truth_answers passed directly
         # b) source_meta.answer_keys if present
