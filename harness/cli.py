@@ -537,6 +537,177 @@ def cmd_relationship_status(args):
             print(f"  - [{r['relationship_id']}] {r['relationship_type']} ({r['volume']} {t_str} {p_str})")
 
 
+def cmd_relationship_review(args):
+    """Dispatches human review actions: list, show, decide, history."""
+    from harness.review.policy import ReviewPolicyViolation
+    from harness.review.service import RelationshipReviewService
+
+    service = RelationshipReviewService()
+    action = getattr(args, "review_subcommand", None)
+
+    if action == "list":
+        rels = service.list_relationships(
+            status=args.status,
+            volume=args.volume,
+            relationship_type=args.type,
+            limit=args.limit,
+        )
+        if args.format == "json":
+            print(json.dumps(rels, indent=2, sort_keys=True))
+            return
+
+        print(f"=== SOURCE RELATIONSHIPS FOR HUMAN REVIEW (Filter: {args.status}) ===")
+        print(f"Total Found: {len(rels)}")
+        if not rels:
+            print("No relationships match the criteria.")
+            return
+
+        print(f"\n{'Rel ID':<20} | {'Type':<25} | {'Vol':<6} | {'Test':<5} | {'P/S':<4} | {'Status':<15} | {'Conf':<5}")
+        print("-" * 88)
+        for r in rels:
+            t_str = f"T{r['test_number']}" if r.get("test_number") else "-"
+            p_str = f"P{r['passage_or_section']}" if r.get("passage_or_section") else "-"
+            conf_str = f"{r.get('match_confidence', 0.0):.2f}"
+            print(f"{r['relationship_id']:<20} | {r['relationship_type']:<25} | {r['volume']:<6} | {t_str:<5} | {p_str:<4} | {r['relationship_status']:<15} | {conf_str:<5}")
+
+    elif action == "show":
+        try:
+            details = service.get_relationship_details(args.id)
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+        if args.format == "json":
+            print(json.dumps(details, indent=2, sort_keys=True))
+            return
+
+        rel = details["relationship"]
+        src = details["source"] or {}
+        tgt = details["target"] or {}
+        confs = details["conflicts"]
+        hist = details["history"]
+        preview = details["approval_preview"]
+
+        print(f"=== SOURCE RELATIONSHIP REVIEW INSPECTION: {rel['relationship_id']} ===")
+        print(f"Status          : {rel['relationship_status'].upper()}")
+        print(f"Type            : {rel['relationship_type']}")
+        print(f"Scope           : Volume: {rel['volume']} | Test: {rel.get('test_number') or '-'} | Passage/Section: {rel.get('passage_or_section') or '-'} | Skill: {rel.get('skill')}")
+        print(f"Confidence      : {rel.get('match_confidence', 0.0):.2f}")
+
+        print("\n[Source Documents]")
+        print(f"  Primary Source : {src.get('legacy_id', 'UNKNOWN')} ({rel['source_file_id']})")
+        print(f"    Path         : {src.get('relative_path', '-')}")
+        print(f"    SHA-256      : {rel.get('source_content_sha256') or src.get('content_sha256', '-')}")
+        print(f"  Target Source  : {tgt.get('legacy_id', 'UNKNOWN')} ({rel['target_file_id']})")
+        print(f"    Path         : {tgt.get('relative_path', '-')}")
+        print(f"    SHA-256      : {rel.get('target_content_sha256') or tgt.get('content_sha256', '-')}")
+        fresh_str = "FRESH (inventory & on-disk hashes match)" if details["is_fresh"] else f"STALE ({details['freshness_reason']})"
+        print(f"  Freshness      : {fresh_str}")
+
+        print("\n[Validation Flags]")
+        flags = rel.get("validation_flags") or []
+        print(f"  {', '.join(flags) if flags else 'None'}")
+
+        print("\n[Active Conflicts]")
+        if not confs:
+            print("  None. Zero conflicts recorded.")
+        else:
+            for c in confs:
+                print(f"  - [{c.get('conflict_type')}] ({c.get('severity', '').upper()}): {c.get('description')}")
+
+        print("\n[Review Policy Assessment (V0.3-B Gate Preview)]")
+        if preview["can_approve"]:
+            print("  Approval Eligible : YES (Meets all Rule A epistemic confirmation gates)")
+        else:
+            print("  Approval Eligible : NO (Blocked by Review Policy)")
+            for r in preview["rejection_reasons"]:
+                print(f"    * {r}")
+
+        print("\n[Audit Review History]")
+        print(f"  Total Review Events: {len(hist)}")
+        for h in hist:
+            print(f"  - [{h.get('review_id')}] Decision: {h.get('decision')} | {h.get('previous_status')} -> {h.get('final_status')} | Reviewer: {h.get('reviewer_id') or h.get('reviewer')} | At: {h.get('reviewed_at') or h.get('created_at')}")
+
+    elif action == "decide":
+        ev_refs = None
+        if args.evidence_json:
+            try:
+                ev_refs = json.loads(args.evidence_json)
+            except Exception as e:
+                print(f"Error parsing --evidence-json: {e}")
+                sys.exit(1)
+
+        print(f">>> Processing Human Review Decision for {args.id}...")
+        print(f"    Decision    : {args.decision}")
+        print(f"    Reviewer    : {args.reviewer_id} (Operator Declaration)")
+        print(f"    Dry Run     : {args.dry_run}")
+
+        try:
+            res = service.decide(
+                relationship_id=args.id,
+                decision=args.decision,
+                reviewer_id=args.reviewer_id,
+                reason=args.reason,
+                evidence_references=ev_refs,
+                evidence_source_id=args.evidence_id,
+                dry_run=args.dry_run,
+            )
+        except ReviewPolicyViolation as e:
+            print(f"\n[POLICY REJECTION]\n{e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"\n[ERROR] Failed to record review decision: {e}")
+            sys.exit(1)
+
+        prefix = "[DRY-RUN SUCCESS]" if args.dry_run else "[DECISION COMMITTED]"
+        print(f"\n{prefix} {res['message']}")
+        rev = res["review_event"]
+        print(f"  Review ID       : {rev['review_id']}")
+        print(f"  Transition      : {res['previous_status']} -> {res['final_status']}")
+        print(f"  Decision        : {res['decision']}")
+        print(f"  Reviewer ID     : {rev['reviewer_id']}")
+        print(f"  Reason          : {rev['reason']}")
+        print(f"  Reviewed At     : {rev['reviewed_at']}")
+        print(f"  Policy Version  : {rev['review_policy_version']}")
+        print(f"  Expert Verified : {rev['expert_verified']} (Declaration: operator identity entered through CLI)")
+
+    elif action == "history":
+        history = service.get_history(args.id)
+        if args.format == "json":
+            print(json.dumps(history, indent=2, sort_keys=True))
+            return
+
+        print(f"=== IMMUTABLE REVIEW AUDIT HISTORY: {args.id} ===")
+        print(f"Total Review Events: {len(history)}")
+        if not history:
+            print("No review events recorded for this relationship.")
+            return
+
+        for idx, h in enumerate(history, 1):
+            rev_time = h.get("reviewed_at") or h.get("created_at")
+            rev_user = h.get("reviewer_id") or h.get("reviewer")
+            p_stat = h.get("previous_status")
+            f_stat = h.get("final_status") or h.get("new_status")
+            expert = h.get("expert_verified", False)
+
+            print(f"\nReview #{idx} [{h.get('review_id')}] — {rev_time}")
+            print(f"  Decision         : {h.get('decision', 'unknown')}")
+            print(f"  State Transition : {p_stat} -> {f_stat}")
+            print(f"  Reviewer ID      : {rev_user} (Operator Declaration)")
+            print(f"  Expert Verified  : {expert}")
+            print(f"  Policy Version   : {h.get('review_policy_version', '-')}")
+            print(f"  Reason           : {h.get('reason')}")
+            if h.get("source_fingerprint"):
+                print(f"  Source Hash      : {h.get('source_fingerprint')}")
+            if h.get("target_fingerprint"):
+                print(f"  Target Hash      : {h.get('target_fingerprint')}")
+            if h.get("evidence_references"):
+                print(f"  Evidence Refs    : {h.get('evidence_references')}")
+    else:
+        print("Please specify a review action: list, show, decide, history.")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="harness",
@@ -619,6 +790,48 @@ def main():
     # relationship-status (Phase V0.3-A)
     subparsers.add_parser("relationship-status", help="Show source relationship registry status")
 
+    # relationship-review (Phase V0.3-B)
+    parser_rev = subparsers.add_parser(
+        "relationship-review",
+        help="Human review and verification workflow for source relationships (Phase V0.3-B)",
+    )
+    rev_subparsers = parser_rev.add_subparsers(
+        dest="review_subcommand", help="Review actions: list, show, decide, history"
+    )
+
+    # relationship-review list
+    p_rev_list = rev_subparsers.add_parser("list", help="List unresolved or filtered relationships")
+    p_rev_list.add_argument(
+        "--status",
+        choices=["unresolved", "candidate", "review_required", "confirmed", "rejected", "all"],
+        default="unresolved",
+        help="Filter by status (default: unresolved)",
+    )
+    p_rev_list.add_argument("--volume", type=str, help="Filter by volume (e.g. 'VOL 6')")
+    p_rev_list.add_argument("--type", type=str, help="Filter by relationship type")
+    p_rev_list.add_argument("--limit", type=int, help="Limit number of relationships displayed")
+    p_rev_list.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
+
+    # relationship-review show
+    p_rev_show = rev_subparsers.add_parser("show", help="Show forensic details, conflicts, and policy verification")
+    p_rev_show.add_argument("--id", type=str, required=True, help="Relationship ID (e.g. REL-de2d61aad4fbe19b)")
+    p_rev_show.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
+
+    # relationship-review decide
+    p_rev_decide = rev_subparsers.add_parser("decide", help="Record human review decision (approve, reject, defer)")
+    p_rev_decide.add_argument("--id", type=str, required=True, help="Relationship ID to review")
+    p_rev_decide.add_argument("--decision", choices=["approve", "reject", "defer"], required=True, help="Decision")
+    p_rev_decide.add_argument("--reviewer-id", type=str, required=True, help="Operator identifier (e.g. USER-001)")
+    p_rev_decide.add_argument("--reason", type=str, required=True, help="Documented rationale (min 5 chars)")
+    p_rev_decide.add_argument("--evidence-id", type=str, help="Optional verified source reference ID for independent evidence")
+    p_rev_decide.add_argument("--evidence-json", type=str, help="Optional JSON string with supporting evidence references")
+    p_rev_decide.add_argument("--dry-run", action="store_true", help="Evaluate policy and show state transition without persisting to SQLite")
+
+    # relationship-review history
+    p_rev_hist = rev_subparsers.add_parser("history", help="View immutable audit review history")
+    p_rev_hist.add_argument("--id", type=str, required=True, help="Relationship ID")
+    p_rev_hist.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
+
     args = parser.parse_args()
 
     if args.subcommand == "inventory":
@@ -647,6 +860,8 @@ def main():
         cmd_match_sources(args)
     elif args.subcommand == "relationship-status":
         cmd_relationship_status(args)
+    elif args.subcommand == "relationship-review":
+        cmd_relationship_review(args)
     else:
         parser.print_help()
 

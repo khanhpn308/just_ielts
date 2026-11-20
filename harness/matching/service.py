@@ -2,25 +2,30 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from harness.config import DB_PATH, PILOT_SOURCE_IDS, REPO_ROOT
 from harness.db import (
+    apply_relationship_review_atomic,
     get_db_connection,
     get_source_by_file_id,
     get_source_by_legacy_id,
     get_source_relationship,
     list_relationship_conflicts,
+    list_relationship_reviews,
     list_source_relationships,
     list_sources,
     record_relationship_conflict,
     record_relationship_review,
     upsert_source_relationship,
 )
-from harness.matching.engine import MatchingEngine
+from harness.matching.engine import MatchingEngine, compute_conflict_id
 from harness.matching.metadata import SourceDocumentMetadata, extract_source_metadata
+from harness.review.verification import SourceReferenceValidator
 from harness.models.relationship import (
     RelationshipConflict,
     RelationshipStatus,
@@ -28,6 +33,7 @@ from harness.models.relationship import (
     SCHEMA_VERSION_RELATIONSHIP,
     SourceRelationship,
     compute_relationship_id,
+    compute_review_id,
 )
 
 DEFAULT_REPORTS_DIR = REPO_ROOT / "private" / "reports" / "v03a"
@@ -238,9 +244,15 @@ def evaluate_quality_gates(
 class RelationshipMatchingService:
     """Coordinates metadata extraction, pair generation, matching, and database registry."""
 
-    def __init__(self, db_path: Optional[Path] = None, matcher: Optional[MatchingEngine] = None):
+    def __init__(
+        self,
+        db_path: Optional[Path] = None,
+        matcher: Optional[MatchingEngine] = None,
+        repo_root: Optional[Path] = None,
+    ):
         self.db_path = db_path or DB_PATH
         self.matcher = matcher or MatchingEngine()
+        self.repo_root = repo_root or REPO_ROOT
 
     def _resolve_source_record(self, conn: Any, source_id_or_file_id: str) -> Optional[Dict[str, Any]]:
         """Finds source record by legacy ID or physical file ID."""
@@ -490,8 +502,33 @@ class RelationshipMatchingService:
                 gt_entry = known_ground_truth_map.get(t_num) or known_ground_truth_map.get(str(t_num))
                 if isinstance(gt_entry, dict) and "answers" in gt_entry:
                     gt_answers = gt_entry.get("answers")
-                    gt_source_id = gt_entry.get("source_id")
-                    gt_prov = gt_entry.get("provenance")
+                    candidate_gt_source_id = gt_entry.get("source_id")
+                    candidate_gt_prov = gt_entry.get("provenance")
+
+                    # V0.3-B: Validate reference source against inventory and non-circularity
+                    if candidate_gt_source_id:
+                        ref_validator = SourceReferenceValidator(conn, repo_root=self.repo_root)
+                        val_res = ref_validator.validate_reference(
+                            reference_source_id=candidate_gt_source_id,
+                            expected_collection=s_meta.collection or "",
+                            expected_test_number=t_num,
+                            candidate_target_file_id=t_fid,
+                            candidate_target_legacy_id=tgt_rec.get("legacy_id"),
+                            candidate_source_file_id=s_fid,
+                            evidence_provenance=candidate_gt_prov,
+                            expected_passage_or_section=p_num,
+                            relationship_type=rel_type,
+                        )
+                        if val_res.is_valid:
+                            gt_source_id = candidate_gt_source_id
+                            gt_prov = candidate_gt_prov
+                            if val_res.verified_answers:
+                                gt_answers = val_res.verified_answers
+                        else:
+                            # Unregistered, fabricated, or circular ground truth rejected
+                            gt_source_id = None
+                            gt_prov = None
+                            gt_answers = None
                 elif isinstance(gt_entry, dict):
                     gt_answers = gt_entry
 
@@ -508,33 +545,156 @@ class RelationshipMatchingService:
                 ground_truth_provenance=gt_prov,
             )
 
-            # Resume & Source Freshness check
-            if resume and not force:
-                existing = get_source_relationship(conn, rel.relationship_id)
-                if existing:
-                    exist_prov = existing.get("provenance") or {}
-                    s_sha_match = (
-                        existing.get("source_content_sha256") == rel.source_content_sha256
-                        or exist_prov.get("source_content_sha256") == rel.provenance.get("source_content_sha256")
+            # Invariant check: Check existing relationship in SQLite registry
+            existing = get_source_relationship(conn, rel.relationship_id)
+            if existing:
+                exist_prov = existing.get("provenance") or {}
+                s_sha_match = True
+                if existing.get("source_content_sha256") and rel.source_content_sha256:
+                    s_sha_match = existing["source_content_sha256"] == rel.source_content_sha256
+                elif exist_prov.get("source_content_sha256") and rel.provenance.get("source_content_sha256"):
+                    s_sha_match = exist_prov["source_content_sha256"] == rel.provenance["source_content_sha256"]
+
+                t_sha_match = True
+                if existing.get("target_content_sha256") and rel.target_content_sha256:
+                    t_sha_match = existing["target_content_sha256"] == rel.target_content_sha256
+                elif exist_prov.get("target_content_sha256") and rel.provenance.get("target_content_sha256"):
+                    t_sha_match = exist_prov["target_content_sha256"] == rel.provenance["target_content_sha256"]
+
+                ev_match = True
+                if existing.get("evidence_fingerprint") and rel.evidence_fingerprint:
+                    ev_match = existing["evidence_fingerprint"] == rel.evidence_fingerprint
+
+                matcher_ver_match = True
+                if exist_prov.get("matcher_version") and rel.provenance.get("matcher_version"):
+                    matcher_ver_match = exist_prov["matcher_version"] == rel.provenance["matcher_version"]
+
+                stale_reasons = []
+                if not s_sha_match:
+                    stale_reasons.append(
+                        f"Source SHA mismatch ({str(existing.get('source_content_sha256'))[:8]} != {str(rel.source_content_sha256)[:8]})"
                     )
-                    t_sha_match = (
-                        existing.get("target_content_sha256") == rel.target_content_sha256
-                        or exist_prov.get("target_content_sha256") == rel.provenance.get("target_content_sha256")
+                if not t_sha_match:
+                    stale_reasons.append(
+                        f"Target SHA mismatch ({str(existing.get('target_content_sha256'))[:8]} != {str(rel.target_content_sha256)[:8]})"
                     )
-                    matcher_ver_match = exist_prov.get("matcher_version") == rel.provenance.get("matcher_version")
-                    cfg_match = (
-                        existing.get("config_fingerprint") == rel.config_fingerprint
-                        or exist_prov.get("config_fingerprint") == rel.provenance.get("config_fingerprint")
-                    )
-                    ev_match = (
-                        existing.get("evidence_fingerprint") == rel.evidence_fingerprint
-                        or exist_prov.get("evidence_fingerprint") == rel.provenance.get("evidence_fingerprint")
+                if not ev_match:
+                    stale_reasons.append(
+                        f"Evidence fingerprint mismatch ({str(existing.get('evidence_fingerprint'))[:8]} != {str(rel.evidence_fingerprint)[:8]})"
                     )
 
-                    is_fresh = s_sha_match and t_sha_match and matcher_ver_match and cfg_match and ev_match
-                    if is_fresh and existing.get("relationship_status") == rel.relationship_status:
+                # Check on-disk freshness
+                for rec_item in (src_rec, tgt_rec):
+                    if rec_item.get("relative_path"):
+                        dp = self.repo_root / rec_item["relative_path"]
+                        if dp.is_file():
+                            try:
+                                d_sha = hashlib.sha256(dp.read_bytes()).hexdigest()
+                                if d_sha != rec_item.get("content_sha256"):
+                                    stale_reasons.append(
+                                        f"On-disk file '{rec_item['relative_path']}' modified ({d_sha[:8]} != {str(rec_item.get('content_sha256'))[:8]})"
+                                    )
+                            except OSError:
+                                pass
+
+                is_fresh = len(stale_reasons) == 0 and matcher_ver_match
+
+                existing_status = existing.get("relationship_status")
+                existing_flags = list(existing.get("validation_flags") or [])
+                reviews = list_relationship_reviews(conn, relationship_id=rel.relationship_id)
+                has_human_review = bool(reviews) or ("HUMAN_REVIEW_APPROVED" in existing_flags)
+
+                if is_fresh:
+                    # When inputs remain unchanged, preserve approved/reviewed status and review history
+                    if has_human_review or (existing_status == "confirmed" and rel.relationship_status != "confirmed"):
+                        skipped_count += 1
+                        preserved_rel = rel.model_copy(
+                            update={
+                                "relationship_status": existing_status,
+                                "validation_flags": existing_flags,
+                            }
+                        )
+                        relationships.append(preserved_rel)
+                        all_conflicts.extend(confs)
+                        continue
+                    elif resume and not force and existing_status == rel.relationship_status:
                         skipped_count += 1
                         relationships.append(rel)
+                        all_conflicts.extend(confs)
+                        continue
+                else:
+                    # When inputs or evidence become stale:
+                    # Mark the relationship as requiring revalidation and prevent stale confirmed relationships
+                    # from being consumed as active confirmations. Record transition and reason.
+                    requires_revalidation = (
+                        "HUMAN_REVIEW_APPROVED" in existing_flags
+                        or (existing_status == "confirmed" and rel.relationship_status != "confirmed")
+                    )
+                    if requires_revalidation:
+                        now_iso_trans = datetime.now(timezone.utc).isoformat()
+                        transition_reason = (
+                            f"Stale relationship inputs/evidence detected during matcher rerun: {'; '.join(stale_reasons)}. "
+                            "Previously confirmed relationship invalidated and marked for revalidation."
+                        )
+                        new_flags = list(set(existing_flags) | {"STALE_REVALIDATION_REQUIRED", "STALE_SOURCE_HASH"})
+                        if "GATE_CONFIRMED_PASSED" in new_flags:
+                            new_flags.remove("GATE_CONFIRMED_PASSED")
+                        if "HUMAN_REVIEW_APPROVED" in new_flags:
+                            new_flags.remove("HUMAN_REVIEW_APPROVED")
+
+                        trans_rev_id = compute_review_id(
+                            relationship_id=rel.relationship_id,
+                            reviewer_id="SYSTEM-MATCHER",
+                            decision="defer",
+                            reviewed_at=now_iso_trans,
+                        )
+
+                        if not dry_run:
+                            apply_relationship_review_atomic(
+                                conn=conn,
+                                review_data={
+                                    "review_id": trans_rev_id,
+                                    "relationship_id": rel.relationship_id,
+                                    "reviewer_id": "SYSTEM-MATCHER",
+                                    "reviewer": "SYSTEM-MATCHER",
+                                    "previous_status": existing_status,
+                                    "final_status": "review_required",
+                                    "new_status": "review_required",
+                                    "decision": "defer",
+                                    "reason": transition_reason,
+                                    "source_fingerprint": rel.source_content_sha256,
+                                    "target_fingerprint": rel.target_content_sha256,
+                                    "reviewed_at": now_iso_trans,
+                                    "expert_verified": False,
+                                },
+                                expected_status=existing_status,
+                                new_validation_flags=new_flags,
+                            )
+
+                        stale_conf = RelationshipConflict(
+                            conflict_id=compute_conflict_id(
+                                rel.source_file_id, rel.target_file_id, "STALE_SOURCE_HASH", now_iso_trans[:10]
+                            ),
+                            relationship_id=rel.relationship_id,
+                            source_file_id=rel.source_file_id,
+                            target_file_id=rel.target_file_id,
+                            conflict_type="STALE_SOURCE_HASH",
+                            severity="high",
+                            description=transition_reason,
+                            evidence={"stale_reasons": stale_reasons},
+                            detected_at=now_iso_trans,
+                        )
+                        confs.append(stale_conf)
+                        if not dry_run:
+                            record_relationship_conflict(conn, stale_conf.model_dump())
+
+                        stale_rel = rel.model_copy(
+                            update={
+                                "relationship_status": "review_required",
+                                "validation_flags": new_flags,
+                            }
+                        )
+                        relationships.append(stale_rel)
                         all_conflicts.extend(confs)
                         continue
 

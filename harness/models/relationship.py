@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import hashlib
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 RelationshipType = Literal[
     "question_to_answer_key",
@@ -19,6 +20,12 @@ RelationshipStatus = Literal[
     "review_required",
     "confirmed",
     "rejected",
+]
+
+ReviewDecision = Literal[
+    "approve",
+    "reject",
+    "defer",
 ]
 
 SkillType = Literal[
@@ -50,6 +57,7 @@ ConflictSeverity = Literal[
 ]
 
 SCHEMA_VERSION_RELATIONSHIP = "v0.3.0-relationship"
+SCHEMA_VERSION_REVIEW = "v0.3.0-review"
 
 
 def compute_relationship_id(
@@ -64,6 +72,18 @@ def compute_relationship_id(
     key = f"{source_file_id}:{target_file_id}:{relationship_type}:{volume}:{test_number}:{passage_or_section}"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     return f"REL-{digest}"
+
+
+def compute_review_id(
+    relationship_id: str,
+    reviewer_id: str,
+    decision: str,
+    reviewed_at: str,
+) -> str:
+    """Computes stable, deterministic review identifier."""
+    key = f"{relationship_id}:{reviewer_id}:{decision}:{reviewed_at}"
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    return f"REV-{digest}"
 
 
 class SourceRelationship(BaseModel):
@@ -207,7 +227,7 @@ class RelationshipConflict(BaseModel):
 
 
 class RelationshipReview(BaseModel):
-    """Audit record of a lifecycle review state transition for a relationship."""
+    """Audit record of a human or automated review lifecycle event for a source relationship."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -219,11 +239,117 @@ class RelationshipReview(BaseModel):
         ...,
         pattern=r"^REL-[a-f0-9]{16}$",
     )
-    previous_status: RelationshipStatus = Field(...)
-    new_status: RelationshipStatus = Field(...)
-    reviewer: str = Field(..., min_length=2)
-    reason: str = Field(..., min_length=5)
-    created_at: str = Field(
-        ...,
-        description="ISO 8601 UTC timestamp of review decision.",
+    reviewer_id: str = Field(
+        default="",
+        min_length=1,
+        description="Operator identifier (operator declaration, not authenticated expert).",
     )
+    reviewer: str = Field(
+        default="",
+        min_length=1,
+        description="Legacy alias for reviewer_id.",
+    )
+    previous_status: RelationshipStatus = Field(
+        ...,
+        description="Status prior to this review action.",
+    )
+    requested_status: Optional[str] = Field(
+        default=None,
+        description="Requested target status by reviewer.",
+    )
+    final_status: Optional[RelationshipStatus] = Field(
+        default=None,
+        description="Resulting status after policy evaluation.",
+    )
+    new_status: Optional[RelationshipStatus] = Field(
+        default=None,
+        description="Legacy alias for final_status.",
+    )
+    decision: Optional[ReviewDecision] = Field(
+        default=None,
+        description="Human review decision (approve, reject, defer).",
+    )
+    reason: str = Field(
+        ...,
+        min_length=5,
+        description="Mandatory documented rationale for the decision.",
+    )
+    reviewed_at: Optional[str] = Field(
+        default=None,
+        description="Timezone-aware ISO 8601 timestamp of review decision.",
+    )
+    created_at: Optional[str] = Field(
+        default=None,
+        description="Legacy timestamp field (synced with reviewed_at).",
+    )
+    source_fingerprint: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of source content at review time.",
+    )
+    target_fingerprint: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of target content at review time.",
+    )
+    evidence_references: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="References to verified independent supporting evidence.",
+    )
+    review_policy_version: str = Field(
+        default="v0.3.0-b",
+        description="Policy ruleset version applied during evaluation.",
+    )
+    expert_verified: bool = Field(
+        default=False,
+        description="Whether decision is backed by authenticated expert qualification.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_and_validate(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        d = dict(data)
+
+        # Enforce expert verification integrity: caller-provided expert_verified=True is blocked
+        if bool(d.get("expert_verified")):
+            raise ValueError(
+                "Caller-provided expert_verified=True is not permitted: "
+                "no authenticated expert-review mechanism exists."
+            )
+        d["expert_verified"] = False
+
+        # 1. Sync reviewer_id and reviewer
+        rev_id = d.get("reviewer_id") or d.get("reviewer") or ""
+        if rev_id:
+            d.setdefault("reviewer_id", rev_id)
+            d.setdefault("reviewer", rev_id)
+
+        # 2. Sync final_status and new_status
+        f_stat = d.get("final_status") or d.get("new_status")
+        if f_stat:
+            d.setdefault("final_status", f_stat)
+            d.setdefault("new_status", f_stat)
+
+        # 3. Requested status fallback
+        if not d.get("requested_status") and d.get("final_status"):
+            d["requested_status"] = d["final_status"]
+
+        # 4. Sync reviewed_at and created_at
+        t_stamp = d.get("reviewed_at") or d.get("created_at")
+        if t_stamp:
+            d.setdefault("reviewed_at", t_stamp)
+            d.setdefault("created_at", t_stamp)
+
+            # Validate timezone awareness if reviewed_at was passed or explicitly requested
+            # Note: ISO format strings can be checked for timezone
+            try:
+                dt = datetime.fromisoformat(t_stamp.replace("Z", "+00:00"))
+                if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+                    raise ValueError(f"Timestamp '{t_stamp}' must be timezone-aware.")
+            except Exception as e:
+                if "timezone-aware" in str(e):
+                    raise
+                raise ValueError(f"Invalid ISO 8601 timestamp '{t_stamp}': {e}")
+
+        return d
