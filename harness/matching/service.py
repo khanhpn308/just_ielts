@@ -21,6 +21,7 @@ from harness.db import (
 )
 from harness.matching.engine import MatchingEngine
 from harness.matching.metadata import SourceDocumentMetadata, extract_source_metadata
+from harness.review.verification import SourceReferenceValidator
 from harness.models.relationship import (
     RelationshipConflict,
     RelationshipStatus,
@@ -490,8 +491,27 @@ class RelationshipMatchingService:
                 gt_entry = known_ground_truth_map.get(t_num) or known_ground_truth_map.get(str(t_num))
                 if isinstance(gt_entry, dict) and "answers" in gt_entry:
                     gt_answers = gt_entry.get("answers")
-                    gt_source_id = gt_entry.get("source_id")
-                    gt_prov = gt_entry.get("provenance")
+                    candidate_gt_source_id = gt_entry.get("source_id")
+                    candidate_gt_prov = gt_entry.get("provenance")
+
+                    # V0.3-B: Validate reference source against inventory and non-circularity
+                    if candidate_gt_source_id:
+                        ref_validator = SourceReferenceValidator(conn)
+                        val_res = ref_validator.validate_reference(
+                            reference_source_id=candidate_gt_source_id,
+                            expected_collection=s_meta.collection or "",
+                            expected_test_number=t_num,
+                            candidate_target_file_id=t_fid,
+                            candidate_target_legacy_id=tgt_rec.get("legacy_id"),
+                            evidence_provenance=candidate_gt_prov,
+                        )
+                        if val_res.is_valid:
+                            gt_source_id = candidate_gt_source_id
+                            gt_prov = candidate_gt_prov
+                        else:
+                            # Unregistered, fabricated, or circular ground truth rejected
+                            gt_source_id = None
+                            gt_prov = None
                 elif isinstance(gt_entry, dict):
                     gt_answers = gt_entry
 

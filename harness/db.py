@@ -154,7 +154,17 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 previous_status TEXT NOT NULL,
                 new_status TEXT NOT NULL,
                 reviewer TEXT NOT NULL,
+                reviewer_id TEXT,
+                requested_status TEXT,
+                final_status TEXT,
+                decision TEXT,
                 reason TEXT NOT NULL,
+                source_fingerprint TEXT,
+                target_fingerprint TEXT,
+                evidence_references TEXT,
+                review_policy_version TEXT,
+                reviewed_at TIMESTAMP,
+                expert_verified INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -175,6 +185,27 @@ def init_db(db_path: Optional[Path] = None) -> None:
         for col_name in ("source_content_sha256", "target_content_sha256", "config_fingerprint", "evidence_fingerprint"):
             if col_name not in rel_cols:
                 conn.execute(f"ALTER TABLE source_relationships ADD COLUMN {col_name} TEXT")
+
+        # Migrate relationship_reviews dynamically if table was created without review workflow columns
+        cur_rev = conn.execute("PRAGMA table_info(relationship_reviews)")
+        rev_cols = {row["name"] for row in cur_rev.fetchall()}
+        review_columns_to_add = {
+            "reviewer_id": "TEXT",
+            "requested_status": "TEXT",
+            "final_status": "TEXT",
+            "decision": "TEXT",
+            "source_fingerprint": "TEXT",
+            "target_fingerprint": "TEXT",
+            "evidence_references": "TEXT",
+            "review_policy_version": "TEXT",
+            "reviewed_at": "TIMESTAMP",
+            "expert_verified": "INTEGER DEFAULT 0",
+        }
+        for col_name, col_type in review_columns_to_add.items():
+            if col_name not in rev_cols:
+                conn.execute(f"ALTER TABLE relationship_reviews ADD COLUMN {col_name} {col_type}")
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reviews_decision ON relationship_reviews(decision)")
     conn.close()
 
 
@@ -891,19 +922,55 @@ def list_relationship_conflicts(
     return res
 
 
+class ConcurrencyConflictError(Exception):
+    """Raised when an optimistic concurrency check fails on relationship review."""
+    pass
+
+
+class DuplicateReviewError(Exception):
+    """Raised when attempting to insert a duplicate review ID."""
+    pass
+
+
 def record_relationship_review(conn: sqlite3.Connection, review_data: Dict[str, Any]) -> None:
     """Inserts a relationship review event."""
     params = dict(review_data)
     now = datetime.now(timezone.utc).isoformat()
     params.setdefault("created_at", now)
+    params.setdefault("reviewed_at", now)
+    params.setdefault("reviewer_id", params.get("reviewer") or "")
+    params.setdefault("reviewer", params.get("reviewer_id") or "")
+
+    f_stat = params.get("final_status") or params.get("new_status")
+    params.setdefault("final_status", f_stat)
+    params.setdefault("new_status", f_stat)
+    params.setdefault("requested_status", params.get("requested_status") or f_stat)
+    params.setdefault("decision", params.get("decision") or "defer")
+    params.setdefault("source_fingerprint", None)
+    params.setdefault("target_fingerprint", None)
+    params.setdefault("review_policy_version", "v0.3.0-b")
+    params.setdefault("expert_verified", 0)
+
+    if isinstance(params.get("expert_verified"), bool):
+        params["expert_verified"] = 1 if params["expert_verified"] else 0
+
+    ev_val = params.get("evidence_references")
+    if isinstance(ev_val, (dict, list)):
+        params["evidence_references"] = json.dumps(ev_val, sort_keys=True)
+    elif ev_val is None:
+        params["evidence_references"] = "{}"
 
     sql = """
         INSERT INTO relationship_reviews (
             review_id, relationship_id, previous_status, new_status,
-            reviewer, reason, created_at
+            reviewer, reviewer_id, requested_status, final_status, decision,
+            reason, source_fingerprint, target_fingerprint, evidence_references,
+            review_policy_version, reviewed_at, expert_verified, created_at
         ) VALUES (
             :review_id, :relationship_id, :previous_status, :new_status,
-            :reviewer, :reason, :created_at
+            :reviewer, :reviewer_id, :requested_status, :final_status, :decision,
+            :reason, :source_fingerprint, :target_fingerprint, :evidence_references,
+            :review_policy_version, :reviewed_at, :expert_verified, :created_at
         )
         ON CONFLICT(review_id) DO NOTHING
     """
@@ -911,10 +978,110 @@ def record_relationship_review(conn: sqlite3.Connection, review_data: Dict[str, 
         conn.execute(sql, params)
 
 
+def apply_relationship_review_atomic(
+    conn: sqlite3.Connection,
+    review_data: Dict[str, Any],
+    expected_status: Optional[str] = None,
+    expected_updated_at: Optional[str] = None,
+    new_validation_flags: Optional[List[str]] = None,
+) -> None:
+    """Atomically updates relationship status and records an immutable review event."""
+    rel_id = review_data["relationship_id"]
+    rev_id = review_data["review_id"]
+    final_status = review_data.get("final_status") or review_data.get("new_status")
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    params = dict(review_data)
+    params.setdefault("created_at", now_iso)
+    params.setdefault("reviewed_at", now_iso)
+    params.setdefault("reviewer_id", params.get("reviewer") or "")
+    params.setdefault("reviewer", params.get("reviewer_id") or "")
+    params.setdefault("final_status", final_status)
+    params.setdefault("new_status", final_status)
+    params.setdefault("requested_status", params.get("requested_status") or final_status)
+    params.setdefault("decision", params.get("decision") or "defer")
+    params.setdefault("source_fingerprint", None)
+    params.setdefault("target_fingerprint", None)
+    params.setdefault("review_policy_version", "v0.3.0-b")
+    params.setdefault("expert_verified", 0)
+
+    if isinstance(params.get("expert_verified"), bool):
+        params["expert_verified"] = 1 if params["expert_verified"] else 0
+
+    ev_ref = params.get("evidence_references")
+    if isinstance(ev_ref, (dict, list)):
+        params["evidence_references"] = json.dumps(ev_ref, sort_keys=True)
+    elif ev_ref is None:
+        params["evidence_references"] = "{}"
+
+    with conn:
+        # Duplicate review check
+        cur_dup = conn.execute("SELECT 1 FROM relationship_reviews WHERE review_id = ?", (rev_id,))
+        if cur_dup.fetchone():
+            raise DuplicateReviewError(f"Duplicate review ID '{rev_id}' already exists in audit log.")
+
+        # Optimistic concurrency check
+        cur_rel = conn.execute(
+            "SELECT relationship_status, validation_flags, updated_at FROM source_relationships WHERE relationship_id = ?",
+            (rel_id,),
+        )
+        row = cur_rel.fetchone()
+        if not row:
+            raise ValueError(f"Source relationship '{rel_id}' not found in registry.")
+
+        current_status = row["relationship_status"]
+        current_updated_at = row["updated_at"]
+
+        if expected_status is not None and current_status != expected_status:
+            raise ConcurrencyConflictError(
+                f"Optimistic concurrency check failed for relationship '{rel_id}': "
+                f"expected status '{expected_status}', found '{current_status}'."
+            )
+        if expected_updated_at is not None and current_updated_at != expected_updated_at:
+            raise ConcurrencyConflictError(
+                f"Optimistic concurrency check failed for relationship '{rel_id}': "
+                f"expected updated_at '{expected_updated_at}', found '{current_updated_at}'."
+            )
+
+        # Update source relationship status and validation_flags
+        flags_to_save = new_validation_flags
+        if flags_to_save is None and "validation_flags" in row:
+            try:
+                flags_to_save = json.loads(row["validation_flags"]) if isinstance(row["validation_flags"], str) else row["validation_flags"]
+            except Exception:
+                flags_to_save = []
+
+        flags_json = json.dumps(flags_to_save or [], sort_keys=True)
+        conn.execute(
+            """
+            UPDATE source_relationships
+            SET relationship_status = ?, validation_flags = ?, updated_at = ?
+            WHERE relationship_id = ?
+            """,
+            (final_status, flags_json, now_iso, rel_id),
+        )
+
+        # Insert immutable review event
+        sql_insert = """
+            INSERT INTO relationship_reviews (
+                review_id, relationship_id, previous_status, new_status,
+                reviewer, reviewer_id, requested_status, final_status, decision,
+                reason, source_fingerprint, target_fingerprint, evidence_references,
+                review_policy_version, reviewed_at, expert_verified, created_at
+            ) VALUES (
+                :review_id, :relationship_id, :previous_status, :new_status,
+                :reviewer, :reviewer_id, :requested_status, :final_status, :decision,
+                :reason, :source_fingerprint, :target_fingerprint, :evidence_references,
+                :review_policy_version, :reviewed_at, :expert_verified, :created_at
+            )
+        """
+        conn.execute(sql_insert, params)
+
+
 def list_relationship_reviews(
     conn: sqlite3.Connection, relationship_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Lists review events."""
+    """Lists review events with parsed evidence references."""
     if relationship_id:
         cur = conn.execute(
             "SELECT * FROM relationship_reviews WHERE relationship_id = ? ORDER BY created_at ASC",
@@ -922,6 +1089,18 @@ def list_relationship_reviews(
         )
     else:
         cur = conn.execute("SELECT * FROM relationship_reviews ORDER BY created_at ASC")
-    return [dict(r) for r in cur.fetchall()]
+
+    res = []
+    for r in cur.fetchall():
+        d = dict(r)
+        if "evidence_references" in d and isinstance(d["evidence_references"], str):
+            try:
+                d["evidence_references"] = json.loads(d["evidence_references"])
+            except Exception:
+                pass
+        if "expert_verified" in d:
+            d["expert_verified"] = bool(d["expert_verified"])
+        res.append(d)
+    return res
 
 
