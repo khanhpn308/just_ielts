@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -51,42 +52,74 @@ ANNOTATION_METADATA_KEYS = {
 }
 
 
+def is_valid_timezone_aware_timestamp(ts: Any) -> bool:
+    """Validates if a timestamp is a valid ISO 8601 string or datetime with timezone information."""
+    if isinstance(ts, datetime):
+        return ts.tzinfo is not None and ts.tzinfo.utcoffset(ts) is not None
+    if not isinstance(ts, str) or not ts.strip():
+        return False
+    try:
+        dt = datetime.fromisoformat(ts.strip())
+        return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
+    except Exception:
+        return False
+
+
 def is_authenticated_human_review(ev_info: Dict[str, Any]) -> bool:
     """Validates whether an annotation item has documented, authenticated human expert review.
 
-    Prevents truthy string injections (e.g. 'false', 'pending', 'unreviewed') from
-    falsely triggering expert_verified.
+    Requires a structured review event with:
+    - reviewer_id: nonempty valid identifier
+    - reviewed_at: valid timezone-aware timestamp
+    - decision: approved / verified / accepted
 
-    Requires EITHER:
-    1. ev_info['reviewed_by_expert'] is strictly boolean True.
-    2. A structured review_event dictionary with non-empty reviewer identity,
-       an approved decision ('approved', 'verified', 'accepted'), and timestamp.
+    Does NOT accept reviewed_by_expert=True alone as sufficient proof.
+    Rejects missing or malformed timestamps.
     """
-    # 1. Strict boolean check (reject truthy strings like 'false', 'pending', etc.)
-    rev_flag = ev_info.get("reviewed_by_expert")
-    if rev_flag is True:
-        return True
+    if not isinstance(ev_info, dict):
+        return False
 
-    # 2. Structured review event dictionary
     rev_event = ev_info.get("review_event")
-    if isinstance(rev_event, dict):
-        reviewer = str(
-            rev_event.get("reviewer_id")
-            or rev_event.get("expert_id")
-            or rev_event.get("expert_reviewer")
-            or ""
-        ).strip()
-        invalid_reviewers = {"", "none", "null", "placeholder", "unassigned", "pending", "unknown"}
-        if reviewer.lower() in invalid_reviewers:
+    if rev_event is None:
+        # Check if ev_info itself is the review_event dictionary
+        if "reviewer_id" in ev_info or "reviewed_at" in ev_info:
+            rev_event = ev_info
+        else:
             return False
 
-        decision = str(rev_event.get("decision") or rev_event.get("status") or "").strip().lower()
-        if decision not in {"approved", "verified", "accepted"}:
-            return False
+    if not isinstance(rev_event, dict):
+        return False
 
-        return True
+    # 1. Reviewer ID: nonempty valid identifier
+    reviewer = rev_event.get("reviewer_id")
+    if reviewer is None:
+        reviewer = rev_event.get("expert_id") or rev_event.get("expert_reviewer")
 
-    return False
+    if not isinstance(reviewer, str):
+        return False
+    reviewer = reviewer.strip()
+    invalid_reviewers = {"", "none", "null", "placeholder", "unassigned", "pending", "unknown"}
+    if reviewer.lower() in invalid_reviewers:
+        return False
+
+    # 2. Decision: approved / verified / accepted
+    decision = rev_event.get("decision")
+    if decision is None:
+        decision = rev_event.get("status")
+    if not isinstance(decision, str):
+        return False
+    decision = decision.strip().lower()
+    if decision not in {"approved", "verified", "accepted"}:
+        return False
+
+    # 3. Reviewed_at: valid timezone-aware timestamp
+    raw_time = rev_event.get("reviewed_at")
+    if raw_time is None:
+        raw_time = rev_event.get("timestamp")
+    if not is_valid_timezone_aware_timestamp(raw_time):
+        return False
+
+    return True
 
 
 def parse_and_validate_annotations(ann_data: Any) -> Dict[int, Dict[str, Any]]:

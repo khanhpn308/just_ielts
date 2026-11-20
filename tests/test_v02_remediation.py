@@ -1301,7 +1301,7 @@ def test_human_review_truthy_strings_rejected_and_structured_event_required(synt
                 "review_event": {
                     "reviewer_id": "EXP-IELTS-001",
                     "decision": "approved",
-                    "timestamp": "2026-11-20T06:00:00Z",
+                    "reviewed_at": "2026-11-20T06:00:00Z",
                 }
             }
         ]
@@ -1385,6 +1385,423 @@ def test_annotation_validation_rejects_invalid_inputs_without_swallowing_excepti
             annotations_path=ann_bad_key,
             force=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Human Review Authentication Regression Tests
+# ---------------------------------------------------------------------------
+
+def test_human_review_authentication_unit_matrix():
+    """Unit tests for is_authenticated_human_review covering positive and negative permutations."""
+    from datetime import datetime, timezone
+    from harness.orchestrator import is_authenticated_human_review
+
+    # 1. Negative: reviewed_by_expert=True alone is insufficient
+    assert not is_authenticated_human_review({"reviewed_by_expert": True})
+    assert not is_authenticated_human_review({"reviewed_by_expert": "true"})
+    assert not is_authenticated_human_review({"reviewed_by_expert": 1})
+    assert not is_authenticated_human_review({"reviewed_by_expert": True, "expert_reviewer": "EXP-01"})
+
+    # 2. Negative: missing or invalid review_event container
+    assert not is_authenticated_human_review({})
+    assert not is_authenticated_human_review({"review_event": None})
+    assert not is_authenticated_human_review({"review_event": "approved"})
+    assert not is_authenticated_human_review({"review_event": []})
+    assert not is_authenticated_human_review({"review_event": 123})
+
+    # 3. Negative: reviewer_id validation
+    base_event = {
+        "reviewer_id": "EXP-01",
+        "decision": "approved",
+        "reviewed_at": "2026-11-20T06:00:00Z",
+    }
+    # Empty / whitespace
+    assert not is_authenticated_human_review({"review_event": {**base_event, "reviewer_id": ""}})
+    assert not is_authenticated_human_review({"review_event": {**base_event, "reviewer_id": "   "}})
+    # Placeholders / invalid identifiers
+    for placeholder in ["none", "null", "placeholder", "unassigned", "pending", "unknown", "NONE", "Unknown"]:
+        assert not is_authenticated_human_review({"review_event": {**base_event, "reviewer_id": placeholder}})
+    # Non-string reviewer_id
+    assert not is_authenticated_human_review({"review_event": {**base_event, "reviewer_id": 1234}})
+    assert not is_authenticated_human_review({"review_event": {**base_event, "reviewer_id": True}})
+
+    # 4. Negative: decision validation
+    for invalid_dec in ["rejected", "pending", "draft", "submitted", "unreviewed", "", "  ", 123]:
+        assert not is_authenticated_human_review({"review_event": {**base_event, "decision": invalid_dec}})
+
+    # 5. Negative: reviewed_at timestamp validation
+    # Missing / None
+    ev_no_ts = copy.deepcopy(base_event)
+    del ev_no_ts["reviewed_at"]
+    assert not is_authenticated_human_review({"review_event": ev_no_ts})
+    assert not is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": None}})
+    # Malformed timestamps
+    for malformed in ["not-a-timestamp", "2026-99-99", "2026-02-31T00:00:00Z", 12345, True, []]:
+        assert not is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": malformed}})
+    # Naive timestamps (missing timezone offset)
+    for naive in ["2026-11-20T06:00:00", "2026-11-20", "2026-11-20 06:00:00"]:
+        assert not is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": naive}})
+    assert not is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": datetime(2026, 11, 20, 6, 0, 0)}})
+
+    # 6. Positive: valid review events
+    assert is_authenticated_human_review({"review_event": base_event})
+    # Decision variations (approved, verified, accepted, case-insensitive)
+    assert is_authenticated_human_review({"review_event": {**base_event, "decision": "verified"}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "decision": "accepted"}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "decision": " APPROVED "}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "decision": "Verified"}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "decision": "ACCEPTED"}})
+
+    # Timezone variations
+    assert is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": "2026-11-20T06:00:00+00:00"}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": "2026-11-20T06:00:00+07:00"}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": "2026-11-20T06:00:00-05:00"}})
+    assert is_authenticated_human_review({"review_event": {**base_event, "reviewed_at": datetime(2026, 11, 20, 6, 0, 0, tzinfo=timezone.utc)}})
+
+    # Direct review_event dictionary passed without outer wrapper
+    assert is_authenticated_human_review(base_event)
+
+
+def test_human_review_pipeline_rejects_boolean_flag_alone(synthetic_env):
+    """Pipeline regression test: reviewed_by_expert=True alone must NOT trigger expert_verified."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    ann_file = synthetic_env["raw_dir"] / "ann_bool_only.json"
+    ann_payload = {
+        "pilot_id": "PILOT-TEST",
+        "annotations": [
+            {
+                "question_number": 3,
+                "evidence_type": "insufficient_information_not_given",
+                "missing_rationale": "Missing rationale.",
+                "rationale_en": "Ungrounded rationale text.",
+                "reviewed_by_expert": True,  # Boolean True alone without structured review_event
+            }
+        ]
+    }
+    ann_file.write_text(json.dumps(ann_payload), encoding="utf-8")
+
+    orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=ann_file,
+        force=True,
+    )
+    expl_file = synthetic_env["output_dir"] / "EXPL-VOL99-01-RD-003.json"
+    expl_data = json.loads(expl_file.read_text(encoding="utf-8"))
+    assert expl_data["author_type"] == "machine_drafted"
+    assert expl_data["quality_profile"]["explanation_verification"] == "machine_drafted_unverified"
+
+
+def test_human_review_pipeline_rejects_naive_or_malformed_timestamp(synthetic_env):
+    """Pipeline regression test: review_event with naive or malformed timestamp must NOT trigger expert_verified."""
+    orch = NormalizationOrchestrator(
+        db_path=synthetic_env["db_path"],
+        raw_staging_dir=synthetic_env["raw_dir"],
+        output_dir=synthetic_env["output_dir"],
+        authorized_private_roots=[synthetic_env["output_dir"].parent],
+    )
+
+    ann_file = synthetic_env["raw_dir"] / "ann_naive_ts.json"
+    # 1. Naive timestamp without timezone
+    ann_payload = {
+        "pilot_id": "PILOT-TEST",
+        "annotations": [
+            {
+                "question_number": 3,
+                "evidence_type": "insufficient_information_not_given",
+                "missing_rationale": "Missing rationale.",
+                "rationale_en": "Ungrounded rationale text.",
+                "review_event": {
+                    "reviewer_id": "EXP-IELTS-001",
+                    "decision": "approved",
+                    "reviewed_at": "2026-11-20T06:00:00",  # Naive!
+                }
+            }
+        ]
+    }
+    ann_file.write_text(json.dumps(ann_payload), encoding="utf-8")
+
+    orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=ann_file,
+        force=True,
+    )
+    expl_file = synthetic_env["output_dir"] / "EXPL-VOL99-01-RD-003.json"
+    expl_data = json.loads(expl_file.read_text(encoding="utf-8"))
+    assert expl_data["author_type"] == "machine_drafted"
+    assert expl_data["quality_profile"]["explanation_verification"] == "machine_drafted_unverified"
+
+    # 2. Malformed timestamp
+    ann_payload["annotations"][0]["review_event"]["reviewed_at"] = "invalid-date"
+    ann_file.write_text(json.dumps(ann_payload), encoding="utf-8")
+
+    orch.normalize_reading_pilot(
+        doc_legacy_id="SRC-999",
+        key_legacy_id="SRC-998",
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        annotations_path=ann_file,
+        force=True,
+    )
+    expl_data = json.loads(expl_file.read_text(encoding="utf-8"))
+    assert expl_data["author_type"] == "machine_drafted"
+    assert expl_data["quality_profile"]["explanation_verification"] == "machine_drafted_unverified"
+
+
+# ---------------------------------------------------------------------------
+# Manifest Integrity Regression Tests
+# ---------------------------------------------------------------------------
+
+def test_manifest_integrity_test_id_mismatch(tmp_path: Path):
+    """Verify QualityGateRunner rejects manifest whose test_id mismatches the requested test_id."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    # 1. Manifest declares different test_id
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 0,
+        "entities": [],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Manifest test_id mismatch"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-02-ACAD")
+
+    # 2. Manifest missing test_id key
+    manifest_data_no_id = {
+        "total_entities": 0,
+        "entities": [],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data_no_id), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Manifest test_id mismatch"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_total_entities_mismatch(tmp_path: Path):
+    """Verify QualityGateRunner rejects manifest whose total_entities mismatches entities list count."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    # Create dummy entity file
+    (norm_dir / "TEST-IELTS-VOL99-01-ACAD.json").write_text(json.dumps({"test_id": "TEST-IELTS-VOL99-01-ACAD"}), encoding="utf-8")
+
+    # 1. Declared total_entities=2, but entities list has 1 item
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 2,
+        "entities": [
+            {"entity_id": "TEST-IELTS-VOL99-01-ACAD", "output_filename": "TEST-IELTS-VOL99-01-ACAD.json"}
+        ],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Manifest total_entities mismatch"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+    # 2. total_entities is not an integer
+    manifest_data["total_entities"] = "1"
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Manifest total_entities mismatch"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+    # 3. total_entities is missing
+    del manifest_data["total_entities"]
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Manifest total_entities mismatch"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_rejects_duplicate_entity_ids(tmp_path: Path):
+    """Verify QualityGateRunner rejects manifest with duplicate entity IDs."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    (norm_dir / "Q-01.json").write_text(json.dumps({"question_id": "Q-01"}), encoding="utf-8")
+    (norm_dir / "Q-01-dup.json").write_text(json.dumps({"question_id": "Q-01"}), encoding="utf-8")
+
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 2,
+        "entities": [
+            {"entity_id": "Q-VOL99-01-RD-001", "output_filename": "Q-01.json"},
+            {"entity_id": "Q-VOL99-01-RD-001", "output_filename": "Q-01-dup.json"},
+        ],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Duplicate entity_id 'Q-VOL99-01-RD-001'"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_rejects_duplicate_filenames(tmp_path: Path):
+    """Verify QualityGateRunner rejects manifest with duplicate filenames."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    (norm_dir / "SAME-FILE.json").write_text(json.dumps({"test_id": "TEST-IELTS-VOL99-01-ACAD"}), encoding="utf-8")
+
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 2,
+        "entities": [
+            {"entity_id": "ID-01", "output_filename": "SAME-FILE.json"},
+            {"entity_id": "ID-02", "output_filename": "SAME-FILE.json"},
+        ],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Duplicate output_filename 'SAME-FILE.json'"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_rejects_unsafe_filenames(tmp_path: Path):
+    """Verify QualityGateRunner rejects unsafe output filenames (traversal, absolute, directory separators)."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    unsafe_patterns = [
+        "../escape.json",
+        "../../etc/passwd",
+        "/etc/passwd",
+        "sub/dir.json",
+        "nested\\file.json",
+        ".hidden.json",
+        "  spaced.json  ",
+        "null\0byte.json",
+    ]
+
+    for bad_name in unsafe_patterns:
+        manifest_data = {
+            "test_id": "TEST-IELTS-VOL99-01-ACAD",
+            "total_entities": 1,
+            "entities": [
+                {"entity_id": "ID-UNSAFE", "output_filename": bad_name},
+            ],
+        }
+        (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Unsafe output_filename"):
+            runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_fails_closed_on_missing_declared_file(tmp_path: Path):
+    """Verify QualityGateRunner raises FileNotFoundError when a declared active entity file is missing."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 1,
+        "entities": [
+            {"entity_id": "Q-01", "output_filename": "NONEXISTENT-Q-01.json"},
+        ],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="Declared active entity file 'NONEXISTENT-Q-01.json' does not exist"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_fails_closed_on_corrupted_declared_file(tmp_path: Path):
+    """Verify QualityGateRunner raises ValueError when an active entity file is corrupted or not a JSON object."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    # 1. Malformed JSON
+    corrupted_file = norm_dir / "TEST-IELTS-VOL99-01-ACAD.json"
+    corrupted_file.write_text("{malformed json", encoding="utf-8")
+
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 1,
+        "entities": [
+            {"entity_id": "TEST-IELTS-VOL99-01-ACAD", "output_filename": "TEST-IELTS-VOL99-01-ACAD.json"},
+        ],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Corrupted normalized entity file"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+    # 2. JSON array instead of JSON object
+    corrupted_file.write_text(json.dumps([{"item": 1}]), encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+
+
+def test_manifest_integrity_preserves_stale_entity_exclusion(tmp_path: Path):
+    """Verify QualityGateRunner skips stale files on disk matching test_slug and records them in stale_entities_detected."""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    runner = QualityGateRunner(db_path=db_path)
+    norm_dir = tmp_path / "normalized"
+    norm_dir.mkdir()
+
+    # 1. Active entity file
+    active_test = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "title": "Practice Test",
+    }
+    (norm_dir / "TEST-IELTS-VOL99-01-ACAD.json").write_text(json.dumps(active_test), encoding="utf-8")
+
+    # 2. Stale entity file on disk matching test_slug VOL99-01 but NOT in manifest
+    stale_file = norm_dir / "PASSAGE-VOL99-01-STALE.json"
+    stale_file.write_text(json.dumps({"passage_id": "PASSAGE-VOL99-01-STALE"}), encoding="utf-8")
+
+    manifest_data = {
+        "test_id": "TEST-IELTS-VOL99-01-ACAD",
+        "total_entities": 1,
+        "entities": [
+            {"entity_id": "TEST-IELTS-VOL99-01-ACAD", "output_filename": "TEST-IELTS-VOL99-01-ACAD.json"},
+        ],
+    }
+    (norm_dir / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    loaded = runner.load_entities_for_test(norm_dir, "TEST-IELTS-VOL99-01-ACAD")
+    assert len(loaded["test"]) == 1
+    assert loaded["test"][0]["test_id"] == "TEST-IELTS-VOL99-01-ACAD"
+    assert len(loaded["passages"]) == 0
+    assert "PASSAGE-VOL99-01-STALE.json" in runner.stale_entities_detected
+
 
 
 

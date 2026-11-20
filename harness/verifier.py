@@ -41,6 +41,23 @@ class QualityGateRunner:
         self.db_path = db_path
         self.schemas, self.registry = load_validator_registry()
 
+    @staticmethod
+    def _is_safe_entity_filename(filename: Any) -> bool:
+        """Validates that a filename is a clean single-segment filename without directory traversal."""
+        if not isinstance(filename, str) or not filename.strip():
+            return False
+        if filename != filename.strip():
+            return False
+        if "\0" in filename:
+            return False
+        if "/" in filename or "\\" in filename:
+            return False
+        if ".." in filename or filename.startswith("."):
+            return False
+        if Path(filename).name != filename:
+            return False
+        return True
+
     def load_entities_for_test(self, normalized_dir: Path, test_id: str) -> Dict[str, List[Dict[str, Any]]]:
         """Loads normalized JSON entities for test_id, treating manifest.json as authoritative."""
         entities: Dict[str, List[Dict[str, Any]]] = {
@@ -58,7 +75,7 @@ class QualityGateRunner:
         test_slug = test_id.replace("TEST-IELTS-", "").rsplit("-", 1)[0]
         manifest_path = normalized_dir / "manifest.json"
 
-        # Authoritative manifest must exist and be valid: fail closed otherwise
+        # 1. Authoritative manifest must exist and be valid: fail closed otherwise
         if not manifest_path.exists():
             raise FileNotFoundError(
                 f"Authoritative manifest missing at '{manifest_path}'. Verification must fail closed."
@@ -76,12 +93,71 @@ class QualityGateRunner:
                 f"Authoritative manifest at '{manifest_path}' is invalid: missing required 'entities' list."
             )
 
-        active_filenames: set[str] = {
-            e["output_filename"]
-            for e in m_data["entities"]
-            if isinstance(e, dict) and e.get("output_filename")
-        }
+        # 2. Verify manifest.test_id matches requested test_id
+        manifest_test_id = m_data.get("test_id")
+        if not manifest_test_id or manifest_test_id != test_id:
+            raise ValueError(
+                f"Manifest test_id mismatch at '{manifest_path}': "
+                f"manifest declares '{manifest_test_id}', requested '{test_id}'."
+            )
 
+        # 3. Validate total_entities against entity entries
+        manifest_entities = m_data["entities"]
+        total_entities = m_data.get("total_entities")
+        if total_entities is None or not isinstance(total_entities, int) or total_entities != len(manifest_entities):
+            raise ValueError(
+                f"Manifest total_entities mismatch at '{manifest_path}': "
+                f"manifest specifies {total_entities!r}, but entities list contains {len(manifest_entities)} entries."
+            )
+
+        # 4. Reject duplicate entity IDs/filenames, reject unsafe filenames, and verify active file existence
+        seen_entity_ids: set[str] = set()
+        seen_filenames: set[str] = set()
+        active_filenames: set[str] = set()
+
+        for idx, entry in enumerate(manifest_entities):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"Manifest entry at index {idx} must be a JSON object, got {type(entry).__name__}."
+                )
+
+            entity_id = entry.get("entity_id")
+            if not entity_id or not isinstance(entity_id, str) or not entity_id.strip():
+                raise ValueError(
+                    f"Manifest entry at index {idx} missing valid 'entity_id'."
+                )
+            entity_id = entity_id.strip()
+            if entity_id in seen_entity_ids:
+                raise ValueError(
+                    f"Duplicate entity_id '{entity_id}' declared in manifest '{manifest_path}'."
+                )
+            seen_entity_ids.add(entity_id)
+
+            raw_filename = entry.get("output_filename")
+            if not raw_filename or not isinstance(raw_filename, str) or not raw_filename.strip():
+                raise ValueError(
+                    f"Manifest entry for entity '{entity_id}' missing valid 'output_filename'."
+                )
+            if not self._is_safe_entity_filename(raw_filename):
+                raise ValueError(
+                    f"Unsafe output_filename '{raw_filename}' declared in manifest '{manifest_path}'."
+                )
+            filename = raw_filename.strip()
+            if filename in seen_filenames:
+                raise ValueError(
+                    f"Duplicate output_filename '{filename}' declared in manifest '{manifest_path}'."
+                )
+            seen_filenames.add(filename)
+            active_filenames.add(filename)
+
+            # Verify every declared active entity file exists
+            entity_file = normalized_dir / filename
+            if not entity_file.is_file():
+                raise FileNotFoundError(
+                    f"Declared active entity file '{filename}' does not exist in '{normalized_dir}'."
+                )
+
+        # 5. Preserve existing stale-entity exclusion behavior
         for p in sorted(normalized_dir.glob("*.json")):
             if p.name == "manifest.json":
                 continue
@@ -91,8 +167,10 @@ class QualityGateRunner:
             # Manifest is authoritative: check if file is active
             if p.name not in active_filenames:
                 self.stale_entities_detected.append(p.name)
-                continue  # Exclude stale artifact from verification
 
+        # 6. Load active entities, failing closed on corrupted entity files
+        for filename in sorted(active_filenames):
+            p = normalized_dir / filename
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -102,19 +180,19 @@ class QualityGateRunner:
             if not isinstance(data, dict):
                 raise ValueError(f"Normalized entity at '{p}' must be a JSON object, got {type(data).__name__}")
 
-            if p.name.startswith("TEST-") and (data.get("test_id") == test_id or test_slug in p.name):
+            if p.name.startswith("TEST-"):
                 entities["test"].append(data)
-            elif p.name.startswith("PASSAGE-") and (data.get("test_id") == test_id or test_slug in p.name):
+            elif p.name.startswith("PASSAGE-"):
                 entities["passages"].append(data)
-            elif p.name.startswith("QG-") and test_slug in p.name:
+            elif p.name.startswith("QG-"):
                 entities["groups"].append(data)
-            elif p.name.startswith("Q-") and test_slug in p.name:
+            elif p.name.startswith("Q-"):
                 entities["questions"].append(data)
-            elif p.name.startswith("ANS-") and test_slug in p.name:
+            elif p.name.startswith("ANS-"):
                 entities["answers"].append(data)
-            elif p.name.startswith("EVID-") and test_slug in p.name:
+            elif p.name.startswith("EVID-"):
                 entities["evidence"].append(data)
-            elif p.name.startswith("EXPL-") and test_slug in p.name:
+            elif p.name.startswith("EXPL-"):
                 entities["explanations"].append(data)
 
         # Sort questions and answers by numerical sequence
