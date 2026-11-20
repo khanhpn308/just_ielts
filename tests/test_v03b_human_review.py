@@ -573,7 +573,15 @@ def test_independent_source_validation_collection_mismatch(populated_db):
 
 def test_independent_source_validation_success_promotes_approval(populated_db):
     """Scenario 15: Valid independent supporting evidence reference promotes candidate to confirmed."""
-    service = RelationshipReviewService(db_path=populated_db)
+    synthetic_fixtures = {
+        "SRC-SYN-04": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [1]},
+            "passage_titles": {"1": {"1": "Marine Energy Systems"}},
+            "answer_keys": {"1": {1: "TRUE", 2: "FALSE", 3: "NOT GIVEN", 4: "TRUE"}},
+        }
+    }
+    service = RelationshipReviewService(db_path=populated_db, synthetic_fixtures=synthetic_fixtures)
     rel_id = compute_relationship_id(
         "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
     )
@@ -1620,6 +1628,293 @@ def test_negative_regression_allow_synthetic_fixtures_explicit_true_outside_test
             },
         )
     assert "Synthetic fixture injection is permitted only in isolated test contexts" in str(exc_info.value)
+
+
+# --------------------------------------------------------------------------
+# 22. PR #6 Content Alignment Guard Regression Tests
+# --------------------------------------------------------------------------
+def test_negative_regression_reference_title_matches_one_participant_only_retains_review_required(populated_db):
+    """Regression test: A matching reference title alone is not sufficient to link two participants.
+
+    When reference title matches one participant only, CONTENT_ALIGNMENT_VERIFIED must NOT be marked,
+    and relationship must retain review_required.
+    """
+    conn = get_db_connection(populated_db)
+    # Candidate relationship between FILE-a00000000001 (SRC-SYN-01, has title "Marine Energy Systems")
+    # and FILE-a00000000004 (SRC-SYN-04, has NO title and answer keys for Test 2 only)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": "FILE-a00000000001",
+        "target_file_id": "FILE-a00000000004",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": 1,
+        "skill": "reading",
+        "identity_evidence": {"expected_question_range": [1, 14]},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH", "PASSAGE_REQUESTED", "QUESTION_RANGE_ALIGNED"],
+        "match_confidence": 0.5,
+        "relationship_status": "review_required",
+        "provenance": {"matcher_version": "0.3.0-a", "evaluated_at": "2026-11-20T10:00:00Z"},
+        "source_content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "target_content_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "schema_version": "v0.3.0-relationship",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db)
+    # 1. Attempting approval using reference source SRC-SYN-02 whose title matches candidate source only
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="OPERATOR-01",
+            reason="Attempting approval when reference title matches candidate source only",
+            evidence_source_id="SRC-SYN-02",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-02",
+                    "provenance_type": "independent_key",
+                    "authority": "official",
+                }
+            },
+        )
+    assert "retaining review_required" in str(exc_info.value) or "Missing independent supporting evidence" in str(exc_info.value)
+
+    # 2. Relationship retains review_required in SQLite DB
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "review_required"
+
+    # 3. Direct validator call verifies CONTENT_ALIGNMENT_VERIFIED is NOT marked
+    validator = SourceReferenceValidator(conn)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-02",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_source_file_id="FILE-a00000000001",
+        candidate_target_file_id="FILE-a00000000004",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={"source_id": "SRC-SYN-02", "provenance_type": "key", "authority": "test"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "CONTENT_ALIGNMENT_VERIFIED" not in val_res.flags
+    assert "CONTENT_ALIGNMENT_ESTABLISHED" not in val_res.flags
+    assert "INSUFFICIENT_CONTENT_ALIGNMENT" in val_res.flags
+    assert "REVIEW_REQUIRED_RETAINED" in val_res.flags
+
+
+def test_negative_regression_audio_section_number_matches_without_content_alignment_retains_review_required(populated_db):
+    """Regression test: A matching audio track/section number alone is not verified audio-transcript alignment.
+
+    When audio section number matches without content alignment (no title or transcript text binding),
+    CONTENT_ALIGNMENT_VERIFIED must NOT be marked, and relationship must retain review_required.
+    """
+    conn = get_db_connection(populated_db)
+    # Register an independent reference audio source
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000089",
+        "legacy_id": "SRC-SYN-REF-AUDIO",
+        "relative_path": "data/synthetic/VOL99/Listening/ref_audio.mp3",
+        "filename": "ref_audio.mp3",
+        "extension": ".mp3",
+        "detected_type": "mp3",
+        "size_bytes": 5000,
+        "content_sha256": "8989898989898989898989898989898989898989898989898989898989898989",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+
+    # Candidate listening relationship between FILE-a00000000008 (SRC-SYN-08, AudioTrack 01.mp3)
+    # and FILE-a00000000009 (SRC-SYN-09, Transcript Test 1.docx)
+    # Both cover Section 1, but have no matching titles, no answers, and no transcript_audio_aligned marker.
+    rel_id = compute_relationship_id(
+        "FILE-a00000000008", "FILE-a00000000009", "listening_to_audio", "VOL 99", 1, 1
+    )
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": "FILE-a00000000008",
+        "target_file_id": "FILE-a00000000009",
+        "relationship_type": "listening_to_audio",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": 1,
+        "skill": "listening",
+        "identity_evidence": {"audio_track": 1},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH", "PASSAGE_REQUESTED"],
+        "match_confidence": 0.6,
+        "relationship_status": "review_required",
+        "provenance": {"matcher_version": "0.3.0-a", "evaluated_at": "2026-11-20T10:00:00Z"},
+        "source_content_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "target_content_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "schema_version": "v0.3.0-relationship",
+    })
+    conn.close()
+
+    synthetic_fixtures = {
+        "SRC-SYN-REF-AUDIO": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [1]},
+            "raw_content_summary": {"audio_track": 1},
+        }
+    }
+
+    service = RelationshipReviewService(db_path=populated_db, synthetic_fixtures=synthetic_fixtures)
+    # 1. Attempting approval using reference source SRC-SYN-REF-AUDIO
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="OPERATOR-01",
+            reason="Attempting approval on matching audio section number without content alignment",
+            evidence_source_id="SRC-SYN-REF-AUDIO",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-REF-AUDIO",
+                    "provenance_type": "audio_track",
+                    "authority": "official",
+                }
+            },
+        )
+    assert "retaining review_required" in str(exc_info.value) or "Missing independent supporting evidence" in str(exc_info.value)
+
+    # 2. Relationship retains review_required in SQLite DB
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "review_required"
+
+    # 3. Direct validator call verifies CONTENT_ALIGNMENT_VERIFIED is NOT marked
+    validator = SourceReferenceValidator(conn, synthetic_fixtures=synthetic_fixtures)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-REF-AUDIO",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_source_file_id="FILE-a00000000008",
+        candidate_target_file_id="FILE-a00000000009",
+        relationship_type="listening_to_audio",
+        evidence_provenance={"source_id": "SRC-SYN-REF-AUDIO", "provenance_type": "audio", "authority": "test"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "CONTENT_ALIGNMENT_VERIFIED" not in val_res.flags
+    assert "CONTENT_ALIGNMENT_ESTABLISHED" not in val_res.flags
+    assert "INSUFFICIENT_CONTENT_ALIGNMENT" in val_res.flags
+    assert "REVIEW_REQUIRED_RETAINED" in val_res.flags
+
+
+def test_negative_regression_both_participants_lack_trusted_content_retains_review_required(populated_db):
+    """Regression test: When both participants lack trusted content evidence,
+
+    CONTENT_ALIGNMENT_VERIFIED must NOT be marked, and relationship must retain review_required.
+    """
+    conn = get_db_connection(populated_db)
+    # Register two sources that have physical files missing and no trusted extraction artifacts
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000081",
+        "legacy_id": "SRC-SYN-NO-CONTENT-A",
+        "relative_path": "data/synthetic/VOL99/Reading/missing_content_a.docx",
+        "filename": "missing_content_a.docx",
+        "extension": ".docx",
+        "detected_type": "docx",
+        "size_bytes": 2048,
+        "content_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000082",
+        "legacy_id": "SRC-SYN-NO-CONTENT-B",
+        "relative_path": "data/synthetic/VOL99/Reading/missing_content_b.pdf",
+        "filename": "missing_content_b.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 2048,
+        "content_sha256": "8282828282828282828282828282828282828282828282828282828282828282",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+
+    rel_id = compute_relationship_id(
+        "FILE-a00000000081", "FILE-a00000000082", "question_to_answer_key", "VOL 99", 1, 1
+    )
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": "FILE-a00000000081",
+        "target_file_id": "FILE-a00000000082",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": 1,
+        "skill": "reading",
+        "identity_evidence": {},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH"],
+        "match_confidence": 0.5,
+        "relationship_status": "review_required",
+        "provenance": {"matcher_version": "0.3.0-a", "evaluated_at": "2026-11-20T10:00:00Z"},
+        "source_content_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+        "target_content_sha256": "8282828282828282828282828282828282828282828282828282828282828282",
+        "schema_version": "v0.3.0-relationship",
+    })
+    conn.close()
+
+    service = RelationshipReviewService(db_path=populated_db)
+    # 1. Attempting approval using valid reference source SRC-SYN-02
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="OPERATOR-01",
+            reason="Attempting approval when both participants lack trusted content",
+            evidence_source_id="SRC-SYN-02",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-02",
+                    "provenance_type": "independent_key",
+                    "authority": "official",
+                }
+            },
+        )
+    assert "retaining review_required" in str(exc_info.value) or "Missing independent supporting evidence" in str(exc_info.value)
+
+    # 2. Relationship retains review_required in SQLite DB
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "review_required"
+
+    # 3. Direct validator call verifies CONTENT_ALIGNMENT_VERIFIED is NOT marked
+    validator = SourceReferenceValidator(conn)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-02",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_source_file_id="FILE-a00000000081",
+        candidate_target_file_id="FILE-a00000000082",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={"source_id": "SRC-SYN-02", "provenance_type": "key", "authority": "test"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "CONTENT_ALIGNMENT_VERIFIED" not in val_res.flags
+    assert "CONTENT_ALIGNMENT_ESTABLISHED" not in val_res.flags
+    assert "INSUFFICIENT_CONTENT_ALIGNMENT" in val_res.flags
+    assert "REVIEW_REQUIRED_RETAINED" in val_res.flags
+
 
 
 

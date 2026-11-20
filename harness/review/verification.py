@@ -576,6 +576,30 @@ class SourceReferenceValidator:
             if src_ok:
                 src_meta = s_m
 
+        # Participant traceable content evidence check:
+        # 1. Do not mark CONTENT_ALIGNMENT_VERIFIED if only one relationship participant has traceable content evidence.
+        # 2. If both participants lack trusted content, content alignment cannot be established.
+        src_has_content = bool(src_meta is not None)
+        tgt_has_content = bool(tgt_meta is not None)
+        has_participant_content_deficit = False
+
+        if src_has_content != tgt_has_content:
+            has_participant_content_deficit = True
+            reasons.append(
+                "Content alignment requires traceable content evidence from both participants. "
+                "Only one relationship participant has traceable content evidence; retaining review_required."
+            )
+            flags.append("INSUFFICIENT_CONTENT_ALIGNMENT")
+            flags.append("REVIEW_REQUIRED_RETAINED")
+        elif not src_has_content and not tgt_has_content:
+            has_participant_content_deficit = True
+            reasons.append(
+                "Both relationship participants lack trusted content evidence; "
+                "content alignment cannot be established; retaining review_required."
+            )
+            flags.append("INSUFFICIENT_CONTENT_ALIGNMENT")
+            flags.append("REVIEW_REQUIRED_RETAINED")
+
         # Synthetic evidence isolation check: never allow synthetic evidence to validate production relationships
         is_synthetic_ref = not ref_rec.get("relative_path", "").startswith("private/") and (
             ref_rec.get("collection") in ("synthetic", "VOL 99", "VOL 88")
@@ -649,9 +673,7 @@ class SourceReferenceValidator:
 
         if norm_ref:
             if norm_s:
-                if norm_s in norm_ref or norm_ref in norm_s:
-                    has_title_match = True
-                elif not title_contradiction:
+                if not (norm_s in norm_ref or norm_ref in norm_s):
                     title_contradiction = True
                     reasons.append(
                         f"Passage title mismatch: reference source title '{ref_title}' "
@@ -659,9 +681,7 @@ class SourceReferenceValidator:
                     )
                     flags.append("PASSAGE_TITLE_MISMATCH")
             if norm_t:
-                if norm_t in norm_ref or norm_ref in norm_t:
-                    has_title_match = True
-                elif not title_contradiction:
+                if not (norm_t in norm_ref or norm_ref in norm_t):
                     title_contradiction = True
                     reasons.append(
                         f"Passage title mismatch: reference source title '{ref_title}' "
@@ -669,10 +689,22 @@ class SourceReferenceValidator:
                     )
                     flags.append("PASSAGE_TITLE_MISMATCH")
 
+            # A matching reference title alone is not sufficient to link two participants.
+            # Require both participants to match each other or mutually match the reference title.
+            if norm_s and norm_t and not title_contradiction:
+                if (norm_s in norm_ref or norm_ref in norm_s) and (norm_t in norm_ref or norm_ref in norm_t):
+                    has_title_match = True
+
+        if title_contradiction:
+            has_title_match = False
+
         # Answer key alignment check
         relevant_ref_keys = in_range_keys if in_range_keys else test_keys
         has_verified_answer_match = False
         from harness.matching.engine import normalize_answer_value
+
+        tgt_matches_ref_ans = False
+        src_matches_ref_ans = False
 
         if tgt_meta and expected_test_number is not None and expected_test_number in tgt_meta.answer_keys:
             tgt_keys = tgt_meta.answer_keys[expected_test_number]
@@ -695,7 +727,7 @@ class SourceReferenceValidator:
                     )
                     flags.append("CONFLICTING_ANSWER_KEYS")
                 elif matching_ans:
-                    has_verified_answer_match = True
+                    tgt_matches_ref_ans = True
 
         if src_meta and expected_test_number is not None and expected_test_number in src_meta.answer_keys:
             src_keys = src_meta.answer_keys[expected_test_number]
@@ -718,8 +750,9 @@ class SourceReferenceValidator:
                     )
                     flags.append("CONFLICTING_ANSWER_KEYS")
                 elif matching_ans:
-                    has_verified_answer_match = True
+                    src_matches_ref_ans = True
 
+        participant_direct_ans_match = False
         if (
             src_meta and tgt_meta and expected_test_number is not None
             and expected_test_number in src_meta.answer_keys
@@ -746,39 +779,46 @@ class SourceReferenceValidator:
                     )
                     flags.append("CONFLICTING_ANSWER_KEYS")
                 elif matching_ans:
-                    has_verified_answer_match = True
+                    participant_direct_ans_match = True
+
+        # Answer key alignment binds participants together if they mutually agree directly or via reference
+        if participant_direct_ans_match or (src_matches_ref_ans and tgt_matches_ref_ans):
+            has_verified_answer_match = True
 
         # Audio / transcript alignment
+        # A matching audio track/section number alone is not verified audio-transcript alignment.
+        # Require content evidence that actually binds candidate source and target together.
         has_audio_transcript_match = False
         if relationship_type in ("listening_to_audio", "listening_to_transcript"):
-            if (
-                meta.raw_content_summary.get("audio_track") is not None
-                and expected_passage_or_section is not None
-                and meta.raw_content_summary.get("audio_track") == expected_passage_or_section
-            ):
-                has_audio_transcript_match = True
-            elif (
-                meta.passages_or_sections
-                and expected_passage_or_section is not None
-                and any(expected_passage_or_section in s for s in meta.passages_or_sections.values())
-            ):
+            src_raw = src_meta.raw_content_summary if src_meta else {}
+            tgt_raw = tgt_meta.raw_content_summary if tgt_meta else {}
+            has_aligned_content_marker = bool(
+                src_raw.get("transcript_audio_aligned")
+                or tgt_raw.get("transcript_audio_aligned")
+                or (src_raw.get("audio_hash") and src_raw.get("audio_hash") == tgt_raw.get("audio_hash"))
+            )
+            if has_aligned_content_marker:
                 has_audio_transcript_match = True
 
         # Content alignment between relationship participants
         # An independent answer key merely containing question numbers in the same range
         # is NOT sufficient to verify content alignment between participants.
         is_content_aligned = bool(
-            has_title_match or has_verified_answer_match or has_audio_transcript_match
+            not has_participant_content_deficit
+            and (has_title_match or has_verified_answer_match or has_audio_transcript_match)
         )
 
         if not is_content_aligned:
-            reasons.append(
-                "Independently verifiable alignment between the actual relationship participants is required. "
-                "Relationship matches only on Volume, Test, Passage, and question numbers without verified "
-                "content alignment (no matching title, verified answers, or transcript/audio); retaining review_required."
-            )
-            flags.append("INSUFFICIENT_CONTENT_ALIGNMENT")
-            flags.append("REVIEW_REQUIRED_RETAINED")
+            if "INSUFFICIENT_CONTENT_ALIGNMENT" not in flags:
+                flags.append("INSUFFICIENT_CONTENT_ALIGNMENT")
+            if "REVIEW_REQUIRED_RETAINED" not in flags:
+                flags.append("REVIEW_REQUIRED_RETAINED")
+            if not has_participant_content_deficit:
+                reasons.append(
+                    "Independently verifiable alignment between the actual relationship participants is required. "
+                    "Relationship matches only on Volume, Test, Passage, and question numbers without verified "
+                    "content alignment (no matching title, verified answers, or transcript/audio); retaining review_required."
+                )
 
         is_valid = len(reasons) == 0 and is_content_aligned
         if is_valid:
