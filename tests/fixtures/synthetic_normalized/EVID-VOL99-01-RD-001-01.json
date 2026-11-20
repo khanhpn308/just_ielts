@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "325c97b95e73803faf87c9bdfd0e25655c0b2b9b3eb399a0f43a7f29fef46aa2",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "answer_id": "ANS-VOL99-01-RD-001-KEY",
+  "audio_interval": null,
+  "char_end": 86,
+  "char_start": 0,
+  "evidence_id": "EVID-VOL99-01-RD-001-01",
+  "evidence_type": "direct_support",
+  "exact_match_verified": true,
+  "missing_information_rationale": null,
+  "paragraph_label": "1",
+  "passage_id": "PASSAGE-VOL99-01-RD01",
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "verified",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "verbatim_quote": "Submerged tidal turbines generate predictable electrical current from marine channels."
+}

@@ -1,0 +1,35 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "6cd982c801145b6783179394145d2167d5c777945b35ce97cf6c1b8bfda350e7",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "reviewed",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "sections_present": [
+    "reading"
+  ],
+  "source_reference_id": "SRC-999",
+  "test_id": "TEST-IELTS-VOL99-01-ACAD",
+  "test_number": 1,
+  "title": "IELTS Academic Synthetic Test 01",
+  "track": "academic",
+  "volume": "VOL99"
+}

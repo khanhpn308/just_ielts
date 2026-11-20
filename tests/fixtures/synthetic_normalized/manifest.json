@@ -1,0 +1,116 @@
+{
+  "entities": [
+    {
+      "canonical_content_sha256": "6cd982c801145b6783179394145d2167d5c777945b35ce97cf6c1b8bfda350e7",
+      "entity_id": "TEST-IELTS-VOL99-01-ACAD",
+      "entity_type": "test",
+      "output_filename": "TEST-IELTS-VOL99-01-ACAD.json"
+    },
+    {
+      "canonical_content_sha256": "658f9fe0940519a1e62469a9ab613f32eca714da25737f63ac170623a967843c",
+      "entity_id": "PASSAGE-VOL99-01-RD01",
+      "entity_type": "passage",
+      "output_filename": "PASSAGE-VOL99-01-RD01.json"
+    },
+    {
+      "canonical_content_sha256": "7edb961f126eedc1293e9706ac00ce79a7e1345d23f67511e8e8e5ecc024b55b",
+      "entity_id": "QG-VOL99-01-RD01-G01",
+      "entity_type": "question_group",
+      "output_filename": "QG-VOL99-01-RD01-G01.json"
+    },
+    {
+      "canonical_content_sha256": "ec22525788b9ce917eb6a8bdf24fce26470fd2566259b6dfc78ebe2b63aa5e2f",
+      "entity_id": "Q-VOL99-01-RD-001",
+      "entity_type": "question",
+      "output_filename": "Q-VOL99-01-RD-001.json"
+    },
+    {
+      "canonical_content_sha256": "106ec0dcce04b8d627ef2c09a14ada11f38819f68606ed5451feca34a71379a9",
+      "entity_id": "ANS-VOL99-01-RD-001-KEY",
+      "entity_type": "answer",
+      "output_filename": "ANS-VOL99-01-RD-001-KEY.json"
+    },
+    {
+      "canonical_content_sha256": "325c97b95e73803faf87c9bdfd0e25655c0b2b9b3eb399a0f43a7f29fef46aa2",
+      "entity_id": "EVID-VOL99-01-RD-001-01",
+      "entity_type": "evidence",
+      "output_filename": "EVID-VOL99-01-RD-001-01.json"
+    },
+    {
+      "canonical_content_sha256": "5a811825f29df8f3ffd4dc94da4f0350a7fddc5643fbdcd59abee7466514322c",
+      "entity_id": "EXPL-VOL99-01-RD-001",
+      "entity_type": "explanation",
+      "output_filename": "EXPL-VOL99-01-RD-001.json"
+    },
+    {
+      "canonical_content_sha256": "64ccb84ae81f9f54fdb8546db0741ba9127f2bb8d6338ce9df33f5fbcdd72ae1",
+      "entity_id": "Q-VOL99-01-RD-002",
+      "entity_type": "question",
+      "output_filename": "Q-VOL99-01-RD-002.json"
+    },
+    {
+      "canonical_content_sha256": "684776dee49603fc7598bd598ba77bd07a00985ff1a84120f941d576147e0e21",
+      "entity_id": "ANS-VOL99-01-RD-002-KEY",
+      "entity_type": "answer",
+      "output_filename": "ANS-VOL99-01-RD-002-KEY.json"
+    },
+    {
+      "canonical_content_sha256": "9d5385e27c57472531e11b5ddc302baa21d24c0a35349cb6224f1b4dc0710c3d",
+      "entity_id": "EVID-VOL99-01-RD-002-01",
+      "entity_type": "evidence",
+      "output_filename": "EVID-VOL99-01-RD-002-01.json"
+    },
+    {
+      "canonical_content_sha256": "812f5a8ceb38595f432e889d8e1a9377e90e639cc6086f150b1e31ae8074c56d",
+      "entity_id": "EXPL-VOL99-01-RD-002",
+      "entity_type": "explanation",
+      "output_filename": "EXPL-VOL99-01-RD-002.json"
+    },
+    {
+      "canonical_content_sha256": "cb28e6a9b42d78cd7161cd587d9787dae545f53768b774835af38bc3d385fc6c",
+      "entity_id": "Q-VOL99-01-RD-003",
+      "entity_type": "question",
+      "output_filename": "Q-VOL99-01-RD-003.json"
+    },
+    {
+      "canonical_content_sha256": "1c8a7fee62e2f7f7d0483a09accd4eb7e7b7cf6b19d3fc4a4a0a3e175f57725c",
+      "entity_id": "ANS-VOL99-01-RD-003-KEY",
+      "entity_type": "answer",
+      "output_filename": "ANS-VOL99-01-RD-003-KEY.json"
+    },
+    {
+      "canonical_content_sha256": "33244f180ea585cfdae13441370e518052378839ba50971e28374d63e177af9f",
+      "entity_id": "Q-VOL99-01-RD-004",
+      "entity_type": "question",
+      "output_filename": "Q-VOL99-01-RD-004.json"
+    },
+    {
+      "canonical_content_sha256": "2224d614c8ce960121a51f51aef387c90f7a1a32b2d4c070b495e2ba6eb317f4",
+      "entity_id": "ANS-VOL99-01-RD-004-KEY",
+      "entity_type": "answer",
+      "output_filename": "ANS-VOL99-01-RD-004-KEY.json"
+    },
+    {
+      "canonical_content_sha256": "4ddf7a7eadcad29f1af7e04157bf77647d55805e20cfeeb7fb2f347173e2403d",
+      "entity_id": "EVID-VOL99-01-RD-004-01",
+      "entity_type": "evidence",
+      "output_filename": "EVID-VOL99-01-RD-004-01.json"
+    },
+    {
+      "canonical_content_sha256": "25e9997c9282fd3f030ce6d18ed526aedf54a451dc70642757b3316492311aa3",
+      "entity_id": "EXPL-VOL99-01-RD-004",
+      "entity_type": "explanation",
+      "output_filename": "EXPL-VOL99-01-RD-004.json"
+    }
+  ],
+  "normalizer_version": "0.2.0-b",
+  "pipeline": "synthetic_normalized_pipeline",
+  "schema_version": "v0.2.0-normalized",
+  "skipped_count": 0,
+  "stale_entities": [
+    "Q-VOL99-01-RD-040"
+  ],
+  "test_id": "TEST-IELTS-VOL99-01-ACAD",
+  "total_entities": 17,
+  "written_count": 17
+}

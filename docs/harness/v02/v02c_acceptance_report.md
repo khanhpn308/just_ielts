@@ -50,12 +50,25 @@ The primary objective of V0.2-C is to audit all 38 normalized entities, reconcil
 
 ### 2.2 Quality Profile Breakdown
 
-Entities by Lifecycle Status:
-- `extracted`: 14 (1 passage + 13 questions)
-- `reviewed`: 8 (1 test, 2 question groups, 4 evidence entities, 1 reconciled passage)
-- `review_required`: 16 (9 single-source unverified keys, 4 missing keys, 4 unverified/machine-drafted explanations)
-- `verified`: **0** (Human expert review required; zero false claims)
-- `rejected`: 0
+Entities by Lifecycle Status (Audited Canonical Store):
+- `extracted`: **14** (1 passage `PASSAGE-VOL06-05-RD01` + 13 questions `Q-VOL06-05-RD-001` through `013`)
+- `reviewed`: **7** (1 test `TEST-IELTS-VOL06-05-ACAD`, 2 question groups `QG-VOL06-05-RD01-G01` and `G02`, 4 evidence entities `EVID-VOL06-05-RD-003-01` through `006-01`)
+- `review_required`: **17** (13 answer entities: 9 single-source unverified keys + 4 missing keys; 4 unverified/machine-drafted explanations `EXPL-VOL06-05-RD-003` through `006`)
+- `verified`: **0** (Authenticated human expert review required; zero false claims)
+- `rejected`: **0**  
+*Total Canonical Entities:* **38** (14 + 7 + 17 = 38)
+
+### 2.3 Verification Categories & Test Suite Classification
+
+To ensure complete transparency and epistemic rigor across environments, test execution and dataset grounding are partitioned into five mutually exclusive categories:
+
+| Dimension | Count / Metric | Classification Scope & Integrity Guarantees |
+|---|---|---|
+| **GitHub Synthetic Tests** | **117 passed** | Fast, self-contained unit and synthetic integration tests executing in GitHub Actions CI with zero private corpus dependencies. |
+| **Local Corpus Tests** | **9 passed** | Authentic corpus tests (`tests/test_corpus.py` and schema integration) that execute exclusively in local developer environments against `private/` sources. |
+| **Skipped Tests** | **9 skipped (CI) / 0 (Local)** | The 9 local corpus tests are safely skipped in public CI environments to preserve source isolation; 0 skipped when `RUN_CORPUS_TESTS=1`. |
+| **Source-Grounded Records** | **17 records** | Authentic pilot entities directly extracted and traced to physical scan locators in `SRC-138` and `SRC-137` (1 passage, 2 groups, 9 answers, 4 evidence spans, 4 explanations). |
+| **Human-Verified Records** | **0 / 38 (0.0%)** | Strict epistemic honesty: exactly zero entities claim `verified` or `expert_verified` prior to authenticated human expert sign-off. |
 
 ---
 
@@ -125,16 +138,19 @@ However, deployment costs remain undocumented in the initial trial reports."
 
 The `TutorRetriever` module in `harness/retrieval.py` implements schema-compliant retrieval for autonomous tutoring agents:
 
-### 5.1 Retrieval Capabilities
-1. **Full Context Packaging:** Packages question prompt, options, group instructions, and passage context in a single call.
-2. **Pedagogical Enrichment:** Links relevant strategies from `principles/` (e.g. `RD-TFNG-001: Distinguish FALSE from NOT GIVEN`) via `linked_principle_ids`. Prohibits unlinked or fabricated principle associations.
-3. **Mandatory Uncertainty Disclosure:** Every retrieved bundle includes a structured `uncertainty_disclosure` payload detailing:
-   - Overall readiness rating (`READY`, `REVIEW_REQUIRED`, `BLOCKED`).
-   - Source authority level (`authoritative_official` vs `secondary_reputable`).
-   - Explicit flags (`MISSING_SOURCE_ANSWER_KEY`, `SINGLE_SOURCE_UNVERIFIED_KEY`, `OCR_TYPO_CORRECTED`).
-   - Human-readable disclaimer text warning tutors not to conduct high-stakes diagnostic scoring on unverified or missing keys.
+### 5.1 Retrieval Capabilities & Epistemic Defenses
+1. **Authoritative Manifest Enforcement:** `TutorRetriever` strictly loads and validates `manifest.json`. It verifies active entities, verifies canonical content SHA-256 digests on load, rejects stale/unmanifested entities, and fails closed with `FileNotFoundError` or `ValueError` if the manifest is missing, malformed, or corrupted.
+2. **Path Traversal & Injection Prevention:** Question IDs are sanitized against regex `^Q-[A-Z0-9-]+-(RD|LS|WR|SP)-\d{3}$`, blocking directory traversal (`..`, `/`, `\`) and control characters (`\0`).
+3. **Accurate Chain-Wide Readiness Classification:** A question achieves `READY` status if and only if sufficient verification is proven across the entire Answer-Evidence-Explanation chain:
+   - *Answer Verification:* Authoritative key (`authoritative_key` or `consensus_key`) with `verified` or `reviewed` lifecycle status.
+   - *Evidence Grounding:* Character-level slice match against narrative text (for direct/contradiction support) or null quote invariant (for NOT GIVEN), with `verified` or `reviewed` lifecycle status. Syntactic match is never equated with semantic correctness.
+   - *Explanation Verification:* Complete pedagogical rationale with `expert_verified` certification. Answer verification is never equated with explanation verification.
+   - If any link in the chain is incomplete or unverified, the retriever safely downgrades readiness to `REVIEW_REQUIRED`. If the answer key is missing, ungradable, or disputed, readiness is strictly `BLOCKED`.
+4. **Full Context Packaging:** Packages question prompt, options, group instructions, and passage context in a single call.
+5. **Pedagogical Enrichment:** Links relevant strategies from `principles/` (e.g. `RD-TFNG-001: Distinguish FALSE from NOT GIVEN`) via `linked_principle_ids`. Prohibits unlinked or fabricated principle associations.
+6. **Mandatory Uncertainty Disclosure:** Every retrieved bundle includes a structured `uncertainty_disclosure` payload detailing readiness rating (`READY`, `REVIEW_REQUIRED`, `BLOCKED`), source authority level, explicit diagnostic flags, and human-readable disclaimers.
 
-### 5.2 Retrieval Test Results
+### 5.2 Pilot Retrieval Smoke Test Results (Authentic Reading Pilot)
 
 | Test Case | Question ID | Target Answer | Evidence Type | Readiness | Uncertainty Disclosure |
 |---|---|---|---|---|---|
@@ -142,6 +158,20 @@ The `TutorRetriever` module in `harness/retrieval.py` implements schema-complian
 | **NOT GIVEN** | `Q-VOL06-05-RD-003` | `NOT GIVEN` | `insufficient_information_not_given` | `REVIEW_REQUIRED` | Discloses missing-information rationale; enforces `verbatim_quote: null`; flags machine-drafted explanation. |
 | **Missing Answer** | `Q-VOL06-05-RD-001` | `null` | *None* | `BLOCKED` | **CRITICAL WARNING:** Answer key missing from physical scan; blocks automated scoring; prohibits answer guessing. |
 | **OCR Typo Item** | `Q-VOL06-05-RD-007` | `fraudulent` | *None* | `REVIEW_REQUIRED` | Discloses OCR typo remediation from `Fraudulant`; reports missing evidence span. |
+
+### 5.3 Independent Synthetic Retrieval Test Suite (Public CI)
+
+To ensure automated regression testing on GitHub Actions without copyrighted private materials, a dedicated synthetic test suite (`tests/test_v02c_synthetic_retrieval.py`) exercises all 7 retrieval invariants against normalized synthetic fixtures:
+
+| Synthetic Test Case | Entity ID | Key Condition Tested | Expected Outcome | Verification Status |
+|---|---|---|---|---|
+| **1. Direct-Support Retrieval** | `Q-VOL99-01-RD-001` | Fully verified answer, grounded evidence, and verified explanation | `READY` | **PASS** |
+| **2. NOT GIVEN Retrieval** | `Q-VOL99-01-RD-002` | Grounded NOT GIVEN item with null quote and valid rationale | `READY` | **PASS** |
+| **3. Missing Answer Gating** | `Q-VOL99-01-RD-003` | Answer key missing from source (`target_value: null`) | `BLOCKED` | **PASS** |
+| **4. Unverified Explanation Gating** | `Q-VOL99-01-RD-004` | Verified answer & evidence, but machine-drafted explanation | `REVIEW_REQUIRED` (not READY) | **PASS** |
+| **5. Stale Entity Rejection** | `Q-VOL99-01-RD-040` | Entity on disk but excluded from active manifest entries | Rejected (`ValueError`) | **PASS** |
+| **6. Corrupted Manifest Rejection** | `manifest.json` | Missing manifest, malformed JSON, invalid schema, count mismatch | Fails closed (`FileNotFoundError` / `ValueError`) | **PASS** |
+| **7. Missing Referenced Entity** | `Q-VOL99-01-RD-001` | Question references missing passage/group not in manifest | Rejected (`ValueError`) | **PASS** |
 
 ---
 
@@ -156,7 +186,7 @@ The `TutorRetriever` module in `harness/retrieval.py` implements schema-complian
 | **A5** | Schema Compliance | All canonical records satisfy JSON Schemas. | **PASS** | All 38 entities validate against Draft 2020-12 schemas without warnings. |
 | **A6** | Honest Verification Claims | Zero false claims of human expert verification. | **PASS** | 0 records claim `verified` or `expert_verified`. All pending human review. |
 | **A7** | Tutor Uncertainty Disclosure | Tutor retrieval exposes epistemic uncertainty. | **PASS** | `TutorRetriever` outputs machine flags and human-readable disclaimers. |
-| **A8** | Regression Invariance | Existing test suite passes with zero regressions. | **PASS** | 100 passed standard, 109 passed with `--corpus`, check-env OK. |
+| **A8** | Regression Invariance | Existing test suite passes with zero regressions. | **PASS** | 117 passed standard (GitHub synthetic suite, 9 skipped), 126 passed with `RUN_CORPUS_TESTS=1` (local corpus suite, 0 skipped), check-env OK. |
 | **A9** | Privacy Isolation | Zero copyrighted or private material enters public Git. | **PASS** | Authentic texts kept in `private/`; public reports use synthetic examples. |
 
 ---

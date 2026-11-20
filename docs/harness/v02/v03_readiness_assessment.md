@@ -14,8 +14,8 @@ Following the completion of Phase V0.2-C data acceptance and pilot reconciliatio
 
 1. **Architecture & Normalization Engine: UNCONDITIONAL GO**  
    The Normalization Engine, Pydantic domain models, Draft 2020-12 schemas, SQLite checkpointing, and Quality Gate verification (G1–G7) have demonstrated operational stability, deterministic execution, and zero data loss on messy real-world examination documents.
-2. **AI Tutor Retrieval Pipeline: GO WITH MANDATORY DISCLOSURE**  
-   The dataset is structurally ready for AI Tutor retrieval. The `TutorRetriever` engine successfully exposes complete question context, source provenance, linked pedagogical strategies (`principles/`), and explicit uncertainty disclosures.
+2. **AI Tutor Retrieval Pipeline: GO WITH MANDATORY DISCLOSURE & MANIFEST INTEGRITY**  
+   The dataset and retrieval engine are fully hardened for AI Tutor retrieval. The `TutorRetriever` engine strictly enforces authoritative manifest validation, verifies entity identity and canonical SHA-256 checksums, prevents path traversal, and enforces chain-wide verification (Answer-Evidence-Explanation) before assigning `READY`. All unverified secondary keys and machine-drafted explanations trigger mandatory `REVIEW_REQUIRED` uncertainty disclosures.
 3. **High-Stakes Autonomous Quizzing: NO-GO (HUMAN VERIFICATION GATE REQUIRED)**  
    The pilot data cannot be used for high-stakes, unassisted diagnostic scoring because 4 answers are physically missing from the source scans and 9 answers stem from a single secondary guide without publisher confirmation or human expert certification.
 
@@ -35,8 +35,8 @@ Following the completion of Phase V0.2-C data acceptance and pilot reconciliatio
 - Cross-volume reconciliation candidate `SRC-077` was correctly detected as belonging to Volume 3 and rejected, proving the engine's epistemic defenses against false-positive answer matching.
 
 ### 2.3 Epistemic Integrity & Human Verification: **PENDING REVIEW**
-- 0 of 38 entities currently hold `verified` or `expert_verified` status.
-- Current entities are correctly marked `review_required` or `reviewed`.
+- 0 of 38 entities currently hold `verified` status (zero false claims).
+- Current entities are strictly partitioned: `review_required` (17), `reviewed` (7), `extracted` (14).
 - The dataset strictly prohibits unreviewed secondary keys from being labeled `authoritative_key` or `consensus_key`.
 
 ---

@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "64ccb84ae81f9f54fdb8546db0741ba9127f2bb8d6338ce9df33f5fbcdd72ae1",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "blank_target": null,
+  "group_id": "QG-VOL99-01-RD01-G01",
+  "linked_principle_ids": [
+    "RD-TFNG-001"
+  ],
+  "options": null,
+  "passage_id": "PASSAGE-VOL99-01-RD01",
+  "prompt_text": "Global capital expenditure records for 2020 exceeded five million dollars.",
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "verified",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "question_id": "Q-VOL99-01-RD-002",
+  "question_number": 2,
+  "question_type": "true-false-not-given"
+}

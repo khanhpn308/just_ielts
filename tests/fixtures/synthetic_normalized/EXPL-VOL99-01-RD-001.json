@@ -1,0 +1,40 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "5a811825f29df8f3ffd4dc94da4f0350a7fddc5643fbdcd59abee7466514322c",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "answer_id": "ANS-VOL99-01-RD-001-KEY",
+  "author_type": "expert_teacher",
+  "distractor_notes": null,
+  "evidence_id": "EVID-VOL99-01-RD-001-01",
+  "explanation_id": "EXPL-VOL99-01-RD-001",
+  "paraphrase_map": [
+    {
+      "passage_term": "marine channels",
+      "prompt_term": "marine channels"
+    }
+  ],
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "verified",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "question_id": "Q-VOL99-01-RD-001",
+  "rationale_en": "The passage explicitly confirms that submerged tidal turbines generate electrical current from marine channels.",
+  "rationale_vi": "Đoạn văn khẳng định rõ ràng rằng các tuabin thủy triều dưới nước tạo ra dòng điện từ các luồng hải lưu."
+}

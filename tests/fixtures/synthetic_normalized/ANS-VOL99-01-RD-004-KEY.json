@@ -1,0 +1,34 @@
+{
+  "_provenance": {
+    "canonical_content_sha256": "2224d614c8ce960121a51f51aef387c90f7a1a32b2d4c070b495e2ba6eb317f4",
+    "extractor_adapter": "synthetic",
+    "extractor_version": "0.1.0",
+    "normalized_at": null,
+    "normalizer_version": "0.2.0-b",
+    "processing_unit": "document",
+    "raw_block_locator": "para:1-2",
+    "relative_path": "data/synthetic/marine.docx",
+    "schema_version": "v0.2.0-normalized",
+    "source_file_id": "FILE-000000000001",
+    "source_legacy_id": "SRC-999",
+    "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_identifier": "synthetic_unit_01"
+  },
+  "acceptable_alternates": [
+    "T"
+  ],
+  "answer_id": "ANS-VOL99-01-RD-004-KEY",
+  "case_sensitive": false,
+  "quality_profile": {
+    "answer_verification": "authoritative_key",
+    "explanation_verification": "expert_verified",
+    "extraction_quality": "complete_clean",
+    "lifecycle_status": "verified",
+    "publication_permission": "public_synthetic",
+    "source_fidelity": "authoritative_official",
+    "validation_flags": []
+  },
+  "question_id": "Q-VOL99-01-RD-004",
+  "source_key_ref": "Key Section page 1",
+  "target_value": "TRUE"
+}

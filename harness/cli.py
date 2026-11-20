@@ -391,11 +391,10 @@ def cmd_retrieve(args):
     from harness.retrieval import TutorRetriever, STAGING_NORMALIZED_DIR
 
     norm_dir = Path(args.normalized_dir) if args.normalized_dir else STAGING_NORMALIZED_DIR
-    retriever = TutorRetriever(normalized_dir=norm_dir)
-
     try:
+        retriever = TutorRetriever(normalized_dir=norm_dir)
         res = retriever.retrieve_question(args.question_id)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
