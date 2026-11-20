@@ -57,10 +57,21 @@ class PolicyEvaluationResult:
 class ReviewPolicyValidator:
     """Enforces deterministic review rules A through E."""
 
-    def __init__(self, conn: sqlite3.Connection, repo_root: Optional[Path] = None):
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        repo_root: Optional[Path] = None,
+        allow_synthetic_fixtures: Optional[bool] = None,
+        synthetic_fixtures: Optional[Dict[str, Any]] = None,
+    ):
         self.conn = conn
         self.repo_root = repo_root or REPO_ROOT
-        self.source_validator = SourceReferenceValidator(conn, repo_root=self.repo_root)
+        self.source_validator = SourceReferenceValidator(
+            conn,
+            repo_root=self.repo_root,
+            allow_synthetic_fixtures=allow_synthetic_fixtures,
+            synthetic_fixtures=synthetic_fixtures,
+        )
 
     def evaluate_decision(
         self,
@@ -256,6 +267,7 @@ class ReviewPolicyValidator:
                     expected_test_number=relationship.get("test_number"),
                     candidate_target_file_id=t_fid,
                     candidate_target_legacy_id=tgt_rec.get("legacy_id") if tgt_rec else None,
+                    candidate_source_file_id=s_fid,
                     evidence_provenance=ev_prov,
                     expected_passage_or_section=relationship.get("passage_or_section"),
                     relationship_type=relationship.get("relationship_type"),
@@ -264,6 +276,8 @@ class ReviewPolicyValidator:
                 if val_res.is_valid:
                     has_independent_evidence = True
                     validation_flags.append("REVIEWER_EVIDENCE_VERIFIED")
+                    if "CONTENT_ALIGNMENT_VERIFIED" in val_res.flags:
+                        validation_flags.append("CONTENT_ALIGNMENT_VERIFIED")
                 else:
                     rejection_reasons.extend(
                         [f"Reviewer evidence invalid: {r}" for r in val_res.rejection_reasons]

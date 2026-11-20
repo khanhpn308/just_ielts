@@ -507,13 +507,14 @@ class RelationshipMatchingService:
 
                     # V0.3-B: Validate reference source against inventory and non-circularity
                     if candidate_gt_source_id:
-                        ref_validator = SourceReferenceValidator(conn)
+                        ref_validator = SourceReferenceValidator(conn, repo_root=self.repo_root)
                         val_res = ref_validator.validate_reference(
                             reference_source_id=candidate_gt_source_id,
                             expected_collection=s_meta.collection or "",
                             expected_test_number=t_num,
                             candidate_target_file_id=t_fid,
                             candidate_target_legacy_id=tgt_rec.get("legacy_id"),
+                            candidate_source_file_id=s_fid,
                             evidence_provenance=candidate_gt_prov,
                             expected_passage_or_section=p_num,
                             relationship_type=rel_type,
@@ -521,10 +522,13 @@ class RelationshipMatchingService:
                         if val_res.is_valid:
                             gt_source_id = candidate_gt_source_id
                             gt_prov = candidate_gt_prov
+                            if val_res.verified_answers:
+                                gt_answers = val_res.verified_answers
                         else:
                             # Unregistered, fabricated, or circular ground truth rejected
                             gt_source_id = None
                             gt_prov = None
+                            gt_answers = None
                 elif isinstance(gt_entry, dict):
                     gt_answers = gt_entry
 

@@ -35,10 +35,18 @@ from harness.review.policy import (
 class RelationshipReviewService:
     """Coordinates listing, inspecting, deciding, and auditing human source relationship reviews."""
 
-    def __init__(self, db_path: Optional[Path] = None, repo_root: Optional[Path] = None):
+    def __init__(
+        self,
+        db_path: Optional[Path] = None,
+        repo_root: Optional[Path] = None,
+        allow_synthetic_fixtures: Optional[bool] = None,
+        synthetic_fixtures: Optional[Dict[str, Any]] = None,
+    ):
         from harness import config
         self.db_path = db_path or config.DB_PATH
         self.repo_root = repo_root or config.REPO_ROOT
+        self.allow_synthetic_fixtures = allow_synthetic_fixtures
+        self.synthetic_fixtures = synthetic_fixtures
 
     def _get_connection(self) -> sqlite3.Connection:
         return get_db_connection(self.db_path)
@@ -103,7 +111,12 @@ class RelationshipReviewService:
         conflicts = list_relationship_conflicts(conn, relationship_id=relationship_id)
         history = list_relationship_reviews(conn, relationship_id=relationship_id)
 
-        policy = ReviewPolicyValidator(conn, repo_root=self.repo_root)
+        policy = ReviewPolicyValidator(
+            conn,
+            repo_root=self.repo_root,
+            allow_synthetic_fixtures=self.allow_synthetic_fixtures,
+            synthetic_fixtures=self.synthetic_fixtures,
+        )
         is_fresh, freshness_reason = policy.check_relationship_freshness(rel)
 
         # Preview approval eligibility
@@ -154,7 +167,12 @@ class RelationshipReviewService:
         now_iso = reviewed_at or datetime.now(timezone.utc).isoformat()
 
         # Policy validation
-        validator = ReviewPolicyValidator(conn, repo_root=self.repo_root)
+        validator = ReviewPolicyValidator(
+            conn,
+            repo_root=self.repo_root,
+            allow_synthetic_fixtures=self.allow_synthetic_fixtures,
+            synthetic_fixtures=self.synthetic_fixtures,
+        )
         policy_result: PolicyEvaluationResult = validator.evaluate_decision(
             relationship=rel,
             decision=decision,
@@ -181,6 +199,8 @@ class RelationshipReviewService:
         )
 
         ev_refs = dict(evidence_references or {})
+        if "staged_data" in ev_refs:
+            del ev_refs["staged_data"]
         if evidence_source_id and "source_id" not in ev_refs:
             ev_refs["source_id"] = evidence_source_id
 

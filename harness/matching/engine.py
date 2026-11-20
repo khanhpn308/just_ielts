@@ -721,7 +721,17 @@ class MatchingEngine:
                     validation_flags.append("CONFLICTING_ANSWER_KEYS")
                 elif matching_qs and not is_circular and is_independent_source:
                     # Only genuinely independent sources can produce ANSWERS_ALIGNED
-                    validation_flags.append("ANSWERS_ALIGNED")
-                    identity_evidence["matching_answers"] = matching_qs
+                    if passage_or_section is not None:
+                        range_map = {1: (1, 14), 2: (14, 27), 3: (27, 40), 4: (31, 40)}
+                        r_min, r_max = range_map.get(passage_or_section, (1, 40))
+                        in_sec_qs = [q for q in matching_qs if r_min <= q <= r_max]
+                        if in_sec_qs:
+                            validation_flags.append("ANSWERS_ALIGNED")
+                            identity_evidence["matching_answers"] = in_sec_qs
+                        else:
+                            validation_flags.append("NO_MATCHING_SECTION_ANSWERS")
+                    else:
+                        validation_flags.append("ANSWERS_ALIGNED")
+                        identity_evidence["matching_answers"] = matching_qs
                 elif is_circular:
                     validation_flags.append("CIRCULAR_ANSWER_EVIDENCE_REJECTED")

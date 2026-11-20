@@ -1148,3 +1148,292 @@ def test_audit_immutability_safe_migrations(populated_db):
     conn.close()
 
 
+# --------------------------------------------------------------------------
+# 21. Independent Evidence Trust Boundary Negative Regressions
+# --------------------------------------------------------------------------
+def test_negative_regression_fabricated_caller_staged_data_rejected(populated_db):
+    """Negative regression test: Fabricated caller-provided staged_data is strictly rejected."""
+    service = RelationshipReviewService(db_path=populated_db)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+
+    # 1. Caller attempts to supply fabricated staged_data to force approval
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="ATTACKER-01",
+            reason="Attempting approval using caller-injected fabricated staged_data",
+            evidence_source_id="SRC-SYN-02",
+            evidence_references={
+                "staged_data": {
+                    "test_numbers": [1],
+                    "passages_or_sections": {"1": [1]},
+                    "answer_keys": {"1": {1: "FABRICATED_KEY", 2: "FABRICATED_KEY"}},
+                },
+                "provenance": {
+                    "source_id": "SRC-SYN-02",
+                    "provenance_type": "injected_staged_data",
+                    "authority": "untrusted",
+                },
+            },
+        )
+
+    assert "Untrusted caller-supplied staged_data rejected" in str(exc_info.value)
+
+    # 2. Relationship retains candidate status
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "candidate"
+
+    # 3. Direct validator call rejects caller staged_data
+    validator = SourceReferenceValidator(conn)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-02",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_target_file_id="FILE-a00000000004",
+        relationship_type="question_to_answer_key",
+        evidence_references={"staged_data": {"answer_keys": {1: {1: "INJECTED"}}}},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "CALLER_STAGED_DATA_REJECTED" in val_res.flags
+
+
+def test_negative_regression_unrelated_answer_key_sharing_volume_and_test_rejected(populated_db):
+    """Negative regression test: Answer key sharing Volume/Test but covering disjoint sections cannot confirm."""
+    # Register an answer key in VOL 99 Test 1 that only covers Passage 3 (Q28-Q40)
+    conn = get_db_connection(populated_db)
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000098",
+        "legacy_id": "SRC-SYN-UNRELATED-P3",
+        "relative_path": "data/synthetic/VOL99/Reading/unrelated_p3_key.pdf",
+        "filename": "unrelated_p3_key.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 2048,
+        "content_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    synthetic_fixtures = {
+        "SRC-SYN-UNRELATED-P3": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [3]},
+            "answer_keys": {
+                "1": {28: "A", 29: "B", 30: "C", 31: "D"}
+            },
+        }
+    }
+
+    # Candidate relationship is for Passage 1 (questions 1-14)
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+
+    service = RelationshipReviewService(db_path=populated_db, synthetic_fixtures=synthetic_fixtures)
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting approval using unrelated Passage 3 key for Passage 1 candidate",
+            evidence_source_id="SRC-SYN-UNRELATED-P3",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-UNRELATED-P3",
+                    "provenance_type": "test_answer_key",
+                    "authority": "official",
+                }
+            },
+        )
+
+    # An answer key containing answers for the same Test is not sufficient for confirmation
+    assert "An answer key containing answers for the same Test is not sufficient for confirmation" in str(exc_info.value)
+
+    # Verify status remains candidate
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "candidate"
+
+    # Direct validation check
+    validator = SourceReferenceValidator(conn, synthetic_fixtures=synthetic_fixtures)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-UNRELATED-P3",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_target_file_id="FILE-a00000000004",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={"source_id": "SRC-SYN-UNRELATED-P3", "provenance_type": "key", "authority": "cambridge"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "NO_MATCHING_QUESTION_EVIDENCE" in val_res.flags
+
+
+def test_negative_regression_missing_physical_source_and_extraction_rejected(populated_db):
+    """Negative regression test: Missing physical source and missing trusted extraction artifact fails validation."""
+    conn = get_db_connection(populated_db)
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000099",
+        "legacy_id": "SRC-GHOST-MISSING",
+        "relative_path": "private/raw/VOL 99/ghost_nonexistent.pdf",
+        "filename": "ghost_nonexistent.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1024,
+        "content_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+
+    service = RelationshipReviewService(db_path=populated_db)
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting approval using nonexistent physical source and missing extraction artifact",
+            evidence_source_id="SRC-GHOST-MISSING",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-GHOST-MISSING",
+                    "provenance_type": "missing_ghost",
+                    "authority": "none",
+                }
+            },
+        )
+
+    assert "physical file is missing and has no trusted extraction artifact" in str(exc_info.value)
+
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "candidate"
+
+    validator = SourceReferenceValidator(conn)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-GHOST-MISSING",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_target_file_id="FILE-a00000000004",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={"source_id": "SRC-GHOST-MISSING", "provenance_type": "ghost", "authority": "none"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "MISSING_PHYSICAL_SOURCE_AND_EXTRACTION" in val_res.flags
+
+
+def test_negative_regression_no_matching_question_level_evidence_rejected(populated_db):
+    """Negative regression test: Reference source with no matching question-level evidence retains candidate status."""
+    conn = get_db_connection(populated_db)
+    upsert_source(conn, {
+        "file_id": "FILE-a00000000096",
+        "legacy_id": "SRC-SYN-NO-Q-MATCH",
+        "relative_path": "data/synthetic/VOL99/Reading/no_q_match.pdf",
+        "filename": "no_q_match.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 2048,
+        "content_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    # Synthetic fixture has answers for Q15-Q20 (Passage 2), candidate is for Passage 1 (Q1-Q14)
+    synthetic_fixtures = {
+        "SRC-SYN-NO-Q-MATCH": {
+            "test_numbers": [1],
+            "passages_or_sections": {"1": [1]},
+            "answer_keys": {
+                "1": {15: "A", 16: "B", 17: "C", 18: "D"}
+            },
+        }
+    }
+
+    rel_id = compute_relationship_id(
+        "FILE-a00000000001", "FILE-a00000000004", "question_to_answer_key", "VOL 99", 1, 1
+    )
+
+    service = RelationshipReviewService(db_path=populated_db, synthetic_fixtures=synthetic_fixtures)
+    with pytest.raises(ReviewPolicyViolation) as exc_info:
+        service.decide(
+            relationship_id=rel_id,
+            decision="approve",
+            reviewer_id="USER-001",
+            reason="Attempting approval with no matching question numbers for Passage 1",
+            evidence_source_id="SRC-SYN-NO-Q-MATCH",
+            evidence_references={
+                "provenance": {
+                    "source_id": "SRC-SYN-NO-Q-MATCH",
+                    "provenance_type": "test_key",
+                    "authority": "official",
+                }
+            },
+        )
+
+    assert "No matching question-level evidence" in str(exc_info.value) or "An answer key containing answers for the same Test is not sufficient" in str(exc_info.value)
+
+    conn = get_db_connection(populated_db)
+    rel = get_source_relationship(conn, rel_id)
+    assert rel["relationship_status"] == "candidate"
+
+    validator = SourceReferenceValidator(conn, synthetic_fixtures=synthetic_fixtures)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-NO-Q-MATCH",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_target_file_id="FILE-a00000000004",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={"source_id": "SRC-SYN-NO-Q-MATCH", "provenance_type": "key", "authority": "test"},
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "NO_MATCHING_QUESTION_EVIDENCE" in val_res.flags
+
+
+def test_synthetic_fixture_injection_rejected_outside_test_context(populated_db):
+    """Regression test: Synthetic fixture injection is rejected when allow_synthetic_fixtures=False."""
+    conn = get_db_connection(populated_db)
+    validator = SourceReferenceValidator(conn, allow_synthetic_fixtures=False)
+    val_res = validator.validate_reference(
+        reference_source_id="SRC-SYN-02",
+        expected_collection="VOL 99",
+        expected_test_number=1,
+        expected_passage_or_section=1,
+        candidate_target_file_id="FILE-a00000000004",
+        relationship_type="question_to_answer_key",
+        evidence_provenance={
+            "source_id": "SRC-SYN-02",
+            "provenance_type": "independent_key",
+            "authority": "cambridge",
+        },
+    )
+    conn.close()
+
+    assert val_res.is_valid is False
+    assert "SYNTHETIC_FIXTURE_NOT_PERMITTED" in val_res.flags
+
+
+
