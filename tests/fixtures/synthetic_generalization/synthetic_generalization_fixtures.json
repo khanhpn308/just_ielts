@@ -1,0 +1,114 @@
+{
+  "synthetic_reading": {
+    "test_id": "TEST-IELTS-VOL99-09-ACAD",
+    "passage_id": "PASSAGE-VOL99-09-RD01",
+    "volume_code": "VOL99",
+    "test_number": 9,
+    "passage_number": 1,
+    "title": "Deep Sea Hydrothermal Vents",
+    "raw_docx_blocks": [
+      {
+        "type": "paragraph",
+        "text": "TEST 9"
+      },
+      {
+        "type": "paragraph",
+        "text": "READING PASSAGE 1"
+      },
+      {
+        "type": "paragraph",
+        "text": "You should spend about 20 minutes on Questions 1-3."
+      },
+      {
+        "type": "paragraph",
+        "text": "Deep Sea Hydrothermal Vents"
+      },
+      {
+        "type": "paragraph",
+        "text": "Deep sea hydrothermal vents host extraordinary ecosystems completely independent of solar photosynthesis. Chemotrophic bacteria utilize hydrogen sulfide expelled from subterranean tectonic fractures to synthesize organic compounds. Giant tube worms lack digestive tracts entirely, relying instead on billions of symbiotic bacteria residing in their specialized trophosome tissue to convert mineral solutes into cellular nutrition. Early deep-ocean exploration teams faced extreme technical difficulties attempting to collect biological specimens without physical destruction, until pressurized titanium recovery vessels were introduced by marine engineers."
+      },
+      {
+        "type": "paragraph",
+        "text": "Questions 1-3"
+      },
+      {
+        "type": "paragraph",
+        "text": "Choose the correct letter, A, B or C."
+      },
+      {
+        "type": "paragraph",
+        "text": "1. Chemotrophic bacteria synthesize organic compounds from hydrogen sulfide"
+      },
+      {
+        "type": "paragraph",
+        "text": "2. Giant tube worms rely on symbiotic bacteria for nutrition"
+      },
+      {
+        "type": "paragraph",
+        "text": "3. Titanium canisters were used for collecting deep sea specimens"
+      }
+    ]
+  },
+  "synthetic_listening": {
+    "test_id": "TEST-SYNTH-V03D-LIS",
+    "test_number": 9,
+    "sections": [
+      {
+        "section_number": 1,
+        "title": "Community Center Registration",
+        "audio_status": "available",
+        "transcript": "OFFICER: Good morning, community recreation center. Can I take your contact number?\nCALLER: Yes, it is 5550198. Please note down 5550198.",
+        "booklet_key": "5550198",
+        "questions": [
+          {
+            "question_number": 1,
+            "question_type": "note-completion",
+            "prompt_text": "Contact telephone: 1 ...................."
+          }
+        ]
+      },
+      {
+        "section_number": 2,
+        "title": "Local Museum Guide",
+        "audio_status": "available",
+        "transcript": "GUIDE: Welcome to the maritime hall. Admission for adults is fifteen dollars.",
+        "booklet_key": "15",
+        "questions": [
+          {
+            "question_number": 2,
+            "question_type": "note-completion",
+            "prompt_text": "Adult ticket price: 2 $...................."
+          }
+        ]
+      },
+      {
+        "section_number": 3,
+        "title": "Student Tutorial on Ecology",
+        "audio_status": "available",
+        "transcript": "TUTOR: What was the primary variable in your coastal survey?\nSTUDENT: We evaluated salinity gradients across three estuaries.",
+        "booklet_key": "salinity gradients",
+        "questions": [
+          {
+            "question_number": 3,
+            "question_type": "short-answer",
+            "prompt_text": "Which environmental factor was investigated? 3 ...................."
+          }
+        ]
+      },
+      {
+        "section_number": 4,
+        "title": "Lecturer Presentation on Urban Foresting",
+        "audio_status": "missing",
+        "transcript": "LECTURER: Today we review canopy cover density and its mitigation of urban heat islands.",
+        "booklet_key": "canopy cover",
+        "questions": [
+          {
+            "question_number": 4,
+            "question_type": "note-completion",
+            "prompt_text": "Key variable measuring urban foliage: 4 ...................."
+          }
+        ]
+      }
+    ]
+  }
+}

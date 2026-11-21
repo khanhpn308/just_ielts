@@ -85,20 +85,39 @@ class AnswerReconciler(BaseNormalizer):
             for p in pages
         )
         if has_headers and (test_number is not None or passage_number is not None):
-            curr_test = test_number or 5
+            # Detect starting test from pages or fallback
+            start_test = 1
+            sample_text = pages[0].get("content", {}).get("text", "") if pages else ""
+            m_test_hdr = re.search(r"TEST\s+(\d+)", sample_text, re.IGNORECASE)
+            if m_test_hdr:
+                start_test = int(m_test_hdr.group(1))
+            else:
+                prov_path = pages[0].get("provenance", {}).get("relative_path", "") if pages else ""
+                m_range = re.search(r"(\d+)\s*[-–]\s*(\d+)", prov_path)
+                if m_range:
+                    start_test = int(m_range.group(1))
+                elif test_number is not None:
+                    if test_number in (5, 6):
+                        start_test = 5
+                    else:
+                        start_test = test_number
+
+            curr_test = start_test
             curr_pass = 1
             selected = []
             for idx, p in enumerate(pages):
                 text = p.get("content", {}).get("text", "")
                 m = re.search(r"READING\s+PASSAGE\s+(\d+)", text, re.IGNORECASE)
+                prev_pass = curr_pass
                 if m:
                     p_num = int(m.group(1))
                     if p_num == 1 and idx > 0:
                         curr_test += 1
                     curr_pass = p_num
-                if (test_number is None or curr_test == test_number) and (
-                    passage_number is None or curr_pass == passage_number
-                ):
+                passages_on_page = {prev_pass, curr_pass}
+                test_match = (test_number is None or curr_test == test_number)
+                pass_match = (passage_number is None or passage_number in passages_on_page)
+                if test_match and pass_match:
                     selected.append(p)
             if selected:
                 filtered_pages = selected
@@ -113,6 +132,16 @@ class AnswerReconciler(BaseNormalizer):
             text = content.get("text", "")
             if not text:
                 continue
+
+            # If page contains a transition to another passage, restrict text to target passage
+            if passage_number is not None:
+                m_pass = re.search(r"READING\s+PASSAGE\s+(\d+)", text, re.IGNORECASE)
+                if m_pass:
+                    p_trans = int(m_pass.group(1))
+                    if passage_number < p_trans:
+                        text = text[:m_pass.start()]
+                    elif passage_number == p_trans:
+                        text = text[m_pass.start():]
 
             def record_answer(
                 q_num: int,

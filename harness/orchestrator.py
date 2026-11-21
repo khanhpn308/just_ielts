@@ -352,9 +352,13 @@ class NormalizationOrchestrator:
 
         ann_file = annotations_path
         if ann_file is None:
-            default_ann = REPO_ROOT / "private" / "annotations" / "pilot_05_reading_evidence.json"
-            if default_ann.exists():
-                ann_file = default_ann
+            cand_ann = REPO_ROOT / "private" / "annotations" / f"pilot_{test_number:02d}_reading_evidence.json"
+            if cand_ann.exists():
+                ann_file = cand_ann
+            elif test_number == 5:
+                default_ann = REPO_ROOT / "private" / "annotations" / "pilot_05_reading_evidence.json"
+                if default_ann.exists():
+                    ann_file = default_ann
 
         if ann_file:
             ann_path = Path(ann_file)
@@ -563,6 +567,7 @@ class NormalizationOrchestrator:
 
         # Stale Entity Reconciliation against active manifest
         stale_reconciled: List[Dict[str, Any]] = []
+        other_entities: List[Dict[str, Any]] = []
         if not dry_run:
             manifest_path = self.output_dir / "manifest.json"
             if manifest_path.exists():
@@ -570,6 +575,10 @@ class NormalizationOrchestrator:
                     prev_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                     prev_entities = prev_manifest.get("entities", [])
                     test_slug = test_entity.test_id.replace("TEST-IELTS-", "").rsplit("-", 1)[0]
+                    other_entities = [
+                        e for e in prev_entities
+                        if test_slug not in e.get("entity_id", "")
+                    ]
 
                     prev_map = {
                         e["entity_id"]: e
@@ -605,15 +614,16 @@ class NormalizationOrchestrator:
                     pass
 
             # Write authoritative execution run manifest atomically
+            merged_entities = other_entities + manifest_entries
             manifest_payload = {
                 "pipeline": "harness_v02b_reading_pilot",
                 "normalizer_version": self.normalizer_version,
                 "schema_version": SCHEMA_VERSION,
                 "test_id": test_entity.test_id,
-                "total_entities": len(all_entities),
+                "total_entities": len(merged_entities),
                 "written_count": written_count,
                 "skipped_count": skipped_count,
-                "entities": manifest_entries,
+                "entities": merged_entities,
                 "stale_entities": stale_reconciled,
             }
             atomic_write_json(manifest_path, manifest_payload)

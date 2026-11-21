@@ -64,6 +64,31 @@ PILOT_LISTENING_CONFIG = {
     },
 }
 
+PILOT_LISTENING_CONFIG_TEST2 = {
+    "volume_code": "VOL01",
+    "volume": "VOL 1",
+    "test_number": 2,
+    "doc_legacy_id": "SRC-020",
+    "transcript_legacy_id": "SRC-021",
+    "audio_legacy_ids": {
+        1: "SRC-017",
+        2: "SRC-018",
+        3: "SRC-019",
+        4: None,  # Section 4 audio is missing in raw corpus
+    },
+    "section_titles": {
+        1: "Rental Property Application Form",
+        2: "The Pre-school Family Centre",
+        3: "Presentation on Foot Injuries",
+        4: "Supermarket Layout",
+    },
+}
+
+PILOT_LISTENING_CONFIGS: Dict[int, Dict[str, Any]] = {
+    1: PILOT_LISTENING_CONFIG,
+    2: PILOT_LISTENING_CONFIG_TEST2,
+}
+
 
 def compute_listening_entity_dependency_hash(
     entity_type: str,
@@ -161,20 +186,29 @@ class ListeningNormalizationOrchestrator:
         publication_permission: str = "private_copyrighted",
         reports_dir: Optional[Path] = None,
         config: Optional[Dict[str, Any]] = None,
+        test_number: Optional[int] = None,
         paragraphs: Optional[List[Dict[str, Any]]] = None,
         items_def: Optional[List[Dict[str, Any]]] = None,
         extraction_artifact_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
-        """Runs the complete Listening Pilot normalization workflow for VOL 1 TEST 1."""
+        """Runs the complete Listening Pilot normalization workflow."""
         init_db(self.db_path)
         conn = get_db_connection(self.db_path)
 
-        rep_dir = reports_dir or (REPO_ROOT / "private" / "reports" / "v03c")
-        rep_dir.mkdir(parents=True, exist_ok=True)
+        if config is not None:
+            cfg = config
+        elif test_number is not None:
+            cfg = PILOT_LISTENING_CONFIGS.get(test_number, PILOT_LISTENING_CONFIG)
+        else:
+            cfg = PILOT_LISTENING_CONFIG
 
-        cfg = config or PILOT_LISTENING_CONFIG
         vol_code = cfg["volume_code"]
         test_num = cfg["test_number"]
+
+        rep_dir = reports_dir or (
+            REPO_ROOT / "private" / "reports" / ("v03d" if test_num == 2 else "v03c")
+        )
+        rep_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Fetch Source Records
         doc_src = get_source_by_legacy_id(conn, cfg["doc_legacy_id"])

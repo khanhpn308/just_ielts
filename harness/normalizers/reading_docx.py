@@ -45,8 +45,8 @@ def segment_joined_questions(
     curr = 0
 
     for num in expected_numbers:
-        # Pattern: prefix boundary (start, punctuation, letter, space), exact number, optional period/space, lookahead uppercase
-        pattern = rf"(?:^|[\.\?!a-zA-Z\s])({num})(?:[\.\s]*)(?=[A-Z])"
+        # Pattern: prefix boundary (start, attached to punctuation/letter without space, or preceded by space with uppercase lookahead)
+        pattern = rf"(?:^\s*|(?<=[\.\?!a-zA-Z])|(?<=\s)(?={num}[\.\s]*[A-Z\"\'\(\[]))({num})(?:[\.\s]*)(?=[A-Za-z0-9\"\'\(\[])"
         match = re.search(pattern, text[curr:])
         if not match:
             flags.append("SEGMENTATION_SEQUENCE_GAP")
@@ -155,15 +155,29 @@ class DocxReadingNormalizer(BaseNormalizer):
         - 'questions': List[IELTSQuestion]
         """
         self.unresolved_questions = []
-        paragraphs = raw_document.get("content", {}).get("paragraphs", [])
-        if not paragraphs:
-            raise ValueError("No paragraphs found in raw_document content.")
-
-        # Extract text list
-        p_texts = [
-            (p.get("text", "") if isinstance(p, dict) else str(p)).strip()
-            for p in paragraphs
-        ]
+        blocks = raw_document.get("content", {}).get("blocks", [])
+        if blocks:
+            p_texts = []
+            for b in blocks:
+                if b.get("type") == "paragraph":
+                    p_texts.append((b.get("text", "") or "").strip())
+                elif b.get("type") == "table":
+                    cells = []
+                    for row in b.get("rows", []):
+                        for cell in row:
+                            if isinstance(cell, str) and cell.strip():
+                                cells.append(cell.strip())
+                            elif isinstance(cell, dict) and cell.get("text", "").strip():
+                                cells.append(cell["text"].strip())
+                    p_texts.append(" \n ".join(cells))
+        else:
+            paragraphs = raw_document.get("content", {}).get("paragraphs", [])
+            if not paragraphs:
+                raise ValueError("No paragraphs or blocks found in raw_document content.")
+            p_texts = [
+                (p.get("text", "") if isinstance(p, dict) else str(p)).strip()
+                for p in paragraphs
+            ]
 
         # Locate target Test and Reading Passage boundaries
         start_idx, end_idx = self._find_passage_bounds(
@@ -523,8 +537,8 @@ class DocxReadingNormalizer(BaseNormalizer):
             blank_str = None
 
             for p_idx, text in q_paras:
-                # Pattern: q_num followed by dots, underscores or blank
-                m = re.search(rf"(?:^|\s)({q_num})([…\.\_]+)", text)
+                # Pattern: q_num followed by dots, underscores or blank (with optional space)
+                m = re.search(rf"(?:^|\s)({q_num})\s*([…\.\_]+)", text)
                 if m:
                     matched_para = text.strip()
                     matched_idx = p_idx
