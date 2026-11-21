@@ -139,12 +139,14 @@ class TranscriptSegment(BaseModel):
         ge=0,
         description="End time offset in milliseconds from audio beginning",
     )
-    timing_source: Literal["source_timestamp", "audio_alignment", "unaligned", "missing"] = Field(
+    timing_source: Literal[
+        "source_timestamp", "derived_bound", "audio_alignment", "unaligned", "missing"
+    ] = Field(
         ...,
         description="Provenance origin of timing boundaries",
     )
     timing_verification_status: Literal[
-        "verified", "unverified", "impossible_bounds", "out_of_order", "unaligned", "missing"
+        "verified", "inferred", "unverified", "impossible_bounds", "out_of_order", "unaligned", "missing"
     ] = Field(
         ...,
         description="Forensic verification state of segment timing bounds",
@@ -414,7 +416,7 @@ class ListeningEvidence(BaseModel):
         ge=0,
         description="Audio end offset in milliseconds if verifiable",
     )
-    timing_status: Literal["verified", "unaligned", "missing"] = Field(
+    timing_status: Literal["verified", "inferred", "unaligned", "missing"] = Field(
         ...,
         description="Audio grounding verification status",
     )

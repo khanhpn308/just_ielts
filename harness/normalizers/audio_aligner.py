@@ -228,6 +228,9 @@ class AudioAligner(BaseNormalizer):
             "section_number": section_number,
             "total_segments": len(segments),
             "verified_count": 0,
+            "verified_intervals_count": 0,
+            "verified_timestamps_count": 0,
+            "inferred_count": 0,
             "unaligned_count": 0,
             "impossible_bounds_count": 0,
             "out_of_order_count": 0,
@@ -244,8 +247,9 @@ class AudioAligner(BaseNormalizer):
                 updated_qp = seg.quality_profile.model_copy(update={"validation_flags": updated_flags})
                 new_seg = seg.model_copy(
                     update={
+                        "end_ms": seg.end_ms,  # Preserve unavailable end_ms as null
                         "timing_verification_status": status,
-                        "timing_source": "missing" if status == "missing" else "unaligned",
+                        "timing_source": "missing" if status == "missing" else seg.timing_source,
                         "quality_profile": updated_qp,
                     }
                 )
@@ -259,68 +263,64 @@ class AudioAligner(BaseNormalizer):
         duration_ms = audio_asset.duration_ms or 0
         prev_start_ms: Optional[int] = None
 
-        # Pass 1: Derive interval bounds where consecutive timestamps exist
-        for i, seg in enumerate(segments):
+        for seg in segments:
             start = seg.start_ms
+            # Preserve unavailable end_ms as null without fabricating endpoints or interval boundaries
             end = seg.end_ms
 
-            # If end_ms not explicitly set, conservative derivation from next segment with timestamp
-            if end is None and start is not None:
-                # Find next segment with a start_ms
-                next_start: Optional[int] = None
-                for j in range(i + 1, len(segments)):
-                    if segments[j].start_ms is not None:
-                        next_start = segments[j].start_ms
-                        break
-                if next_start is not None and next_start > start:
-                    end = next_start
-                elif next_start is None and duration_ms > 0 and start <= duration_ms:
-                    # Bounded by audio duration for trailing segment
-                    end = min(start + 30000, duration_ms)
-
-            # Verification logic
             v_status = seg.timing_verification_status
+            timing_src = seg.timing_source
             flags = list(seg.quality_profile.validation_flags)
 
             if start is None:
                 v_status = "unaligned"
                 timing_src = "unaligned"
                 audit_summary["unaligned_count"] += 1
+            elif start < 0 or (end is not None and end < 0):
+                v_status = "impossible_bounds"
+                audit_summary["impossible_bounds_count"] += 1
+                audit_summary["issues"].append(
+                    f"Segment {seg.segment_id}: negative bounds start={start}, end={end}"
+                )
+                flags.append("TIMING_IMPOSSIBLE_BOUNDS")
+            elif start > duration_ms or (end is not None and end > duration_ms):
+                v_status = "impossible_bounds"
+                audit_summary["impossible_bounds_count"] += 1
+                audit_summary["issues"].append(
+                    f"Segment {seg.segment_id}: bounds exceed audio duration {duration_ms}ms (start={start}, end={end})"
+                )
+                flags.append("TIMING_IMPOSSIBLE_BOUNDS")
+            elif end is not None and start >= end:
+                v_status = "impossible_bounds"
+                audit_summary["impossible_bounds_count"] += 1
+                audit_summary["issues"].append(
+                    f"Segment {seg.segment_id}: invalid interval start={start} >= end={end}"
+                )
+                flags.append("TIMING_IMPOSSIBLE_BOUNDS")
+            elif prev_start_ms is not None and start < prev_start_ms:
+                v_status = "out_of_order"
+                audit_summary["out_of_order_count"] += 1
+                audit_summary["issues"].append(
+                    f"Segment {seg.segment_id}: out of order start={start} < prev={prev_start_ms}"
+                )
+                flags.append("TIMING_OUT_OF_ORDER")
+            elif timing_src == "derived_bound":
+                # Inferred/derived bounds are explicitly NOT marked as audio-verified
+                v_status = "inferred"
+                audit_summary["inferred_count"] += 1
+                flags.append("AUDIO_TIMING_INFERRED")
+                prev_start_ms = start
             else:
-                timing_src = "source_timestamp"
-                # Check negative bounds
-                if start < 0 or (end is not None and end < 0):
-                    v_status = "impossible_bounds"
-                    audit_summary["impossible_bounds_count"] += 1
-                    audit_summary["issues"].append(
-                        f"Segment {seg.segment_id}: negative bounds start={start}, end={end}"
-                    )
-                # Check duration exceedance
-                elif start > duration_ms or (end is not None and end > duration_ms):
-                    v_status = "impossible_bounds"
-                    audit_summary["impossible_bounds_count"] += 1
-                    audit_summary["issues"].append(
-                        f"Segment {seg.segment_id}: bounds exceed audio duration {duration_ms}ms (start={start}, end={end})"
-                    )
-                # Check start < end
-                elif end is not None and start >= end:
-                    v_status = "impossible_bounds"
-                    audit_summary["impossible_bounds_count"] += 1
-                    audit_summary["issues"].append(
-                        f"Segment {seg.segment_id}: invalid interval start={start} >= end={end}"
-                    )
-                # Check chronological order
-                elif prev_start_ms is not None and start < prev_start_ms:
-                    v_status = "out_of_order"
-                    audit_summary["out_of_order_count"] += 1
-                    audit_summary["issues"].append(
-                        f"Segment {seg.segment_id}: out of order start={start} < prev={prev_start_ms}"
-                    )
-                else:
-                    v_status = "verified"
-                    audit_summary["verified_count"] += 1
+                # Valid source timestamp or verified audio alignment within audio duration
+                v_status = "verified"
+                audit_summary["verified_count"] += 1
+                prev_start_ms = start
+                if end is not None:
+                    audit_summary["verified_intervals_count"] += 1
                     flags.append("AUDIO_INTERVAL_VERIFIED")
-                    prev_start_ms = start
+                else:
+                    audit_summary["verified_timestamps_count"] += 1
+                    flags.append("AUDIO_TIMESTAMP_VERIFIED")
 
             updated_qp = seg.quality_profile.model_copy(update={"validation_flags": flags})
             new_seg = seg.model_copy(

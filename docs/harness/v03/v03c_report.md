@@ -1,5 +1,5 @@
-# IELTS Data Harness V0.3 — Phase V0.3-C Engineering Report
-**Phase:** V0.3-C Listening Transcript & Audio Alignment Pilot  
+# IELTS Data Harness V0.3 — Phase V0.3-C Engineering Report (Remediated)
+**Phase:** V0.3-C Listening Transcript & Audio Alignment Pilot & Data Integrity Remediation  
 **Role:** Senior Python Engineer, Data Quality Engineer, and IELTS Listening Assessment Specialist  
 **Repository:** `~/projects/just_ielts`  
 **Base Branch:** `main`  
@@ -14,19 +14,17 @@ Phase V0.3-C extends the IELTS Data Harness to pilot the end-to-end normalizatio
 
 $$\text{Audio} \longrightarrow \text{Transcript} \longrightarrow \text{Sections} \longrightarrow \text{Questions} \longrightarrow \text{Answers} \longrightarrow \text{Evidence} \longrightarrow \text{Explanations}$$
 
-Heterogeneous listening corpora introduce specific data challenges: audio track boundaries often diverge from CD master timelines, transcripts may contain missing or cumulative timestamps, question booklets combine multiple test skills, and official explanation guides may be absent in raw exam releases.
-
-Phase V0.3-C enforces strict epistemic conservativism:
-1. **Zero Fabrication:** Timestamps, transcript utterances, audio alignment, or pedagogical explanations are never invented or estimated.
-2. **Conservative Alignment:** Audio intervals are marked `verified` only when strict boundary invariants ($0 \le \text{start\_ms} < \text{end\_ms} \le \text{duration}$) and chronological ordering hold.
-3. **Explicit Uncertainty:** Any missing asset, out-of-bounds timestamp, or ungrounded evidence is explicitly surfaced as `missing`, `impossible_bounds`, or `unaligned`.
-4. **Isolated Grounding:** All private source content remains quarantined within `private/` storage.
+Following review of PR #7 (reviewed commit `892d8aa`), four critical P0 data integrity defects were identified and remediated under strict epistemic conservativism:
+1. **Timing Verification:** Removed fabricated 30-second interval endpoints; distinguished source timestamps from derived bounds; never marked inferred intervals as audio-verified; preserved unavailable `end_ms` as `null`; and retained `impossible_bounds` for out-of-bounds/cumulative timestamps.
+2. **Evidence Linkage:** Removed fragile substring matching on `target_val` and option letters (A/B/C); enforced verifiable quote matching against transcript paragraphs; recorded evidence provenance from the transcript document (`SRC-012`), not the question booklet; and surfaced ungrounded items as `grounding_status = "unresolved"` without claiming `EVIDENCE_TEXT_GROUNDED`.
+3. **Source Data Isolation:** Removed real copyrighted IELTS questions, keys, and transcript excerpts from public source code; quarantined authentic extraction data under `private/source_data/listening/`; utilized purely synthetic fixtures in public tests; preserved uncertain OCR results without silent correction; and reported historical exposure without unauthorized git history rewriting.
+4. **Dependency-Aware Checkpoints:** Replaced coarse document-level hashes with granular, independent entity dependency hashing (`question_doc_sha256`, `transcript_doc_sha256`, `audio_asset_sha256`, `normalizer_version`, `config_hash`, `schema_version`), enabling selective invalidation across all change scenarios.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│                   V0.3-C LISTENING NORMALIZATION ARCHITECTURE                    │
+│              V0.3-C REMEDIATED LISTENING NORMALIZATION ARCHITECTURE              │
 │                                                                                  │
-│   Raw Sources:                                                                   │
+│   Private Quarantined Sources (private/raw/ & private/source_data/):             │
 │   • Test Booklet (PDF) ──────► OCR Extraction ──────► Questions 1..40            │
 │                                                 └──► Answer Key (Page 22)        │
 │                                                                                  │
@@ -38,24 +36,25 @@ Phase V0.3-C enforces strict epistemic conservativism:
 │                                      │                                           │
 │                                      ▼                                           │
 │   Conservative Alignment Engine:                                                 │
-│   • Interval Verification (0 <= start_ms < end_ms <= duration_ms)                │
-│   • Order Contiguity Audit                                                       │
-│   • Anomaly Detection: impossible_bounds, out_of_order, missing                  │
+│   • Verified Point Timestamps (start_ms verified, end_ms preserved as null)      │
+│   • Derived Bounds Flagged as Inferred (AUDIO_TIMING_INFERRED, never verified)   │
+│   • Chronological Order Audit                                                    │
+│   • Anomaly Detection: impossible_bounds, missing_audio, unaligned               │
 │                                                                                  │
 │                                      │                                           │
 │                                      ▼                                           │
 │   Evidence & Answer Reconciliation:                                              │
 │   • Authoritative Source Key Linking (SRC-011 Page 22)                           │
-│   • Verbatim Transcript Evidence Grounding                                       │
-│   • Audio Interval Grounding (when verified)                                     │
-│   • Missing Explanations Quarantine                                              │
+│   • Transcript Provenance Recording (SRC-012 FILE-0d311581c359)                  │
+│   • Verbatim Transcript Evidence Matching (No substring or letter matching)      │
+│   • Unresolved Grounding Handling (EVIDENCE_UNRESOLVED)                          │
 │                                                                                  │
 │                                      │                                           │
 │                                      ▼                                           │
-│   SQLite Checkpoint & Privacy Gateway:                                           │
-│   • Deterministic Canonical Content Hashing                                      │
-│   • Idempotent Resumption (normalization_checkpoints)                            │
-│   • Private Copyright Quarantine Enforcement                                     │
+│   Dependency-Aware SQLite Checkpoint Gateway:                                    │
+│   • Independent Entity Dependency Hashing (Doc, Transcript, Audio, Config)       │
+│   • Granular Invalidation & Idempotent Resumption                                │
+│   • Strict Copyright Quarantine (0 copyrighted strings in public repo)           │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -93,17 +92,17 @@ The following pre-existing confirmed relationships in SQLite (`harness.db`) were
 
 ## 3. Normalized Listening Domain Models
 
-Schema definitions were added to `harness/models/listening.py` conforming to `SCHEMA_VERSION_LISTENING = "v0.3.0-listening"`:
+Schema definitions in `harness/models/listening.py` conform to `SCHEMA_VERSION_LISTENING = "v0.3.0-listening"` and accommodate the remediated integrity distinctions:
 
-### 3.1 Model Hierarchy
-- **`ListeningTest`**: Root entity representing the complete listening test paper. Contains sections, audio assets, questions, answers, and evidence linkages.
+### 3.1 Model Hierarchy & Integrity Fields
+- **`ListeningTest`**: Root aggregate entity representing the complete listening test paper.
 - **`ListeningSection`**: Section unit (1–4) linking question ranges, audio asset references, transcript status, and constituent speaker turns.
 - **`AudioAsset`**: Physical audio file representation with duration, bitrate, sample rate, container codec, and forensic status (`verified`, `missing`, `corrupt`).
-- **`TranscriptSegment`**: Atomic transcript utterance with sequence index, speaker label, verbatim text, `start_ms`, `end_ms`, `timing_source`, and `timing_verification_status`.
+- **`TranscriptSegment`**: Atomic transcript utterance with sequence index, speaker label, verbatim text, `start_ms`, `end_ms`, `timing_source` (expanded with `"derived_bound"`), and `timing_verification_status` (expanded with `"inferred"`).
 - **`SpeakerTurn`**: Conversational turn clustering continuous segments attributed to a single speaker.
-- **`ListeningQuestion`**: Individual test item (1–40) with question type, prompt text, options, blank target, and word limit rule.
+- **`ListeningQuestion`**: Individual test item (1–40) with question type, prompt text, options, blank target, word limit rule, and raw OCR block locators.
 - **`ListeningAnswer`**: Authoritative ground truth key linked to a question with `source_key_ref` (e.g. `SRC-011:Test_1.pdf#page=22:key_1`).
-- **`ListeningEvidence`**: Grounding proof associating an answer with verbatim transcript sentences and optional audio intervals.
+- **`ListeningEvidence`**: Grounding proof associating an answer with verbatim transcript sentences and optional audio intervals; supports `grounding_status = "unresolved"` and `timing_status = "inferred"`.
 
 ---
 
@@ -117,58 +116,76 @@ The `TranscriptNormalizer` (`harness/normalizers/transcript.py`) extracts raw do
 
 ---
 
-## 5. Audio Inspection & Alignment Logic
+## 5. Audio Inspection & Alignment Logic (Remediated)
 
-The `AudioAligner` (`harness/normalizers/audio_aligner.py`) inspects audio recordings and evaluates timing boundaries against physical audio duration:
+The `AudioAligner` (`harness/normalizers/audio_aligner.py`) inspects audio recordings and evaluates timing boundaries against physical audio duration without fabricating endpoints:
 
-### 5.1 Verification Invariants
-1. $0 \le \text{start\_ms} < \text{end\_ms} \le \text{duration\_ms}$
-2. Strictly increasing chronological ordering within each section: $\text{start\_ms}_i \ge \text{start\_ms}_{i-1}$
-3. Missing audio assets categorically trigger `timing_verification_status = "missing"`.
-4. Segments lacking timestamps preserve order with `timing_verification_status = "unaligned"`.
+### 5.1 Remediation of Timing Defects
+1. **Zero Fabricated Endpoints:** The previous implementation fabricated artificial 30-second endpoints (`min(start + 30000, duration_ms)`) or projected endpoints from subsequent segment starts. These have been completely eliminated. When `end_ms` is unavailable in the raw source transcript, it remains `None` (`null`).
+2. **Distinction Between Timestamps and Intervals:**
+   - A segment with a verified `start_ms` and `end_ms is None` is marked with `timing_verification_status = "verified"` and flagged `AUDIO_TIMESTAMP_VERIFIED`. It is **never** claimed as `AUDIO_INTERVAL_VERIFIED`.
+   - `verified_intervals_count` strictly requires both valid start and end bounds from the source.
+3. **Derived Bounds Inferred Only:** When bounds are derived (e.g. `timing_source == "derived_bound"`), they are assigned `timing_verification_status = "inferred"` and flagged `AUDIO_TIMING_INFERRED`. They are never marked verified.
+4. **Impossible Bounds Retention:** When timestamps exceed track duration (e.g. Sections 2 & 3 containing cumulative CD timestamps), they are strictly preserved with `timing_verification_status = "impossible_bounds"` and flagged `AUDIO_TIMING_EXCEEDS_DURATION`.
 
 ### 5.2 Real Pilot Alignment Findings
 - **Section 1 (`AudioTrack 01.mp3`, 464,400 ms):**
-  - All 33 segments possess source timestamps starting at 1,000 ms (`[00:00:01]`) through 419,000 ms (`[00:06:59]`).
-  - Interval bounds and ordering are verified: **33 / 33 segments verified (100%)**.
+  - All 33 segments possess valid source point timestamps from 1,000 ms (`[00:00:01]`) to 419,000 ms (`[00:06:59]`).
+  - Verified Timestamps: **33 / 33 (100%)**.
+  - Verified Audio Intervals: **0 / 33 (0%)** (zero endpoints fabricated).
 - **Section 2 (`AudioTrack 02.mp3`, 396,070 ms):**
-  - Source timestamps in `Transcript Test 1.docx` reflect continuous CD master timing: 511,000 ms (`[00:08:31]`) through 815,000 ms (`[00:13:35]`).
-  - Evaluated against individual track duration (396,070 ms), values exceed track boundaries.
-  - Correctly flagged as **`impossible_bounds` (4 segments)** without fabricating speculative offsets.
+  - Source timestamps reflect continuous CD timing (511,000 ms to 815,000 ms).
+  - All 4 segments exceed track duration and are flagged as **`impossible_bounds` (4 segments)**.
 - **Section 3 (`AudioTrack 03.mp3`, 402,610 ms):**
-  - Utterances contain cumulative master timestamps (15m25s..20m09s) as well as unaligned dialogue lines without timestamps.
-  - Correctly flagged as **`impossible_bounds` and `unaligned`** without fabricating alignment.
+  - 22 segments reflect continuous CD timing (925,000 ms to 1,209,000 ms) and are flagged as **`impossible_bounds` (22 segments)**.
+  - 2 segments lack timestamps and are flagged as **`unaligned` (2 segments)**.
 - **Section 4:**
   - Audio track missing from source directory.
-  - Preserved as **`timing_verification_status = "missing"`**.
+  - Preserved as **`timing_verification_status = "missing"` (2 segments)**.
 
 ---
 
-## 6. Question, Answer, and Evidence Normalization
+## 6. Question, Answer, and Evidence Normalization (Remediated)
 
-The `ListeningQuestionNormalizer` (`harness/normalizers/listening_question.py`) constructs all 40 test items:
-- **Questions 1–10 (Section 1):** Table completion and note completion ("ONE WORD AND/OR A NUMBER").
-- **Questions 11–20 (Section 2):** Multiple-choice single, note completion ("NO MORE THAN THREE WORDS"), and multiple-choice multi ("Choose THREE letters A-G").
-- **Questions 21–30 (Section 3):** Multiple-choice single and feature matching (comparing student marker categories to A, B, C).
-- **Questions 31–40 (Section 4):** Note completion on Bislama linguistics ("ONE WORD ONLY").
+### 6.1 Source Data Isolation & Privacy Architecture
+In compliance with copyright and privacy rules:
+- **Removal of Hardcoded Public Data:** The previous commit (`892d8aa`) hardcoded all 40 authentic questions, answer keys, and quotes into `harness/normalizers/listening_question.py`. This has been completely removed.
+- **Quarantined Extraction Artifact:** Authentic source-extracted data is quarantined under `private/source_data/listening/vol01_test01_extraction.json` (gitignored).
+- **Public Synthetic Test Fixtures:** Public unit tests execute against `tests/fixtures/synthetic_listening/synthetic_listening_fixtures.json`, containing synthetic question prompts, options, answers, and locators.
+- **Uncertain OCR Preservation:** Raw OCR entries from `SRC-011` are preserved without silent human modification:
+  - Q1: `raw_block_locator: "Page 2, Box 2 - Table Column 2 ('g events')"`
+  - Q7: `raw_block_locator: "Page 2, Box 2 - Table Row 7 ('©')"`
+  - Q10: `raw_block_locator: "Page 2, Box 2 - Table Row 10 ('- city')"`
 
-### 6.1 Answer Key Provenance
-All 40 answer keys were parsed directly from Page 22 of `SRC-011` (`Test_1.pdf`) and linked with `answer_provenance_status = "authoritative_source"` and explicit citations:
-$$\text{source\_key\_ref} = \text{"SRC-011:Test\_1.pdf\#page=22:key\_"} + N$$
-
-### 6.2 Evidence Grounding
-All 40 answers are grounded in verbatim transcript sentences from `SRC-012`. Section 1 items link verified audio intervals in `AudioTrack 01.mp3`. Missing pedagogical explanation guides in the raw corpus are explicitly quarantined with `explanation_verification = "missing_explanation"`.
+### 6.2 Evidence Linkage Remediation
+- **Removal of Fragile Substring Matching:** Removed naive matching `item["target_val"].lower() in seg.transcript_text.lower()`.
+- **Elimination of MCQ Letter Matching:** Multiple-choice letters ("A", "B", "C") are never used as substring search queries.
+- **Verbatim Quote Grounding:** Every question is grounded against audited verbatim quotes matching actual paragraphs in `SRC-012` (`Transcript Test 1.docx`).
+- **Transcript Provenance Citation:** The evidence record explicitly cites `source_file_id = "FILE-0d311581c359"` (`SRC-012`), ensuring clear separation from question booklet citations.
+- **Unresolved Evidence Handling:** When evidence is missing or uncertain, `grounding_status` is set to `"unresolved"` with `EVIDENCE_UNRESOLVED` and `verbatim_quote = None`.
 
 ---
 
-## 7. Checkpoint & Determinism Architecture
+## 7. Dependency-Aware Checkpoint Architecture (Remediated)
 
-The `ListeningNormalizationOrchestrator` (`harness/normalizers/listening_orchestrator.py`) interfaces with SQLite:
-- **Normalization Checkpoints:** Every entity (test, section, audio asset, segment, turn, question, answer, evidence) is recorded in `normalization_checkpoints`.
-- **Deterministic Hashing:** Canonical content hashes exclude run timestamps (`normalized_at`), ensuring bit-for-bit identical hashes across repeated executions.
-- **Idempotency Proof:**
-  - Run 1 (`force=True`): 250 entities written, 0 skipped.
-  - Run 2 (`force=False`): 0 entities written, 250 entities skipped (100% valid resume).
+The checkpoint engine in `harness/normalizers/listening_orchestrator.py` was remediated to track dependencies independently via `compute_listening_entity_dependency_hash`:
+
+$$\text{hash} = \text{SHA256}(\text{dep}_1 + \text{dep}_2 + \dots + \text{normalizer\_version} + \text{config\_hash} + \text{schema\_version})$$
+
+### 7.1 Entity-Specific Dependencies
+- **`ListeningTest` & `ListeningSection`:** Depends on question document (`SRC-011`), transcript document (`SRC-012`), and audio asset.
+- **`AudioAsset`:** Depends strictly on physical audio asset SHA-256 (`audio_sha256`).
+- **`TranscriptSegment` & `SpeakerTurn`:** Depends strictly on transcript document SHA-256 (`SRC-012`).
+- **`ListeningQuestion` & `ListeningAnswer`:** Depends strictly on question document SHA-256 (`SRC-011`).
+- **`ListeningEvidence`:** Depends on question document, transcript document, and audio asset.
+
+### 7.2 Six Dependency Scenarios Tested
+1. **Initial Normalization:** Writes all 250 entities into `normalization_checkpoints`.
+2. **Identical Rerun:** Validates 100% checkpoint hit (0 written, 250 skipped).
+3. **Transcript-Only Change:** Invalidates sections, segments, turns, and evidence; questions, answers, and audio assets remain valid and skipped.
+4. **Audio-Only Change:** Invalidates sections, audio assets, and evidence; questions, answers, segments, and turns remain valid and skipped.
+5. **Answer-Key / Question-Doc Change:** Invalidates questions, answers, sections, and evidence; audio assets, segments, and turns remain valid and skipped.
+6. **Interrupted Processing & Resume:** Safely picks up uncommitted entities without duplicating existing records.
 
 ---
 
@@ -176,36 +193,43 @@ The `ListeningNormalizationOrchestrator` (`harness/normalizers/listening_orchest
 
 | Gate | Description | Status | Verification Evidence |
 |:---|:---|:---:|:---|
-| **L1** | Audio source identity verified | **PASS** | `SRC-008`, `SRC-009`, `SRC-010` SHA-256 digests validated against database inventory. |
+| **L1** | Audio source identity verified | **PASS** | `SRC-008`, `SRC-009`, `SRC-010` SHA-256 validated against database inventory. |
 | **L2** | Transcript provenance retained | **PASS** | `SRC-012` (`Transcript Test 1.docx`) paragraph locators and content hash tracked. |
 | **L3** | Question order and section structure correct | **PASS** | Exactly 40 questions partitioned across 4 sections (Q1–10, Q11–20, Q21–30, Q31–40). |
-| **L4** | No fabricated transcript or timestamps | **PASS** | Source timestamps preserved verbatim; Section 4 audio marked missing; Section 2–3 impossible bounds flagged. |
-| **L5** | All accepted answers have valid provenance | **PASS** | 100% of answers linked to `SRC-011` Page 22 official key sheet. |
-| **L6** | Evidence is linked to the correct question | **PASS** | 40 evidence items linked to verbatim transcript quotes and questions. |
-| **L7** | Stale relationships cannot remain confirmed | **PASS** | Source hash validation ensures modified sources invalidate checkpoints. |
+| **L4** | No fabricated transcript or timestamps | **PASS** | Source timestamps strictly preserved; unavailable `end_ms` kept `null`; 0 fabricated 30s endpoints; Section 4 audio marked missing; Section 2–3 impossible bounds flagged. |
+| **L5** | All accepted answers have valid provenance | **PASS** | 100% of answers linked to `SRC-011` Page 22 official key sheet; raw OCR entries preserved without silent corrections. |
+| **L6** | Evidence is linked to the correct question | **PASS** | 40 evidence items linked to verbatim transcript quotes from `SRC-012`; no substring/letter matching; transcript source recorded. |
+| **L7** | Stale relationships cannot remain confirmed | **PASS** | Independent entity dependency hashing ensures modified sources invalidate affected checkpoints. |
 | **L8** | Missing data is explicitly marked | **PASS** | Section 4 audio, Section 2/3 cumulative bounds, and missing explanations logged in `unresolved_items.json`. |
-| **L9** | Resume and repeated runs are deterministic | **PASS** | Checkpoint resume verified: 250 skipped on re-run; canonical hashes identical. |
-| **L10** | Private source material remains isolated | **PASS** | Normalized outputs and reports stored under `private/` exclusively. |
-| **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 196 unit tests passed; full test suite backwards compatible. |
+| **L9** | Resume and repeated runs are deterministic | **PASS** | Checkpoint resume verified: 250 skipped on re-run; canonical hashes bit-for-bit identical. |
+| **L10** | Private source material remains isolated | **PASS** | Normalized outputs and extraction artifacts stored under `private/` exclusively; zero copyrighted items in public Python code. |
+| **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 212 tests pass (203 standard + 9 corpus); full test suite backwards compatible. |
 
 ---
 
 ## 9. Regression Test Suite
 
-Thirteen fully synthetic regression tests were implemented in `tests/test_v03c_listening_alignment.py` requiring zero private files:
+Twenty fully synthetic regression tests are implemented in `tests/test_v03c_listening_alignment.py`:
 1. `test_transcript_segmentation`: Validates section boundary detection and sequence ordering.
-2. `test_speaker_turn_preservation`: Validates clustering of continuous utterances and preservation of speaker identities.
+2. `test_speaker_turn_preservation`: Validates clustering of continuous utterances and speaker identity preservation.
 3. `test_valid_timestamps`: Validates intervals satisfying $0 \le \text{start} < \text{end} \le \text{duration}$.
-4. `test_impossible_timestamps`: Validates detection of intervals exceeding audio duration.
-5. `test_out_of_order_intervals`: Validates detection of non-chronological timestamps.
-6. `test_missing_timestamp_handling`: Validates that unaligned text is preserved without timestamp fabrication.
-7. `test_question_to_section_mapping`: Validates question allocation across sections.
-8. `test_answer_provenance`: Validates authoritative source key metadata and question linking.
-9. `test_cross_test_mismatch`: Validates rejection of cross-test question/answer associations.
-10. `test_stale_source_detection`: Validates checkpoint invalidation when source hashes change.
-11. `test_checkpoint_resume`: Validates idempotent skipping of already-normalized entities.
-12. `test_privacy_isolation`: Validates rejection of unauthorized writes outside `private/`.
-13. `test_missing_audio_asset_handling`: Validates proper tagging of missing audio files.
+4. `test_no_fabricated_30s_endpoint`: Negative regression verifying that unavailable `end_ms` remains `None` without 30s fabrication.
+5. `test_derived_bounds_distinction`: Negative regression verifying that derived bounds are flagged `inferred`, never `verified`.
+6. `test_impossible_timestamps`: Validates detection of intervals exceeding audio duration.
+7. `test_out_of_order_intervals`: Validates detection of non-chronological timestamps.
+8. `test_missing_timestamp_handling`: Validates that unaligned dialogue preserves order without fabrication.
+9. `test_question_to_section_mapping`: Validates question allocation across 4 sections.
+10. `test_answer_provenance`: Validates authoritative source key metadata and unverified answer flagging.
+11. `test_cross_test_mismatch`: Validates rejection of cross-test associations.
+12. `test_no_substring_matching_on_target_val`: Negative regression verifying rejection of substring matching on answers.
+13. `test_no_mcq_letter_matching`: Negative regression verifying that MCQ letters A/B/C are never matched as evidence text.
+14. `test_wrong_section_evidence_rejection`: Negative regression verifying rejection of evidence from mismatched sections.
+15. `test_evidence_provenance_transcript_source`: Validates evidence records transcript source (`SRC-012`) provenance.
+16. `test_no_copyrighted_data_in_public_code`: Validates that public Python modules contain zero copyrighted IELTS test items.
+17. `test_ocr_preservation_uncertain_results`: Validates non-destructive preservation of uncertain OCR locators.
+18. `test_privacy_isolation`: Validates rejection of unauthorized writes outside `private/`.
+19. `test_missing_audio_asset_handling`: Validates proper tagging of missing audio files.
+20. `test_dependency_aware_checkpoints`: Validates all 6 independent dependency invalidation scenarios.
 
 ---
 
@@ -213,5 +237,17 @@ Thirteen fully synthetic regression tests were implemented in `tests/test_v03c_l
 
 As logged in `private/reports/v03c/unresolved_items.json`:
 1. **Missing Section 4 Audio Track:** `private/raw/VOL 1/TEST 1/AUDIO LIS/` contains tracks 1–3 only. Section 4 remains unaligned until the original recording is located.
-2. **Cumulative vs. Track Timing Divergence:** In Sections 2 and 3, timestamps in `Transcript Test 1.docx` reflect master test timeline rather than track zero offsets. These require either a continuous master audio join or verified track offsets before promoting to `verified`.
+2. **Cumulative vs. Track Timing Divergence:** In Sections 2 and 3, timestamps in `Transcript Test 1.docx` reflect master test timeline rather than track zero offsets (26 segments flagged as `impossible_bounds`). These require a continuous master audio join or verified track offsets before promoting to `verified`.
 3. **Absence of Pedagogical Explanations:** The raw volume release contains answer keys on Page 22 but no explanation commentary. Pedagogical rationales remain null to avoid AI hallucination.
+
+---
+
+## 11. Historical Exposure Disclosure
+
+In commit `892d8aa` on branch `feat/harness-v0.3c`, raw extraction data containing copyrighted questions, answer keys, and transcript excerpts was temporarily introduced into `harness/normalizers/listening_question.py`.
+
+In compliance with repository policy:
+- **No Git History Rewriting:** Git history is preserved as-is without rewriting history on public/shared branches without explicit user authorization.
+- **Source Code Remediation:** The hardcoded definitions were completely excised in the remediation commit.
+- **Quarantine Enforcement:** Authentic data is quarantined strictly within `private/source_data/listening/`, which is verified to be ignored by Git.
+- **Automated Prevention:** Regression test `test_no_copyrighted_data_in_public_code` guarantees that any future accidental re-introduction of copyrighted text in public source files will fail CI.
