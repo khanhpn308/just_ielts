@@ -53,8 +53,15 @@ def lookup_trusted_answer_review(
     Enforces:
     1. Zero trust in caller metadata; verification requires immutable database review log.
     2. Review must bind to source content hash, question identity (volume, test, question number), and evidence.
-    3. Final review status must be 'confirmed' with decision 'approve'.
-    4. If integration is unavailable or table/records missing, returns False (unverified).
+    3. Final review status must be 'confirmed' with decision 'approve', and current relationship
+       must remain 'confirmed'.
+    4. Fingerprints on relationship and review record must be valid and match expected source hash.
+    5. A confirmed source relationship does NOT automatically verify individual answers.
+       Fallback verification based solely on question range, section, verified_questions, or
+       approved relationship without answer-value evidence is strictly prohibited.
+    6. An answer may become authoritative_source only if persisted, trusted review evidence explicitly
+       verifies that question's answer value against the accepted source.
+    7. Otherwise return unverified (fail-closed).
     """
     if conn is None:
         return False, None, ["REVIEW_INTEGRATION_UNAVAILABLE"]
@@ -86,6 +93,10 @@ def lookup_trusted_answer_review(
         return False, None, ["MISSING_PERSISTED_REVIEW_RECORD"]
 
     saw_candidate_rel = False
+    last_candidate_rev: Optional[Dict[str, Any]] = None
+    unconfirmed_review: Optional[Tuple[Dict[str, Any], List[str]]] = None
+    hash_mismatched_review: Optional[Tuple[Dict[str, Any], List[str]]] = None
+
     for rel_row in matching_rels:
         rel_d = dict(rel_row)
         rel_vol_norm = normalize_volume_code(rel_d.get("volume"))
@@ -108,6 +119,8 @@ def lookup_trusted_answer_review(
             continue
 
         latest_rev = dict(reviews[0])
+        last_candidate_rev = latest_rev
+
         ev_refs = latest_rev.get("evidence_references")
         if isinstance(ev_refs, str):
             try:
@@ -116,65 +129,81 @@ def lookup_trusted_answer_review(
                 ev_refs = {}
         latest_rev["evidence_references"] = ev_refs or {}
 
-        # 1. Question Identity and Evidence Binding
-        is_bound = False
-        val_mismatch = False
-        ak = ev_refs.get("answer_keys") or ev_refs.get("staged_data", {}).get("answer_keys")
-        if isinstance(ak, dict):
-            t_keys = ak.get(test_number) if test_number in ak else ak.get(str(test_number))
-            if isinstance(t_keys, dict):
-                expected_q_val = t_keys.get(question_number) if question_number in t_keys else t_keys.get(str(question_number))
-                if expected_q_val is not None:
-                    if isinstance(expected_q_val, list):
-                        allowed = [str(x).strip().lower() for x in expected_q_val]
-                        if target_value and str(target_value).strip().lower() not in allowed:
-                            val_mismatch = True
-                    else:
-                        if target_value and str(target_value).strip().lower() != str(expected_q_val).strip().lower():
-                            val_mismatch = True
-                    is_bound = True
+        # 1. Require current relationship to remain confirmed and review decision to be approved
+        is_rel_confirmed = (rel_d.get("relationship_status") == "confirmed")
+        rev_final_st = latest_rev.get("final_status") or latest_rev.get("new_status")
+        rev_dec = latest_rev.get("decision")
+        is_rev_confirmed = (rev_final_st == "confirmed" and rev_dec in ("approve", "accepted"))
 
-        vq = ev_refs.get("verified_questions") or ev_refs.get("question_numbers")
-        if isinstance(vq, list):
-            if question_number in vq or str(question_number) in vq:
-                is_bound = True
-
-        qr = ev_refs.get("question_range") or ev_refs.get("expected_question_range")
-        if isinstance(qr, (list, tuple)) and len(qr) == 2:
-            if qr[0] <= question_number <= qr[1]:
-                is_bound = True
-
-        # Fallback: if relationship covers the test or section and confirmed as authoritative key
-        if not ak and not vq and not qr:
-            sec_num = rel_d.get("passage_or_section")
-            if sec_num is None or ((question_number - 1) // 10 + 1) == sec_num:
-                is_bound = True
-
-        if not is_bound:
+        if not (is_rel_confirmed and is_rev_confirmed):
+            if not unconfirmed_review:
+                unconfirmed_review = (latest_rev, ["REVIEW_NOT_CONFIRMED"])
             continue
 
-        if val_mismatch:
-            return False, latest_rev, ["ANSWER_VALUE_EVIDENCE_MISMATCH"]
-
-        # 2. Check source content hash binding on relationship and review record
+        # 2. Require fingerprints to be valid
         rel_src_sha = (rel_d.get("source_content_sha256") or "").strip().lower()
-        if rel_src_sha and rel_src_sha != expected_doc_sha:
-            return False, latest_rev, ["SOURCE_HASH_MISMATCH"]
+        if not rel_src_sha or rel_src_sha != expected_doc_sha:
+            if not hash_mismatched_review:
+                hash_mismatched_review = (latest_rev, ["SOURCE_HASH_MISMATCH"])
+            continue
 
         rev_src_fp = (latest_rev.get("source_fingerprint") or "").strip().lower()
         if rev_src_fp and rev_src_fp != expected_doc_sha:
-            return False, latest_rev, ["SOURCE_HASH_MISMATCH"]
+            if not hash_mismatched_review:
+                hash_mismatched_review = (latest_rev, ["SOURCE_HASH_MISMATCH"])
+            continue
 
-        # 3. Decision and Status Evaluation
-        final_st = latest_rev.get("final_status") or latest_rev.get("new_status") or rel_d.get("relationship_status")
-        dec = latest_rev.get("decision")
-        if final_st != "confirmed" or dec not in ("approve", "accepted"):
-            return False, latest_rev, ["REVIEW_NOT_CONFIRMED"]
+        rel_tgt_sha = (rel_d.get("target_content_sha256") or "").strip().lower()
+        rev_tgt_fp = (latest_rev.get("target_fingerprint") or "").strip().lower()
+        if rel_tgt_sha and rev_tgt_fp and rel_tgt_sha != rev_tgt_fp:
+            if not hash_mismatched_review:
+                hash_mismatched_review = (latest_rev, ["SOURCE_HASH_MISMATCH"])
+            continue
+
+        # 3. Explicit Answer-Value Evidence Verification against Accepted Source
+        ak = ev_refs.get("answer_keys") or ev_refs.get("staged_data", {}).get("answer_keys")
+        if ak is None and "verified_answers" in ev_refs:
+            ak = ev_refs.get("verified_answers")
+
+        if not isinstance(ak, dict):
+            # No answer-value evidence in this review; fallback verification is prohibited
+            continue
+
+        t_keys = ak.get(test_number) if test_number in ak else ak.get(str(test_number))
+        if not isinstance(t_keys, dict):
+            if (question_number in ak or str(question_number) in ak) and not any(isinstance(v, dict) for v in ak.values()):
+                t_keys = ak
+            else:
+                continue
+
+        expected_q_val = t_keys.get(question_number) if question_number in t_keys else t_keys.get(str(question_number))
+        if expected_q_val is None:
+            # Question is not covered by answer-value evidence in this review
+            continue
+
+        # Explicit answer-value evidence exists: compare with target_value
+        if target_value is None or not str(target_value).strip():
+            return False, latest_rev, ["ANSWER_VALUE_EVIDENCE_MISMATCH"]
+
+        if isinstance(expected_q_val, list):
+            allowed = [str(x).strip().lower() for x in expected_q_val]
+            if str(target_value).strip().lower() not in allowed:
+                return False, latest_rev, ["ANSWER_VALUE_EVIDENCE_MISMATCH"]
+        else:
+            if str(target_value).strip().lower() != str(expected_q_val).strip().lower():
+                return False, latest_rev, ["ANSWER_VALUE_EVIDENCE_MISMATCH"]
 
         return True, latest_rev, ["ANSWER_KEY_PROVENANCE_VERIFIED"]
 
+    if hash_mismatched_review:
+        return False, hash_mismatched_review[0], hash_mismatched_review[1]
+
+    if unconfirmed_review:
+        return False, unconfirmed_review[0], unconfirmed_review[1]
+
     if saw_candidate_rel:
-        return False, None, ["QUESTION_NOT_COVERED_BY_REVIEW"]
+        return False, last_candidate_rev, ["QUESTION_NOT_COVERED_BY_REVIEW"]
+
     return False, None, ["MISSING_PERSISTED_REVIEW_RECORD"]
 
 

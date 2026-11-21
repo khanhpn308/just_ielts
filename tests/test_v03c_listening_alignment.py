@@ -46,6 +46,7 @@ from harness.normalizers.listening_orchestrator import (
 )
 from harness.normalizers.listening_question import (
     ListeningQuestionNormalizer,
+    lookup_trusted_answer_review,
 )
 from harness.normalizers.transcript import (
     TranscriptNormalizer,
@@ -93,6 +94,7 @@ def seed_v03b_confirmed_review(
     rel_id: Optional[str] = None,
     rev_id: Optional[str] = None,
     source_fingerprint: Optional[str] = None,
+    evidence_references: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str]:
     """Helper to seed a trusted V0.3-B relationship and review event into SQLite."""
     upsert_source(conn, doc_source_record)
@@ -135,7 +137,9 @@ def seed_v03b_confirmed_review(
     })
 
     ev_refs: Dict[str, Any] = {}
-    if verified_answers:
+    if evidence_references is not None:
+        ev_refs = dict(evidence_references)
+    elif verified_answers:
         ev_refs["answer_keys"] = {test_number: verified_answers}
 
     record_relationship_review(conn, {
@@ -2140,4 +2144,294 @@ def test_regression_unrelated_audio_entities_remain_unchanged(synthetic_data):
 
         # Skipped count is positive, reflecting that audio entities were skipped
         assert res2["skipped_count"] >= len(initial_audio_cps)
+
+
+# ==============================================================================
+# TEST 27: Fail-Closed Guard — Confirmed Relationship, No Answer Evidence
+# ==============================================================================
+def test_regression_confirmed_relationship_no_answer_evidence(temp_db, synthetic_data):
+    """Negative Regression Test 1: Confirmed relationship without explicit answer evidence remains unverified.
+
+    Verifies:
+    - A confirmed source relationship does NOT automatically verify individual answers.
+    - Fallback verification based solely on question range, section, or verified_questions is rejected.
+    - lookup_trusted_answer_review returns False with QUESTION_NOT_COVERED_BY_REVIEW.
+    - Normalized answer remains unverified with lifecycle_status='review_required'.
+    """
+    conn = temp_db
+    src_doc = synthetic_data["sources"]["question_doc"]
+    src_t = synthetic_data["sources"]["transcript_doc"]
+    q_norm = ListeningQuestionNormalizer()
+
+    # Seed confirmed relationship and approved review, but with NO answer-value evidence
+    # (only question range and section references, which must not verify individual answers)
+    rel_id, rev_id = seed_v03b_confirmed_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume="VOL 99",
+        test_number=1,
+        verified_answers=None,  # No explicit answer values
+        evidence_references={
+            "question_range": [1, 40],
+            "verified_questions": [1, 2, 3],
+            "section": 1,
+        },
+        review_decision="approve",
+        relationship_status="confirmed",
+    )
+
+    # Direct lookup must fail-closed to unverified
+    is_v, rev_rec, v_flags = lookup_trusted_answer_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume_code="VOL99",
+        test_number=1,
+        question_number=1,
+        target_value="station",
+    )
+    assert not is_v
+    assert "QUESTION_NOT_COVERED_BY_REVIEW" in v_flags
+
+    # Normalization pipeline must retain unverified status
+    item = copy.deepcopy(synthetic_data["questions"][0])
+    item["target_val"] = "station"
+    item["source_verified"] = True
+
+    _, answers, _ = q_norm.normalize_listening_test_items(
+        doc_source_record=src_doc,
+        transcript_source_record=src_t,
+        transcript_segments_by_sec={1: []},
+        items_def=[item],
+        volume_code="VOL99",
+        test_number=1,
+        publication_permission="public_synthetic",
+        conn=conn,
+    )
+    ans = answers[0]
+    assert ans.answer_provenance_status == "unverified"
+    assert ans.quality_profile.answer_verification == "unverified"
+    assert ans.quality_profile.lifecycle_status == "review_required"
+    assert "ANSWER_KEY_UNVERIFIED" in ans.quality_profile.validation_flags
+    assert "QUESTION_NOT_COVERED_BY_REVIEW" in ans.quality_profile.validation_flags
+
+
+# ==============================================================================
+# TEST 28: Fail-Closed Guard — Correct Question Number, Wrong Answer Value
+# ==============================================================================
+def test_regression_correct_question_number_wrong_answer_value(temp_db, synthetic_data):
+    """Negative Regression Test 2: Correct question number with contradictory answer value is rejected.
+
+    Verifies:
+    - Presence of question number in trusted review evidence does not verify a wrong answer value.
+    - Explicit comparison against accepted source key detects value discrepancy.
+    - lookup_trusted_answer_review returns False with ANSWER_VALUE_EVIDENCE_MISMATCH.
+    - Normalized answer remains unverified with lifecycle_status='review_required'.
+    """
+    conn = temp_db
+    src_doc = synthetic_data["sources"]["question_doc"]
+    src_t = synthetic_data["sources"]["transcript_doc"]
+    q_norm = ListeningQuestionNormalizer()
+
+    # Seed confirmed review explicitly verifying that Q1 answer value is 'station'
+    seed_v03b_confirmed_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume="VOL 99",
+        test_number=1,
+        verified_answers={1: "station"},
+        review_decision="approve",
+        relationship_status="confirmed",
+    )
+
+    # 1. Direct lookup with incorrect answer value ('wrong_value' != 'station')
+    is_v, rev_rec, v_flags = lookup_trusted_answer_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume_code="VOL99",
+        test_number=1,
+        question_number=1,
+        target_value="wrong_value",
+    )
+    assert not is_v
+    assert "ANSWER_VALUE_EVIDENCE_MISMATCH" in v_flags
+
+    # 2. Pipeline normalization of answer with correct question number but wrong value
+    item_wrong = copy.deepcopy(synthetic_data["questions"][0])
+    item_wrong["q_num"] = 1
+    item_wrong["target_val"] = "wrong_value"
+    item_wrong["raw_ocr_entry"] = "wrong_value"
+    item_wrong["source_verified"] = True
+
+    _, answers, _ = q_norm.normalize_listening_test_items(
+        doc_source_record=src_doc,
+        transcript_source_record=src_t,
+        transcript_segments_by_sec={1: []},
+        items_def=[item_wrong],
+        volume_code="VOL99",
+        test_number=1,
+        publication_permission="public_synthetic",
+        conn=conn,
+    )
+    ans = answers[0]
+    assert ans.answer_provenance_status == "unverified"
+    assert ans.quality_profile.answer_verification == "unverified"
+    assert ans.quality_profile.lifecycle_status == "review_required"
+    assert "ANSWER_KEY_UNVERIFIED" in ans.quality_profile.validation_flags
+    assert "ANSWER_VALUE_EVIDENCE_MISMATCH" in ans.quality_profile.validation_flags
+
+
+# ==============================================================================
+# TEST 29: Fail-Closed Guard — Previously Approved but Currently Rejected Relationship
+# ==============================================================================
+def test_regression_previously_approved_currently_rejected_relationship(temp_db, synthetic_data):
+    """Negative Regression Test 3: Previously approved but currently rejected relationship fails closed.
+
+    Verifies:
+    - Current relationship must remain confirmed to verify answers.
+    - If a relationship was approved historically but currently rejected (either via audit review
+      or registry status change), all answers fail closed to unverified.
+    - lookup_trusted_answer_review returns False with REVIEW_NOT_CONFIRMED.
+    """
+    conn = temp_db
+    src_doc = synthetic_data["sources"]["question_doc"]
+    src_t = synthetic_data["sources"]["transcript_doc"]
+    q_norm = ListeningQuestionNormalizer()
+
+    # Step 1: Seed approved relationship with valid answer evidence
+    rel_id, rev1_id = seed_v03b_confirmed_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume="VOL 99",
+        test_number=1,
+        verified_answers={1: "station"},
+        review_decision="approve",
+        relationship_status="confirmed",
+        rev_id="REV-HISTORIC-APPROVE-01",
+    )
+
+    # Initial check: Q1 with 'station' is verified
+    is_v1, _, flags1 = lookup_trusted_answer_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume_code="VOL99",
+        test_number=1,
+        question_number=1,
+        target_value="station",
+    )
+    assert is_v1
+    assert "ANSWER_KEY_PROVENANCE_VERIFIED" in flags1
+
+    # Subcase A: Audit review rejects the relationship
+    record_relationship_review(conn, {
+        "review_id": "REV-AUDIT-REJECT-02",
+        "relationship_id": rel_id,
+        "previous_status": "confirmed",
+        "new_status": "rejected",
+        "final_status": "rejected",
+        "reviewer_id": "AUDITOR-01",
+        "decision": "reject",
+        "reason": "Post-approval audit found source discrepancy",
+        "source_fingerprint": src_doc["content_sha256"],
+        "evidence_references": {"answer_keys": {1: {1: "station"}}},
+        "reviewed_at": "2026-11-21T12:00:00Z",
+    })
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_id,
+        "source_file_id": src_doc["file_id"],
+        "target_file_id": "FILE-SYN-KEY-0001",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": {},
+        "validation_flags": ["REVIEW_REJECTED"],
+        "match_confidence": 0.0,
+        "relationship_status": "rejected",
+        "provenance": {"matcher_version": "0.3.0-a"},
+        "source_content_sha256": src_doc["content_sha256"],
+        "schema_version": "v0.3.0-relationship",
+    })
+
+    # Must return unverified fail-closed with REVIEW_NOT_CONFIRMED
+    is_v2, rev2, flags2 = lookup_trusted_answer_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume_code="VOL99",
+        test_number=1,
+        question_number=1,
+        target_value="station",
+    )
+    assert not is_v2
+    assert "REVIEW_NOT_CONFIRMED" in flags2
+
+    # Verify through normalizer
+    item = copy.deepcopy(synthetic_data["questions"][0])
+    item["q_num"] = 1
+    item["target_val"] = "station"
+    item["raw_ocr_entry"] = "station"
+    item["source_verified"] = True
+
+    _, answers, _ = q_norm.normalize_listening_test_items(
+        doc_source_record=src_doc,
+        transcript_source_record=src_t,
+        transcript_segments_by_sec={1: []},
+        items_def=[item],
+        volume_code="VOL99",
+        test_number=1,
+        publication_permission="public_synthetic",
+        conn=conn,
+    )
+    assert answers[0].answer_provenance_status == "unverified"
+    assert answers[0].quality_profile.answer_verification == "unverified"
+    assert answers[0].quality_profile.lifecycle_status == "review_required"
+    assert "REVIEW_NOT_CONFIRMED" in answers[0].quality_profile.validation_flags
+
+    # Subcase B: Relationship status in source_relationships is revoked/rejected
+    # even when the latest review row had decision='approve'
+    rel_revoked_id = "REL-REVOKED-001"
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_revoked_id,
+        "source_file_id": src_doc["file_id"],
+        "target_file_id": "FILE-SYN-KEY-0001",
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 2,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": {},
+        "validation_flags": ["STATUS_REVOKED"],
+        "match_confidence": 0.0,
+        "relationship_status": "rejected",  # Currently rejected in registry
+        "provenance": {"matcher_version": "0.3.0-a"},
+        "source_content_sha256": src_doc["content_sha256"],
+        "schema_version": "v0.3.0-relationship",
+    })
+    record_relationship_review(conn, {
+        "review_id": "REV-REVOKED-001",
+        "relationship_id": rel_revoked_id,
+        "previous_status": "review_required",
+        "new_status": "confirmed",
+        "final_status": "confirmed",
+        "reviewer_id": "HISTORIC-REVIEWER",
+        "decision": "approve",  # Historic review was approve
+        "reason": "Historically approved",
+        "source_fingerprint": src_doc["content_sha256"],
+        "evidence_references": {"answer_keys": {2: {1: "station"}}},
+        "reviewed_at": "2026-11-20T00:00:00Z",
+    })
+
+    is_v3, _, flags3 = lookup_trusted_answer_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume_code="VOL99",
+        test_number=2,
+        question_number=1,
+        target_value="station",
+    )
+    assert not is_v3
+    assert "REVIEW_NOT_CONFIRMED" in flags3
+
 
