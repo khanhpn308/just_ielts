@@ -11,7 +11,7 @@ class ProvenanceEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_version: Literal["v0.2.0-normalized"] = "v0.2.0-normalized"
+    schema_version: Literal["v0.2.0-normalized", "v0.3.0-listening", "v0.3.0-normalized"] = "v0.2.0-normalized"
     source_file_id: str = Field(
         ...,
         pattern=r"^FILE-[a-f0-9]{12}$",
@@ -31,7 +31,7 @@ class ProvenanceEnvelope(BaseModel):
         pattern=r"^[a-f0-9]{64}$",
         description="Cryptographic SHA-256 hash of original file bytes",
     )
-    processing_unit: Literal["page", "document", "sheets", "audio_metadata"] = Field(
+    processing_unit: Literal["page", "document", "sheets", "audio_metadata", "transcript", "section", "audio"] = Field(
         ...,
         description="Type of processing unit from V0.1 extraction",
     )

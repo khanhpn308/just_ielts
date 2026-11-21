@@ -263,7 +263,35 @@ def cmd_check_env(args):
 
 
 def cmd_normalize(args):
-    """Executes V0.2 normalization pipeline with checkpointing and quality gates."""
+    """Executes V0.2/V0.3 normalization pipeline with checkpointing and quality gates."""
+    skill = getattr(args, "skill", "reading")
+    if skill == "listening":
+        from harness.normalizers.listening_orchestrator import ListeningNormalizationOrchestrator
+
+        print(">>> Starting V0.3-C Listening Normalization Pipeline...")
+        output_dir = Path(args.output_dir) if getattr(args, "output_dir", None) else None
+        reports_dir = Path(args.reports_dir) if getattr(args, "reports_dir", None) else None
+        orch = ListeningNormalizationOrchestrator(output_dir=output_dir)
+        res = orch.run_pilot(
+            force=getattr(args, "force", False),
+            dry_run=getattr(args, "dry_run", False),
+            reports_dir=reports_dir,
+        )
+        print("\n=== LISTENING NORMALIZATION RESULT ===")
+        print(f"Test ID: {res['test_id']}")
+        print(f"Total entities: {res['total_entities']}")
+        print(f"  - Written: {res['written_count']}")
+        print(f"  - Skipped (Valid Checkpoint): {res['skipped_count']}")
+        print(f"  - Dry-run: {res['dry_run']}")
+        print(f"Sections count: {res['sections_count']}")
+        print(f"Questions count: {res['questions_count']}")
+        print(f"Answers count: {res['answers_count']}")
+        print(f"Evidence count: {res['evidence_count']}")
+        print(f"Audio Assets count: {res['audio_assets_count']}")
+        print(f"Output Directory: {res['output_dir']}")
+        print(f"Reports Directory: {res['reports_dir']}")
+        return
+
     from harness.orchestrator import NormalizationOrchestrator
 
     print(">>> Starting V0.2 Normalization Pipeline...")
@@ -750,8 +778,9 @@ def main():
     subparsers.add_parser("check-env", help="Diagnose Python virtual environment and system dependencies")
 
     # normalize
-    parser_norm = subparsers.add_parser("normalize", help="Run V0.2 normalization pipeline")
-    parser_norm.add_argument("--pilot", action="store_true", help="Run approved Reading Pilot (SRC-138 + SRC-137)")
+    parser_norm = subparsers.add_parser("normalize", help="Run V0.2/V0.3 normalization pipeline")
+    parser_norm.add_argument("--pilot", action="store_true", help="Run approved pilot (Reading or Listening)")
+    parser_norm.add_argument("--skill", choices=["reading", "listening"], default="reading", help="Target skill (default: reading)")
     parser_norm.add_argument("--source-id", type=str, help="Specific source ID to normalize (e.g. SRC-138)")
     parser_norm.add_argument("--key-source-id", type=str, help="Answer key source ID (e.g. SRC-137)")
     parser_norm.add_argument("--test-number", type=int, default=5, help="Test number to normalize (default 5)")
@@ -760,7 +789,16 @@ def main():
     parser_norm.add_argument("--force", action="store_true", help="Force reprocessing, bypassing checkpoints")
     parser_norm.add_argument("--resume", action="store_true", help="Resume from existing valid checkpoints")
     parser_norm.add_argument("--output-dir", type=str, help="Custom output directory")
+    parser_norm.add_argument("--reports-dir", type=str, help="Custom reports directory for Listening Pilot")
     parser_norm.add_argument("--annotations", type=str, help="Path to evidence annotations JSON")
+
+    # normalize-listening
+    parser_norm_lis = subparsers.add_parser("normalize-listening", help="Run V0.3-C Listening normalization pipeline")
+    parser_norm_lis.add_argument("--pilot", action="store_true", default=True, help="Run approved Listening Pilot (VOL 1 TEST 1)")
+    parser_norm_lis.add_argument("--dry-run", action="store_true", help="Run normalizer without writing to disk")
+    parser_norm_lis.add_argument("--force", action="store_true", help="Force reprocessing, bypassing checkpoints")
+    parser_norm_lis.add_argument("--output-dir", type=str, help="Custom output directory")
+    parser_norm_lis.add_argument("--reports-dir", type=str, help="Custom reports directory")
 
     # verify
     parser_ver = subparsers.add_parser("verify", help="Run Quality Gates G1-G7 verification")
@@ -848,7 +886,9 @@ def main():
         cmd_validate(args)
     elif args.subcommand == "check-env":
         cmd_check_env(args)
-    elif args.subcommand == "normalize":
+    elif args.subcommand in ("normalize", "normalize-listening"):
+        if args.subcommand == "normalize-listening":
+            args.skill = "listening"
         cmd_normalize(args)
     elif args.subcommand == "verify":
         cmd_verify(args)
