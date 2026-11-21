@@ -44,7 +44,7 @@ Following review of PR #7 (reviewed commit `892d8aa`), four critical P0 data int
 │                                      │                                           │
 │                                      ▼                                           │
 │   Evidence & Answer Reconciliation:                                              │
-│   • Authoritative Source Key Linking (SRC-011 Page 22)                           │
+│   • Fail-Closed Source Key Linking (SRC-011 Page 22)                             │
 │   • Transcript Provenance Recording (SRC-012 FILE-0d311581c359)                  │
 │   • Verbatim Transcript Evidence Matching (No substring or letter matching)      │
 │   • Unresolved Grounding Handling (EVIDENCE_UNRESOLVED)                          │
@@ -173,17 +173,18 @@ The checkpoint engine in `harness/normalizers/listening_orchestrator.py` was rem
 $$\text{hash} = \text{SHA256}(\text{dep}_1 + \text{dep}_2 + \dots + \text{normalizer\_version} + \text{config\_hash} + \text{schema\_version})$$
 
 ### 7.1 Entity-Specific Dependencies
-- **`ListeningTest` & `ListeningSection`:** Depends on question document (`SRC-011`), transcript document (`SRC-012`), and audio asset.
+- **`ListeningTest` & `ListeningSection`:** Depends on question document (`SRC-011`), transcript document (`SRC-012`), and relevant audio asset.
 - **`AudioAsset`:** Depends strictly on physical audio asset SHA-256 (`audio_sha256`).
-- **`TranscriptSegment` & `SpeakerTurn`:** Depends strictly on transcript document SHA-256 (`SRC-012`).
+- **`TranscriptSegment`:** Depends on transcript document SHA-256 (`SRC-012`) and relevant audio track SHA-256 where normalized timing depends on audio.
+- **`SpeakerTurn`:** Depends strictly on transcript document SHA-256 (`SRC-012`).
 - **`ListeningQuestion` & `ListeningAnswer`:** Depends strictly on question document SHA-256 (`SRC-011`).
-- **`ListeningEvidence`:** Depends on question document, transcript document, and audio asset.
+- **`ListeningEvidence`:** Depends on question document, transcript document, and relevant audio track SHA-256 where timing depends on audio.
 
 ### 7.2 Six Dependency Scenarios Tested
 1. **Initial Normalization:** Writes all 250 entities into `normalization_checkpoints`.
 2. **Identical Rerun:** Validates 100% checkpoint hit (0 written, 250 skipped).
 3. **Transcript-Only Change:** Invalidates sections, segments, turns, and evidence; questions, answers, and audio assets remain valid and skipped.
-4. **Audio-Only Change:** Invalidates sections, audio assets, and evidence; questions, answers, segments, and turns remain valid and skipped.
+4. **Audio-Only Change:** Invalidates affected section audio assets, timing-dependent transcript segments, timing-dependent evidence, and section containers; questions, answers, and unaffected sections remain valid and skipped.
 5. **Answer-Key / Question-Doc Change:** Invalidates questions, answers, sections, and evidence; audio assets, segments, and turns remain valid and skipped.
 6. **Interrupted Processing & Resume:** Safely picks up uncommitted entities without duplicating existing records.
 
@@ -197,19 +198,19 @@ $$\text{hash} = \text{SHA256}(\text{dep}_1 + \text{dep}_2 + \dots + \text{normal
 | **L2** | Transcript provenance retained | **PASS** | `SRC-012` (`Transcript Test 1.docx`) paragraph locators and content hash tracked. |
 | **L3** | Question order and section structure correct | **PASS** | Exactly 40 questions partitioned across 4 sections (Q1–10, Q11–20, Q21–30, Q31–40). |
 | **L4** | No fabricated transcript or timestamps | **PASS** | Source timestamps strictly preserved; unavailable `end_ms` kept `null`; 0 fabricated 30s endpoints; Section 4 audio marked missing; Section 2–3 impossible bounds flagged. |
-| **L5** | All accepted answers have valid provenance | **PASS** | 100% of answers linked to `SRC-011` Page 22 official key sheet; raw OCR entries preserved without silent corrections. |
+| **L5** | All accepted answers have valid provenance | **PENDING_REVIEW** | Fail-closed source verification enforced: answers without independent verification review remain unverified (0 verified, 40 unverified); raw OCR entries preserved without silent corrections; 0 answers or locators fabricated. |
 | **L6** | Evidence is linked to the correct question | **PASS** | 40 evidence items linked to verbatim transcript quotes from `SRC-012`; no substring/letter matching; transcript source recorded. |
 | **L7** | Stale relationships cannot remain confirmed | **PASS** | Independent entity dependency hashing ensures modified sources invalidate affected checkpoints. |
-| **L8** | Missing data is explicitly marked | **PASS** | Section 4 audio, Section 2/3 cumulative bounds, and missing explanations logged in `unresolved_items.json`. |
+| **L8** | Missing data is explicitly marked | **PASS** | Section 4 audio, Section 2/3 cumulative bounds, missing explanations, and unverified answer keys logged in `unresolved_items.json`. |
 | **L9** | Resume and repeated runs are deterministic | **PASS** | Checkpoint resume verified: 250 skipped on re-run; canonical hashes bit-for-bit identical. |
 | **L10** | Private source material remains isolated | **PASS** | Normalized outputs and extraction artifacts stored under `private/` exclusively; zero copyrighted items in public Python code. |
-| **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 212 tests pass (203 standard + 9 corpus); full test suite backwards compatible. |
+| **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 214 tests pass (205 standard + 9 corpus); full test suite backwards compatible. |
 
 ---
 
 ## 9. Regression Test Suite
 
-Twenty fully synthetic regression tests are implemented in `tests/test_v03c_listening_alignment.py`:
+Twenty-two fully synthetic regression tests are implemented in `tests/test_v03c_listening_alignment.py`:
 1. `test_transcript_segmentation`: Validates section boundary detection and sequence ordering.
 2. `test_speaker_turn_preservation`: Validates clustering of continuous utterances and speaker identity preservation.
 3. `test_valid_timestamps`: Validates intervals satisfying $0 \le \text{start} < \text{end} \le \text{duration}$.
@@ -230,6 +231,8 @@ Twenty fully synthetic regression tests are implemented in `tests/test_v03c_list
 18. `test_privacy_isolation`: Validates rejection of unauthorized writes outside `private/`.
 19. `test_missing_audio_asset_handling`: Validates proper tagging of missing audio files.
 20. `test_dependency_aware_checkpoints`: Validates all 6 independent dependency invalidation scenarios.
+21. `test_source_verification_fail_closed`: Validates fail-closed verification (missing flag -> unverified; fabricated flag without provenance -> not verified; valid review -> accepted; mismatched source hash -> rejected/unverified).
+22. `test_orchestrator_audio_dependency_invalidation`: Full orchestrator-level test verifying identical rerun skipping, single-section audio invalidation, timing-dependent record update, and output/checkpoint hash consistency.
 
 ---
 
@@ -239,6 +242,7 @@ As logged in `private/reports/v03c/unresolved_items.json`:
 1. **Missing Section 4 Audio Track:** `private/raw/VOL 1/TEST 1/AUDIO LIS/` contains tracks 1–3 only. Section 4 remains unaligned until the original recording is located.
 2. **Cumulative vs. Track Timing Divergence:** In Sections 2 and 3, timestamps in `Transcript Test 1.docx` reflect master test timeline rather than track zero offsets (26 segments flagged as `impossible_bounds`). These require a continuous master audio join or verified track offsets before promoting to `verified`.
 3. **Absence of Pedagogical Explanations:** The raw volume release contains answer keys on Page 22 but no explanation commentary. Pedagogical rationales remain null to avoid AI hallucination.
+4. **Fail-Closed Unreviewed Answer Keys:** Authentic IELTS answer keys in `vol01_test01_extraction.json` have not undergone independent source verification review with validated source hash. Retained as unverified (0 verified, 40 unverified) fail-closed with `review_required` until authenticated source review is completed.
 
 ---
 

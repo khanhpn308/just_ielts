@@ -137,7 +137,16 @@
       "alternates": [],
       "quote": "Certainly, it takes place at the community library.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_1"
+      "source_key_ref": "SRC-9901:page_1:key_1",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 2,
@@ -154,7 +163,16 @@
       "alternates": [],
       "quote": "The concert begins at 6.15 pm in the auditorium.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_2"
+      "source_key_ref": "SRC-9901:page_1:key_2",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 3,
@@ -171,7 +189,16 @@
       "alternates": [],
       "quote": "The concert begins at 6.15 pm in the auditorium.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_3"
+      "source_key_ref": "SRC-9901:page_1:key_3",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 4,
@@ -188,7 +215,16 @@
       "alternates": [],
       "quote": "Welcome to the synthetic festival information session.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_4"
+      "source_key_ref": "SRC-9901:page_1:key_4",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 5,
@@ -205,7 +241,16 @@
       "alternates": [],
       "quote": "Hello, could you tell me where the opening ceremony is held?",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_5"
+      "source_key_ref": "SRC-9901:page_1:key_5",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 6,
@@ -222,7 +267,16 @@
       "alternates": [],
       "quote": "Certainly, it takes place at the community library.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_6"
+      "source_key_ref": "SRC-9901:page_1:key_6",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 7,
@@ -239,7 +293,16 @@
       "alternates": [],
       "quote": "Welcome to the synthetic festival information session.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_7"
+      "source_key_ref": "SRC-9901:page_1:key_7",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 8,
@@ -256,7 +319,16 @@
       "alternates": [],
       "quote": "Welcome to the synthetic festival information session.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_8"
+      "source_key_ref": "SRC-9901:page_1:key_8",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 9,
@@ -273,7 +345,16 @@
       "alternates": [],
       "quote": "And what time does the youth concert start?",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_9"
+      "source_key_ref": "SRC-9901:page_1:key_9",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 10,
@@ -290,7 +371,16 @@
       "alternates": [],
       "quote": "The concert begins at 6.15 pm in the auditorium.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_1:key_10"
+      "source_key_ref": "SRC-9901:page_1:key_10",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 11,
@@ -311,7 +401,16 @@
       "alternates": [],
       "quote": "Good morning hikers, my name is Alex and I will guide today's mountain excursion.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_11"
+      "source_key_ref": "SRC-9901:page_2:key_11",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 12,
@@ -332,7 +431,16 @@
       "alternates": [],
       "quote": "Good morning hikers, my name is Alex and I will guide today's mountain excursion.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_12"
+      "source_key_ref": "SRC-9901:page_2:key_12",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 13,
@@ -349,7 +457,16 @@
       "alternates": [],
       "quote": "Please ensure you carry extra water and wear sturdy hiking boots.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_13"
+      "source_key_ref": "SRC-9901:page_2:key_13",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 14,
@@ -366,7 +483,16 @@
       "alternates": [],
       "quote": "Please ensure you carry extra water and wear sturdy hiking boots.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_14"
+      "source_key_ref": "SRC-9901:page_2:key_14",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 15,
@@ -383,7 +509,16 @@
       "alternates": [],
       "quote": "Good morning hikers, my name is Alex and I will guide today's mountain excursion.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_15"
+      "source_key_ref": "SRC-9901:page_2:key_15",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 16,
@@ -400,7 +535,16 @@
       "alternates": [],
       "quote": "Good morning hikers, my name is Alex and I will guide today's mountain excursion.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_16"
+      "source_key_ref": "SRC-9901:page_2:key_16",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 17,
@@ -417,7 +561,16 @@
       "alternates": [],
       "quote": "Good morning hikers, my name is Alex and I will guide today's mountain excursion.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_17"
+      "source_key_ref": "SRC-9901:page_2:key_17",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 18,
@@ -434,7 +587,16 @@
       "alternates": [],
       "quote": "Please ensure you carry extra water and wear sturdy hiking boots.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_18"
+      "source_key_ref": "SRC-9901:page_2:key_18",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 19,
@@ -451,7 +613,16 @@
       "alternates": [],
       "quote": "Please ensure you carry extra water and wear sturdy hiking boots.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_19"
+      "source_key_ref": "SRC-9901:page_2:key_19",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 20,
@@ -468,7 +639,16 @@
       "alternates": [],
       "quote": "Please ensure you carry extra water and wear sturdy hiking boots.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_2:key_20"
+      "source_key_ref": "SRC-9901:page_2:key_20",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 21,
@@ -485,7 +665,16 @@
       "alternates": [],
       "quote": "They are available on the student intranet portal.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_21"
+      "source_key_ref": "SRC-9901:page_3:key_21",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 22,
@@ -502,7 +691,16 @@
       "alternates": [],
       "quote": "Yes, initial survey data showed strong preference for tutor feedback.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_22"
+      "source_key_ref": "SRC-9901:page_3:key_22",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 23,
@@ -519,7 +717,16 @@
       "alternates": [],
       "quote": "I cannot find the project review guidelines, David.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_23"
+      "source_key_ref": "SRC-9901:page_3:key_23",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 24,
@@ -536,7 +743,16 @@
       "alternates": [],
       "quote": "They are available on the student intranet portal.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_24"
+      "source_key_ref": "SRC-9901:page_3:key_24",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 25,
@@ -553,7 +769,16 @@
       "alternates": [],
       "quote": "I cannot find the project review guidelines, David.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_25"
+      "source_key_ref": "SRC-9901:page_3:key_25",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 26,
@@ -570,7 +795,16 @@
       "alternates": [],
       "quote": "Do students prefer formative feedback over peer evaluation?",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_26"
+      "source_key_ref": "SRC-9901:page_3:key_26",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 27,
@@ -587,7 +821,16 @@
       "alternates": [],
       "quote": "Yes, initial survey data showed strong preference for tutor feedback.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_27"
+      "source_key_ref": "SRC-9901:page_3:key_27",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 28,
@@ -604,7 +847,16 @@
       "alternates": [],
       "quote": "Do students prefer formative feedback over peer evaluation?",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_28"
+      "source_key_ref": "SRC-9901:page_3:key_28",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 29,
@@ -621,7 +873,16 @@
       "alternates": [],
       "quote": "Yes, initial survey data showed strong preference for tutor feedback.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_29"
+      "source_key_ref": "SRC-9901:page_3:key_29",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 30,
@@ -638,7 +899,16 @@
       "alternates": [],
       "quote": "They are available on the student intranet portal.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_3:key_30"
+      "source_key_ref": "SRC-9901:page_3:key_30",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 31,
@@ -655,7 +925,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_31"
+      "source_key_ref": "SRC-9901:page_4:key_31",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 32,
@@ -672,7 +951,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_32"
+      "source_key_ref": "SRC-9901:page_4:key_32",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 33,
@@ -689,7 +977,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_33"
+      "source_key_ref": "SRC-9901:page_4:key_33",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 34,
@@ -706,7 +1003,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_34"
+      "source_key_ref": "SRC-9901:page_4:key_34",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 35,
@@ -723,7 +1029,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_35"
+      "source_key_ref": "SRC-9901:page_4:key_35",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 36,
@@ -740,7 +1055,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_36"
+      "source_key_ref": "SRC-9901:page_4:key_36",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 37,
@@ -757,7 +1081,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_37"
+      "source_key_ref": "SRC-9901:page_4:key_37",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 38,
@@ -774,7 +1107,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_38"
+      "source_key_ref": "SRC-9901:page_4:key_38",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 39,
@@ -791,7 +1133,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_39"
+      "source_key_ref": "SRC-9901:page_4:key_39",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     },
     {
       "q_num": 40,
@@ -808,7 +1159,16 @@
       "alternates": [],
       "quote": "Today we examine the syntactic evolution of creole languages across the Pacific basin.",
       "source_verified": true,
-      "source_key_ref": "SRC-9901:page_4:key_40"
+      "source_key_ref": "SRC-9901:page_4:key_40",
+      "source_file_id": "FILE-a00000000001",
+      "source_legacy_id": "SRC-9901",
+      "source_sha256": "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+      "review_evidence": {
+        "reviewer_id": "OP-SYNTH-01",
+        "reviewed_at": "2026-11-21T00:00:00+00:00",
+        "review_decision": "accepted",
+        "verification_method": "manual_source_check"
+      }
     }
   ]
 }

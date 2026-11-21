@@ -27,6 +27,125 @@ from harness.normalizers.base import BaseNormalizer
 NORMALIZER_VERSION_QUESTION = "0.3.0-c"
 
 
+def validate_answer_source_verification(
+    item: Dict[str, Any],
+    doc_source_record: Dict[str, Any],
+    volume_code: str,
+    test_number: int,
+    artifact_metadata: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, List[str]]:
+    """Validates source verification evidence for a listening answer fail-closed.
+
+    Enforces:
+    1. Default source_verified to False.
+    2. Never promote answers to authoritative_source solely from caller-provided JSON metadata.
+    3. Validate artifact identity, source hash, question number, answer locator, and review evidence.
+    4. If verification is missing or invalid, retain unverified.
+    5. Do not fabricate missing answers or locators.
+    """
+    art_meta = artifact_metadata or {}
+
+    # 1. Check explicit source_verified flag (defaults to False)
+    if not item.get("source_verified", False):
+        return False, ["ANSWER_KEY_UNVERIFIED"]
+
+    # 2. Check for Source Verification / Review Evidence
+    # Never promote solely from caller metadata without validated review evidence
+    review = (
+        item.get("review_evidence")
+        or item.get("verification_evidence")
+        or item.get("source_verification")
+        or art_meta.get("review_evidence")
+        or art_meta.get("verification_evidence")
+        or art_meta.get("source_verification")
+    )
+    if not review or not isinstance(review, dict):
+        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_VERIFICATION_EVIDENCE"]
+
+    reviewer_id = (
+        review.get("reviewer_id")
+        or review.get("reviewed_by")
+        or review.get("operator_id")
+        or review.get("verified_by")
+    )
+    if not reviewer_id or not str(reviewer_id).strip() or len(str(reviewer_id).strip()) < 2:
+        return False, ["ANSWER_KEY_UNVERIFIED", "INVALID_REVIEWER_IDENTITY"]
+
+    reviewed_at = review.get("reviewed_at") or review.get("verified_at")
+    if not reviewed_at or not str(reviewed_at).strip():
+        return False, ["ANSWER_KEY_UNVERIFIED", "INVALID_REVIEW_TIMESTAMP"]
+
+    decision = (
+        review.get("review_decision")
+        or review.get("decision")
+        or review.get("verification_method")
+        or review.get("status")
+    )
+    accepted_decisions = {
+        "accepted",
+        "verified",
+        "manual_source_check",
+        "authoritative_key",
+        "source_verified",
+        "independent_source_verified",
+    }
+    if not decision or str(decision).lower() not in accepted_decisions:
+        return False, ["ANSWER_KEY_UNVERIFIED", "REVIEW_NOT_ACCEPTED"]
+
+    # 3. Validate Artifact Identity
+    item_file_id = item.get("source_file_id") or art_meta.get("source_doc_file_id") or art_meta.get("source_file_id")
+    if item_file_id and item_file_id != doc_source_record.get("file_id"):
+        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
+
+    item_leg_id = item.get("source_legacy_id") or art_meta.get("source_doc_legacy_id") or art_meta.get("source_legacy_id")
+    if item_leg_id and doc_source_record.get("legacy_id") and item_leg_id != doc_source_record.get("legacy_id"):
+        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
+
+    art_vol = item.get("volume_code") or art_meta.get("volume_code")
+    if art_vol and str(art_vol).upper() != str(volume_code).upper():
+        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
+
+    art_test = item.get("test_number") or art_meta.get("test_number")
+    if art_test is not None and int(art_test) != int(test_number):
+        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
+
+    # 4. Validate Source Cryptographic Hash
+    src_hash = (
+        item.get("source_sha256")
+        or item.get("source_hash")
+        or item.get("source_content_sha256")
+        or review.get("source_sha256")
+        or review.get("source_content_sha256")
+        or review.get("source_hash")
+        or art_meta.get("source_sha256")
+        or art_meta.get("source_doc_sha256")
+        or art_meta.get("source_content_sha256")
+    )
+    if not src_hash or not str(src_hash).strip():
+        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_SOURCE_HASH"]
+
+    expected_hash = (doc_source_record.get("content_sha256") or "").strip().lower()
+    if str(src_hash).strip().lower() != expected_hash:
+        return False, ["ANSWER_KEY_UNVERIFIED", "SOURCE_HASH_MISMATCH"]
+
+    # 5. Validate Question Number
+    q_num = item.get("q_num")
+    if not isinstance(q_num, int) or q_num < 1 or q_num > 40:
+        return False, ["ANSWER_KEY_UNVERIFIED", "INVALID_QUESTION_NUMBER"]
+
+    # 6. Validate Answer Locator & Non-empty Target Value (Do not fabricate missing answers or locators)
+    target_val = item.get("target_val")
+    if target_val is None or not str(target_val).strip():
+        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_TARGET_VALUE"]
+
+    raw_ocr = item.get("raw_ocr_entry") or item.get("raw_ans")
+    key_ref = item.get("source_key_ref")
+    if not raw_ocr and not key_ref:
+        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_ANSWER_LOCATOR"]
+
+    return True, ["ANSWER_KEY_PROVENANCE_VERIFIED"]
+
+
 class ListeningQuestionNormalizer(BaseNormalizer):
     """Normalizes listening questions, answers, and evidence linkages from verified extraction artifacts."""
 
@@ -37,18 +156,22 @@ class ListeningQuestionNormalizer(BaseNormalizer):
         """Normalized execution delegating to normalize_listening_test_items."""
         return self.normalize_listening_test_items(*args, **kwargs)
 
-    def load_extraction_artifact(
+    def load_extraction_artifact_with_metadata(
         self,
         artifact_path: Optional[Path] = None,
         volume_code: str = "VOL01",
         test_number: int = 1,
         publication_permission: str = "private_copyrighted",
-    ) -> List[Dict[str, Any]]:
-        """Loads question, answer, and evidence extraction items from an authorized artifact."""
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Loads question, answer, and evidence extraction items with top-level artifact metadata."""
         if artifact_path and artifact_path.exists():
             with open(artifact_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data.get("items", data) if isinstance(data, dict) else data
+            if isinstance(data, dict):
+                items = data.get("items", [])
+                meta = {k: v for k, v in data.items() if k != "items"}
+                return items, meta
+            return data, {}
 
         if publication_permission == "public_synthetic":
             synth_path = (
@@ -61,7 +184,9 @@ class ListeningQuestionNormalizer(BaseNormalizer):
             if synth_path.exists():
                 with open(synth_path, "r", encoding="utf-8") as f:
                     synth_data = json.load(f)
-                return synth_data.get("questions", [])
+                items = synth_data.get("questions", [])
+                meta = {k: v for k, v in synth_data.items() if k != "questions"}
+                return items, meta
 
         # Default private extraction artifact path
         priv_path = (
@@ -74,12 +199,32 @@ class ListeningQuestionNormalizer(BaseNormalizer):
         if priv_path.exists():
             with open(priv_path, "r", encoding="utf-8") as f:
                 priv_data = json.load(f)
-            return priv_data.get("items", priv_data) if isinstance(priv_data, dict) else priv_data
+            if isinstance(priv_data, dict):
+                items = priv_data.get("items", [])
+                meta = {k: v for k, v in priv_data.items() if k != "items"}
+                return items, meta
+            return priv_data, {}
 
         raise FileNotFoundError(
             f"No listening extraction artifact found at {artifact_path or priv_path}. "
             "Verified extraction artifacts must reside under private/ for copyrighted corpora."
         )
+
+    def load_extraction_artifact(
+        self,
+        artifact_path: Optional[Path] = None,
+        volume_code: str = "VOL01",
+        test_number: int = 1,
+        publication_permission: str = "private_copyrighted",
+    ) -> List[Dict[str, Any]]:
+        """Loads question, answer, and evidence extraction items from an authorized artifact."""
+        items, _ = self.load_extraction_artifact_with_metadata(
+            artifact_path=artifact_path,
+            volume_code=volume_code,
+            test_number=test_number,
+            publication_permission=publication_permission,
+        )
+        return items
 
     def normalize_listening_test_items(
         self,
@@ -91,12 +236,13 @@ class ListeningQuestionNormalizer(BaseNormalizer):
         volume_code: str = "VOL01",
         test_number: int = 1,
         publication_permission: PublicationPermission = "private_copyrighted",
+        artifact_metadata: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[ListeningQuestion], List[ListeningAnswer], List[ListeningEvidence]]:
         """Constructs canonical ListeningQuestion, ListeningAnswer, and ListeningEvidence entities.
 
         Enforces:
         - Source-linked extraction artifact input without hardcoded copyrighted items in source
-        - Provenance verification using source page/block locators
+        - Fail-closed source verification for answers requiring valid review evidence & source hash
         - Preservation of uncertain OCR results without silent corrections
         - Grounding against transcript sentences without substring matching on target value
         - Evidence provenance recorded from transcript source
@@ -106,13 +252,15 @@ class ListeningQuestionNormalizer(BaseNormalizer):
         answers: List[ListeningAnswer] = []
         evidence_list: List[ListeningEvidence] = []
 
+        art_meta = dict(artifact_metadata or {})
         if items_def is None:
-            items_def = self.load_extraction_artifact(
+            items_def, loaded_meta = self.load_extraction_artifact_with_metadata(
                 artifact_path=extraction_artifact_path,
                 volume_code=volume_code,
                 test_number=test_number,
                 publication_permission=publication_permission,
             )
+            art_meta = {**loaded_meta, **art_meta}
 
         t_src = transcript_source_record or doc_source_record
         sec_segs_map = transcript_segments_by_sec or {}
@@ -164,21 +312,28 @@ class ListeningQuestionNormalizer(BaseNormalizer):
             )
             questions.append(q_entity)
 
-            # 2. Answer Entity (preserving raw OCR entries without silent corrections)
+            # 2. Answer Entity (fail-closed source verification & uncertain OCR preservation)
             raw_ocr_entry = (
                 item.get("raw_ocr_entry")
                 or item.get("raw_ans")
-                or item["target_val"]
+                or item.get("target_val")
+                or ""
             )
-            ans_page = item.get("key_page", 22)
-            is_verified = item.get("source_verified", True)
+            ans_page = item.get("key_page") or art_meta.get("source_key_page") or 22
+            is_verified, ans_flags = validate_answer_source_verification(
+                item=item,
+                doc_source_record=doc_source_record,
+                volume_code=volume_code,
+                test_number=test_number,
+                artifact_metadata=art_meta,
+            )
             ans_prov_status = "authoritative_source" if is_verified else "unverified"
-            ans_flags = (
-                ["ANSWER_KEY_PROVENANCE_VERIFIED"]
-                if is_verified
-                else ["ANSWER_KEY_UNVERIFIED"]
-            )
 
+            raw_block_locator = (
+                f"page:{ans_page},key_entry:{raw_ocr_entry}"
+                if raw_ocr_entry
+                else f"page:{ans_page},key_q:{q_num}"
+            )
             ans_prov = ProvenanceEnvelope(
                 source_file_id=doc_source_record["file_id"],
                 source_legacy_id=doc_source_record.get("legacy_id") or "UNKNOWN",
@@ -186,7 +341,7 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 source_sha256=doc_source_record["content_sha256"],
                 processing_unit="page",
                 unit_identifier=f"page_{ans_page:04d}",
-                raw_block_locator=f"page:{ans_page},key_entry:{raw_ocr_entry}",
+                raw_block_locator=raw_block_locator,
                 extractor_adapter="pdf_ocr",
                 extractor_version="0.1.0-tesseract-pdftoppm",
                 normalizer_version=self.normalizer_version,
@@ -208,7 +363,7 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 question_id=q_id,
                 test_id=test_id,
                 section_id=sec_id,
-                target_value=item["target_val"],
+                target_value=item.get("target_val", ""),
                 acceptable_alternates=item.get("alternates", []),
                 case_sensitive=False,
                 source_key_ref=source_key_ref,
@@ -296,7 +451,7 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 lifecycle_status="reviewed" if grounding_status == "grounded" else "review_required",
                 extraction_quality="complete_clean" if grounding_status == "grounded" else "segmented_imperfect",
                 source_fidelity="authoritative_official",
-                answer_verification="authoritative_key",
+                answer_verification="authoritative_key" if is_verified else "unverified",
                 explanation_verification="missing_explanation",
                 publication_permission=publication_permission,
                 validation_flags=evid_flags,

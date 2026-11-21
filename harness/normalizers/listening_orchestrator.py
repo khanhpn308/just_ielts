@@ -68,13 +68,23 @@ def compute_listening_entity_dependency_hash(
     transcript_sha256: str,
     audio_sha256_by_sec: Dict[int, Optional[str]],
     section_number: Optional[int] = None,
+    timing_depends_on_audio: bool = True,
 ) -> str:
     """Computes independent dependency hash for an entity based on its actual source dependencies."""
     if entity_type == "audio_asset":
         a_sha = audio_sha256_by_sec.get(section_number) if section_number else None
         return a_sha or "missing_audio"
-    elif entity_type in ("transcript_segment", "speaker_turn"):
+    elif entity_type == "speaker_turn":
         return transcript_sha256
+    elif entity_type == "transcript_segment":
+        if not timing_depends_on_audio:
+            return transcript_sha256
+        h = hashlib.sha256()
+        h.update(transcript_sha256.encode("utf-8"))
+        a_sha = (audio_sha256_by_sec.get(section_number) if section_number else None) or "none"
+        h.update(b":audio:")
+        h.update(a_sha.encode("utf-8"))
+        return h.hexdigest()
     elif entity_type == "listening_question":
         return doc_sha256
     elif entity_type == "listening_answer":
@@ -84,6 +94,10 @@ def compute_listening_entity_dependency_hash(
         h.update(transcript_sha256.encode("utf-8"))
         h.update(b":")
         h.update(doc_sha256.encode("utf-8"))
+        if timing_depends_on_audio:
+            a_sha = (audio_sha256_by_sec.get(section_number) if section_number else None) or "none"
+            h.update(b":audio:")
+            h.update(a_sha.encode("utf-8"))
         return h.hexdigest()
     elif entity_type == "listening_section":
         h = hashlib.sha256()
@@ -114,13 +128,16 @@ class ListeningNormalizationOrchestrator:
         output_dir: Optional[Path] = None,
         db_path: Optional[Path] = None,
         normalizer_version: str = NORMALIZER_VERSION_LISTENING,
+        transcript_normalizer: Optional[TranscriptNormalizer] = None,
+        audio_aligner: Optional[AudioAligner] = None,
+        question_normalizer: Optional[ListeningQuestionNormalizer] = None,
     ):
         self.output_dir = output_dir or (REPO_ROOT / "private" / "staging" / "normalized")
         self.db_path = db_path or DB_PATH
         self.normalizer_version = normalizer_version
-        self.transcript_normalizer = TranscriptNormalizer(normalizer_version=normalizer_version)
-        self.audio_aligner = AudioAligner(normalizer_version=normalizer_version)
-        self.question_normalizer = ListeningQuestionNormalizer(normalizer_version=normalizer_version)
+        self.transcript_normalizer = transcript_normalizer or TranscriptNormalizer(normalizer_version=normalizer_version)
+        self.audio_aligner = audio_aligner or AudioAligner(normalizer_version=normalizer_version)
+        self.question_normalizer = question_normalizer or ListeningQuestionNormalizer(normalizer_version=normalizer_version)
 
     def run_pilot(
         self,
@@ -128,6 +145,10 @@ class ListeningNormalizationOrchestrator:
         dry_run: bool = False,
         publication_permission: str = "private_copyrighted",
         reports_dir: Optional[Path] = None,
+        config: Optional[Dict[str, Any]] = None,
+        paragraphs: Optional[List[Dict[str, Any]]] = None,
+        items_def: Optional[List[Dict[str, Any]]] = None,
+        extraction_artifact_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Runs the complete Listening Pilot normalization workflow for VOL 1 TEST 1."""
         init_db(self.db_path)
@@ -136,7 +157,7 @@ class ListeningNormalizationOrchestrator:
         rep_dir = reports_dir or (REPO_ROOT / "private" / "reports" / "v03c")
         rep_dir.mkdir(parents=True, exist_ok=True)
 
-        cfg = PILOT_LISTENING_CONFIG
+        cfg = config or PILOT_LISTENING_CONFIG
         vol_code = cfg["volume_code"]
         test_num = cfg["test_number"]
 
@@ -161,14 +182,15 @@ class ListeningNormalizationOrchestrator:
         test_id = f"TEST-IELTS-{vol_code}-{test_num:02d}-LIS"
 
         # 2. Extract Transcript docx paragraphs
-        from harness.adapters.docx import DocxExtractor
-        docx_adapter = DocxExtractor()
-        temp_dir = REPO_ROOT / "private" / "staging" / "temp_listening"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        t_res = docx_adapter.extract_unit(transcript_src, temp_dir, "pilot_transcript")
-        with open(t_res["output_path"], encoding="utf-8") as f:
-            t_json = json.load(f)
-        paragraphs = t_json["content"]["paragraphs"]
+        if paragraphs is None:
+            from harness.adapters.docx import DocxExtractor
+            docx_adapter = DocxExtractor()
+            temp_dir = REPO_ROOT / "private" / "staging" / "temp_listening"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            t_res = docx_adapter.extract_unit(transcript_src, temp_dir, "pilot_transcript")
+            with open(t_res["output_path"], encoding="utf-8") as f:
+                t_json = json.load(f)
+            paragraphs = t_json["content"]["paragraphs"]
 
         # 3. Normalize Transcript Sections, Segments, Speaker Turns
         raw_sections = self.transcript_normalizer.normalize(
@@ -216,6 +238,8 @@ class ListeningNormalizationOrchestrator:
             doc_source_record=doc_src,
             transcript_source_record=transcript_src,
             transcript_segments_by_sec=transcript_segs_by_sec,
+            items_def=items_def,
+            extraction_artifact_path=extraction_artifact_path,
             volume_code=vol_code,
             test_number=test_num,
             publication_permission=publication_permission,  # type: ignore[arg-type]
@@ -344,12 +368,25 @@ class ListeningNormalizationOrchestrator:
 
         for ent_id, ent_type, entity, s_fid, s_leg, sec_num in all_entities:
             target_path = self.output_dir / ent_type / f"{ent_id}.json"
+            timing_dep = False
+            if ent_type == "transcript_segment":
+                timing_dep = bool(
+                    entity.start_ms is not None
+                    or entity.timing_verification_status in ("verified", "inferred", "impossible_bounds", "out_of_order")
+                )
+            elif ent_type == "listening_evidence":
+                timing_dep = bool(
+                    entity.start_ms is not None
+                    or entity.timing_status in ("verified", "inferred")
+                )
+
             dep_raw_sha = compute_listening_entity_dependency_hash(
                 entity_type=ent_type,
                 doc_sha256=doc_src["content_sha256"],
                 transcript_sha256=transcript_src["content_sha256"],
                 audio_sha256_by_sec=audio_sha_by_sec,
                 section_number=sec_num,
+                timing_depends_on_audio=timing_dep,
             )
 
             if not force and is_normalization_checkpoint_valid(
@@ -406,6 +443,7 @@ class ListeningNormalizationOrchestrator:
             evidence=evidence_list,
             alignment_audits=alignment_audits,
             test_id=test_id,
+            config=cfg,
         )
 
         return {
@@ -436,8 +474,10 @@ class ListeningNormalizationOrchestrator:
         evidence: List[ListeningEvidence],
         alignment_audits: List[Dict[str, Any]],
         test_id: str,
+        config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Writes the required private JSON reports and acceptance document."""
+        cfg = config or PILOT_LISTENING_CONFIG
         # 1. pilot_inventory.json
         inv_payload = {
             "pilot_test_id": test_id,
@@ -483,12 +523,21 @@ class ListeningNormalizationOrchestrator:
             f.write(serialize_canonical_json(inv_payload))
 
         # 2. listening_quality_report.json
+        verified_answers = sum(1 for a in answers if a.answer_provenance_status == "authoritative_source")
+        unverified_answers = sum(1 for a in answers if a.answer_provenance_status == "unverified")
+        grounded_evidence = sum(1 for e in evidence if e.grounding_status == "grounded")
+        unresolved_evidence = sum(1 for e in evidence if e.grounding_status == "unresolved")
+
         quality_payload = {
             "test_id": test_id,
             "section_count": len(sections),
             "question_count": len(questions),
             "answer_count": len(answers),
+            "verified_answers_count": verified_answers,
+            "unverified_answers_count": unverified_answers,
             "evidence_count": len(evidence),
+            "grounded_evidence_count": grounded_evidence,
+            "unresolved_evidence_count": unresolved_evidence,
             "answer_coverage_pct": 100.0,
             "transcript_coverage_pct": 100.0,
             "sections": [
@@ -563,6 +612,14 @@ class ListeningNormalizationOrchestrator:
                     "impact": "Evidence items are grounded to verbatim transcript sentences, but explanation_text is null.",
                     "mitigation": "Marked with explanation_verification='missing_explanation'; no machine-generated explanations fabricated.",
                 },
+                {
+                    "item_id": "UNRES-04-UNVERIFIED-ANSWERS",
+                    "type": "unreviewed_answer_keys",
+                    "sections": [1, 2, 3, 4],
+                    "description": "Authentic IELTS answer keys in extraction artifact have not undergone independent source verification review with validated source hash. Retained as unverified under fail-closed integrity rules.",
+                    "impact": f"{unverified_answers} answers retained with answer_provenance_status='unverified' and lifecycle_status='review_required'.",
+                    "mitigation": "Fail-closed verification enforced. Zero answers promoted to authoritative_source without validated review evidence and source hash.",
+                },
             ],
         }
         with open(rep_dir / "unresolved_items.json", "w", encoding="utf-8") as f:
@@ -571,7 +628,7 @@ class ListeningNormalizationOrchestrator:
         # 5. acceptance_report.md
         acceptance_md = f"""# Acceptance Report: Phase V0.3-C Listening Pilot (Remediated)
 **Test ID:** `{test_id}`  
-**Volume:** `{PILOT_LISTENING_CONFIG['volume']}` | **Test:** `{PILOT_LISTENING_CONFIG['test_number']}`  
+**Volume:** `{cfg['volume']}` | **Test:** `{cfg['test_number']}`  
 **Date:** 2026-11-21  
 **Normalizer Version:** `{self.normalizer_version}`  
 
@@ -585,10 +642,10 @@ class ListeningNormalizationOrchestrator:
 | **L2** | Transcript provenance retained | **PASS** | `SRC-012` (`Transcript Test 1.docx`) paragraph locators and SHA-256 tracked. |
 | **L3** | Question order and section structure correct | **PASS** | Exactly 40 questions partitioned across 4 sections (Q1-10, Q11-20, Q21-30, Q31-40). |
 | **L4** | No fabricated transcript or timestamps | **PASS** | Source timestamps strictly preserved; unavailable end_ms kept null; no 30s endpoints; Section 4 audio marked missing; Section 2-3 impossible bounds flagged. |
-| **L5** | All accepted answers have valid provenance | **PASS** | 100% of answers linked to `SRC-011` Page 22 official key sheet; raw OCR entries preserved without silent corrections. |
+| **L5** | All accepted answers have valid provenance | **PENDING_REVIEW** | Fail-closed source verification enforced: answers without independent verification review remain unverified ({unverified_answers} unverified, {verified_answers} verified); raw OCR entries preserved; 0 answers or locators fabricated. |
 | **L6** | Evidence is linked to the correct question | **PASS** | 40 evidence items linked to verbatim transcript quotes from `SRC-012`; evidence provenance recorded from transcript document. |
 | **L7** | Stale relationships cannot remain confirmed | **PASS** | Independent entity dependency hashing ensures modified sources invalidate checkpoints. |
-| **L8** | Missing data is explicitly marked | **PASS** | Section 4 audio, Section 2/3 cumulative bounds, and missing explanations logged in `unresolved_items.json`. |
+| **L8** | Missing data is explicitly marked | **PASS** | Section 4 audio, Section 2/3 cumulative bounds, missing explanations, and unverified answer keys logged in `unresolved_items.json`. |
 | **L9** | Resume and repeated runs are deterministic | **PASS** | Canonical content hashing and SQLite checkpoints ensure idempotency. |
 | **L10** | Private source material remains isolated | **PASS** | Normalized outputs and extraction artifacts stored under `private/` exclusively; zero copyrighted items in public Python code. |
 | **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 100% test suite compatibility preserved. |
@@ -599,8 +656,8 @@ class ListeningNormalizationOrchestrator:
 
 - **Total Sections:** 4
 - **Total Questions:** 40 (100% coverage)
-- **Total Answers:** 40 (100% authoritative key provenance from Page 22)
-- **Total Evidence Links:** 40 (100% text grounded in verbatim transcript sentences)
+- **Total Answers:** 40 ({verified_answers} verified, {unverified_answers} unverified fail-closed pending review)
+- **Total Evidence Links:** 40 ({grounded_evidence} text grounded in verbatim transcript sentences)
 - **Total Audio Assets:** 4 (3 verified on disk, 1 missing)
 - **Audio Timing Alignment Breakdown:**
   - Total Segments: {total_segments}
@@ -609,7 +666,7 @@ class ListeningNormalizationOrchestrator:
   - Inferred Intervals: {inferred_total}
   - Cumulative / Timebase Mismatch: {impossible_total} (Sections 2 & 3 impossible_bounds)
   - Missing Audio: {missing_audio_total} (Section 4)
-- **Unresolved Limitations:** 3 items documented in `unresolved_items.json`
+- **Unresolved Limitations:** 4 items documented in `unresolved_items.json`
 """
         with open(rep_dir / "acceptance_report.md", "w", encoding="utf-8") as f:
             f.write(acceptance_md)
