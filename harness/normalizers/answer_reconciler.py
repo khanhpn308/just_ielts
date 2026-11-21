@@ -77,54 +77,86 @@ class AnswerReconciler(BaseNormalizer):
 
         Preserves accurate page-level provenance, exact character offsets,
         raw matched text, and confidence indicators.
+        Strictly isolates tests and passages; never falls back to all pages
+        when a requested test/passage cannot be located.
         """
-        # Filter pages by test and passage if multi-passage headings are detected
-        filtered_pages = pages
-        has_headers = any(
-            re.search(r"READING\s+PASSAGE\s+\d+", p.get("content", {}).get("text", ""), re.IGNORECASE)
-            for p in pages
-        )
-        if has_headers and (test_number is not None or passage_number is not None):
-            # Detect starting test from pages or fallback
-            start_test = 1
-            sample_text = pages[0].get("content", {}).get("text", "") if pages else ""
-            m_test_hdr = re.search(r"TEST\s+(\d+)", sample_text, re.IGNORECASE)
-            if m_test_hdr:
-                start_test = int(m_test_hdr.group(1))
-            else:
-                prov_path = pages[0].get("provenance", {}).get("relative_path", "") if pages else ""
-                m_range = re.search(r"(\d+)\s*[-–]\s*(\d+)", prov_path)
-                if m_range:
-                    start_test = int(m_range.group(1))
-                elif test_number is not None:
-                    if test_number in (5, 6):
-                        start_test = 5
-                    else:
-                        start_test = test_number
+        if not pages:
+            return {}
 
-            curr_test = start_test
+        # Filter pages by test and passage if filtering is requested
+        if test_number is not None or passage_number is not None:
+            # 1. Detect starting test from provenance or page headers
+            start_test: Optional[int] = None
+            prov_path = pages[0].get("provenance", {}).get("relative_path", "") if pages else ""
+            m_range = re.search(r"(\d+)\s*[-–]\s*(\d+)", prov_path)
+            if m_range:
+                start_test = int(m_range.group(1))
+            else:
+                m_single = re.search(r"TEST[_\s]*(\d+)", prov_path, re.IGNORECASE)
+                if m_single:
+                    start_test = int(m_single.group(1))
+
+            if start_test is None:
+                for p in pages:
+                    t = p.get("content", {}).get("text", "")
+                    m_th = re.search(r"\bTEST\s+(\d+)\b", t, re.IGNORECASE)
+                    if m_th:
+                        start_test = int(m_th.group(1))
+                        break
+
+            has_headers = any(
+                re.search(r"\bTEST\s+\d+\b", p.get("content", {}).get("text", ""), re.IGNORECASE)
+                or re.search(r"READING\s+PASSAGE\s+\d+", p.get("content", {}).get("text", ""), re.IGNORECASE)
+                for p in pages
+            )
+            if not has_headers and start_test is None:
+                # No test boundaries or headers can be located; return empty to prevent cross-test contamination
+                return {}
+
+            curr_test = start_test if start_test is not None else (test_number or 1)
             curr_pass = 1
-            selected = []
+            selected: List[Tuple[Dict[str, Any], set[int], set[int]]] = []
+
             for idx, p in enumerate(pages):
                 text = p.get("content", {}).get("text", "")
-                m = re.search(r"READING\s+PASSAGE\s+(\d+)", text, re.IGNORECASE)
+                prev_test = curr_test
                 prev_pass = curr_pass
-                if m:
-                    p_num = int(m.group(1))
-                    if p_num == 1 and idx > 0:
+
+                m_t = re.search(r"\bTEST\s+(\d+)\b", text, re.IGNORECASE)
+                if m_t:
+                    curr_test = int(m_t.group(1))
+
+                m_p = re.search(r"READING\s+PASSAGE\s+(\d+)", text, re.IGNORECASE)
+                if m_p:
+                    p_num = int(m_p.group(1))
+                    if p_num == 1 and idx > 0 and not m_t:
                         curr_test += 1
                     curr_pass = p_num
+
+                tests_on_page = {prev_test, curr_test}
                 passages_on_page = {prev_pass, curr_pass}
-                test_match = (test_number is None or curr_test == test_number)
-                pass_match = (passage_number is None or passage_number in passages_on_page)
+
+                test_match = (
+                    test_number is None
+                    or (start_test is not None and test_number in tests_on_page)
+                    or (start_test is None and curr_test == test_number)
+                )
+                pass_match = passage_number is None or passage_number in passages_on_page
+
                 if test_match and pass_match:
-                    selected.append(p)
-            if selected:
-                filtered_pages = selected
+                    selected.append((p, tests_on_page, passages_on_page))
+
+            # If requested Test/Passage cannot be located, never fall back to all OCR pages
+            filtered_pages_with_boundaries = selected
+        else:
+            filtered_pages_with_boundaries = [(p, set(), set()) for p in pages]
+
+        if not filtered_pages_with_boundaries:
+            return {}
 
         answers: Dict[int, Dict[str, Any]] = {}
 
-        for idx, page in enumerate(filtered_pages):
+        for idx, (page, tests_on_page, passages_on_page) in enumerate(filtered_pages_with_boundaries):
             content = page.get("content", {})
             prov = page.get("provenance", {})
             page_num = content.get("page_number", idx + 1)
@@ -133,8 +165,25 @@ class AnswerReconciler(BaseNormalizer):
             if not text:
                 continue
 
-            # If page contains a transition to another passage, restrict text to target passage
-            if passage_number is not None:
+            slice_offset = 0
+
+            # 1. Slicing on test transition
+            if test_number is not None and len(tests_on_page) > 1:
+                m_t = re.search(r"\bTEST\s+(\d+)\b", text, re.IGNORECASE)
+                m_p1 = re.search(r"READING\s+PASSAGE\s+1\b", text, re.IGNORECASE)
+                b_start = m_t.start() if m_t else (m_p1.start() if m_p1 else None)
+                if b_start is not None:
+                    if test_number == max(tests_on_page):
+                        text = text[b_start:]
+                        slice_offset += b_start
+                    elif test_number == min(tests_on_page):
+                        text = text[:b_start]
+                else:
+                    # Ambiguous test boundary: cannot isolate cleanly, skip to avoid contamination
+                    continue
+
+            # 2. Slicing on passage transition
+            if passage_number is not None and len(passages_on_page) > 1:
                 m_pass = re.search(r"READING\s+PASSAGE\s+(\d+)", text, re.IGNORECASE)
                 if m_pass:
                     p_trans = int(m_pass.group(1))
@@ -142,6 +191,7 @@ class AnswerReconciler(BaseNormalizer):
                         text = text[:m_pass.start()]
                     elif passage_number == p_trans:
                         text = text[m_pass.start():]
+                        slice_offset += m_pass.start()
 
             def record_answer(
                 q_num: int,
@@ -149,7 +199,7 @@ class AnswerReconciler(BaseNormalizer):
                 match_obj: Any,
                 confidence: float = 1.0,
             ) -> None:
-                c_start, c_end = match_obj.start(), match_obj.end()
+                c_start, c_end = match_obj.start() + slice_offset, match_obj.end() + slice_offset
                 matched_text = match_obj.group(0)
                 ambiguity_flags: List[str] = []
                 if q_num in answers:
@@ -179,7 +229,7 @@ class AnswerReconciler(BaseNormalizer):
                 record_answer(2, m2.group(1).strip().split()[0], m2, confidence=1.0)
 
             # 2. Question 3: '3. ... Answer: Not Given'
-            m3 = re.search(r"3[\.\s][\s\S]*?Answer:\s*([^\n\r]+)", text)
+            m3 = re.search(r"(?:^|\n)\s*(?:Question\s+)?3[\.\s][\s\S]*?Answer:\s*([^\n\r]+)", text)
             if m3:
                 raw3 = m3.group(1).strip()
                 if "Not Given" in raw3 or "NOT GIVEN" in raw3:
@@ -189,19 +239,19 @@ class AnswerReconciler(BaseNormalizer):
                 record_answer(3, raw3, m3, confidence=1.0)
 
             # 3. Question 4: '4, ... Answer: True'
-            m4 = re.search(r"4[\,\.\s][\s\S]*?Answer:\s*([^\n\r]+)", text)
+            m4 = re.search(r"(?:^|\n)\s*(?:Question\s+)?4[\,\.\s][\s\S]*?Answer:\s*([^\n\r]+)", text)
             if m4:
                 record_answer(4, m4.group(1).strip().split()[0], m4, confidence=1.0)
 
             # 4. Question 5: '5. ... Answer: False'
-            m5 = re.search(r"5[\.\s\-—]+[\s\S]*?Answer:\s*([^\n\r]+)", text)
+            m5 = re.search(r"(?:^|\n)\s*(?:Question\s+)?5[\.\s\-—]+[\s\S]*?Answer:\s*([^\n\r]+)", text)
             if m5:
                 record_answer(5, m5.group(1).strip().split()[0], m5, confidence=1.0)
                 # Question 6 follows question 5 block
                 m6 = re.search(r"\nAnswer:\s*([^\n\r]+)\s*\n+Location:", text[m5.end():])
                 if m6:
-                    c_start = m5.end() + m6.start()
-                    c_end = m5.end() + m6.end()
+                    c_start = m5.end() + m6.start() + slice_offset
+                    c_end = m5.end() + m6.end() + slice_offset
                     ambiguity_flags: List[str] = []
                     if 6 in answers:
                         ambiguity_flags.append("MULTIPLE_KEY_CANDIDATES")

@@ -69,7 +69,7 @@ class PdfReadingNormalizer(BaseNormalizer):
             lifecycle_status="reviewed",
             extraction_quality=extraction_q,
             source_fidelity="authoritative_official",
-            answer_verification="authoritative_key",
+            answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=["OCR_EXTRACTION_SOURCE"] if is_ocr else [],
@@ -143,7 +143,7 @@ class PdfReadingNormalizer(BaseNormalizer):
             lifecycle_status="extracted",
             extraction_quality=extraction_q,
             source_fidelity="authoritative_official",
-            answer_verification="authoritative_key",
+            answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=["OCR_EXTRACTION_SOURCE"] if is_ocr else [],
@@ -173,7 +173,7 @@ class PdfReadingNormalizer(BaseNormalizer):
             lifecycle_status="reviewed",
             extraction_quality=extraction_q,
             source_fidelity="authoritative_official",
-            answer_verification="authoritative_key",
+            answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=[],
@@ -207,7 +207,7 @@ class PdfReadingNormalizer(BaseNormalizer):
                 lifecycle_status="extracted",
                 extraction_quality=extraction_q,
                 source_fidelity="authoritative_official",
-                answer_verification="authoritative_key",
+                answer_verification="unverified",
                 explanation_verification="source_provided",
                 publication_permission=publication_permission,  # type: ignore[arg-type]
                 validation_flags=[],

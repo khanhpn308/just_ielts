@@ -387,14 +387,14 @@ def test_07_conflicting_sources_are_rejected():
     ocr_pages = [
         {
             "unit_identifier": "page_0001",
-            "content": {"text": "TEST 5\nREADING PASSAGE 1\n1 A\n2 B"},
+            "content": {"text": "TEST 5\nREADING PASSAGE 1\n1. Answer: TRUE\n2. Answer: FALSE"},
         }
     ]
-    # Requesting test 6 from a page that only contains Test 5
+    # Requesting test 6 from a page that only contains valid parseable Test 5 keys
     keys = reconciler.parse_pdf_ocr_explanation_keys(ocr_pages, test_number=6)
     assert (
         len(keys) == 0
-    ), "Mismatched test content must not be reconciled into requested test"
+    ), "Source contains valid parseable Test 5 keys; requesting Test 6 must yield 0 keys"
 
 
 # ---------------------------------------------------------------------------
@@ -511,3 +511,134 @@ def test_10_no_private_data_enters_git():
         line for line in res_staged.stdout.splitlines() if line.startswith("private/")
     ]
     assert not staged_private, f"Private files are staged in Git: {staged_private}"
+
+
+# ---------------------------------------------------------------------------
+# Test 11: Listening unregistered test fails clearly without Test 1 fallback
+# ---------------------------------------------------------------------------
+def test_11_listening_unregistered_test_fails_clearly():
+    """Verifies that requesting an unregistered test fails clearly without falling back to Test 1."""
+    from harness.normalizers.listening_orchestrator import ListeningNormalizationOrchestrator
+
+    orchestrator = ListeningNormalizationOrchestrator()
+    with pytest.raises(ValueError, match="Unsupported listening test configuration: Test 3"):
+        orchestrator.run_pilot(test_number=3)
+
+
+# ---------------------------------------------------------------------------
+# Test 12: Truthful aggregate quality status for unverified answers
+# ---------------------------------------------------------------------------
+def test_12_unverified_answers_do_not_produce_verified_aggregate(
+    synthetic_fixtures: Dict[str, Any], tmp_path: Path
+):
+    """Verifies that 40 unverified answers never produce a section or test claiming verified answer keys."""
+    from harness.normalizers.listening_orchestrator import ListeningNormalizationOrchestrator
+
+    listening_data = synthetic_fixtures["synthetic_listening"]
+    config = {
+        "volume_code": "VOL99",
+        "volume": "VOL 99",
+        "test_number": 9,
+        "doc_legacy_id": "SRC-999",
+        "transcript_legacy_id": "SRC-998",
+        "audio_legacy_ids": {1: None, 2: None, 3: None, 4: None},
+        "section_titles": {1: "Sec 1", 2: "Sec 2", 3: "Sec 3", 4: "Sec 4"},
+    }
+
+    # Set up synthetic mock sources in temp db
+    temp_db_path = tmp_path / "test_synth.db"
+    init_db(temp_db_path)
+    conn = sqlite3.connect(temp_db_path)
+    conn.row_factory = sqlite3.Row
+
+    from harness.db import upsert_source
+    upsert_source(conn, {
+        "file_id": "FILE-111122223333",
+        "legacy_id": "SRC-999",
+        "relative_path": "synthetic/doc999.pdf",
+        "filename": "doc999.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1000,
+        "content_sha256": "1" * 64,
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    upsert_source(conn, {
+        "file_id": "FILE-444455556666",
+        "legacy_id": "SRC-998",
+        "relative_path": "synthetic/trans998.docx",
+        "filename": "trans998.docx",
+        "extension": ".docx",
+        "detected_type": "docx",
+        "size_bytes": 1000,
+        "content_sha256": "2" * 64,
+        "collection": "VOL 99",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    conn.close()
+
+    orchestrator = ListeningNormalizationOrchestrator(
+        output_dir=tmp_path / "normalized",
+        db_path=temp_db_path,
+    )
+
+    # 40 unverified items definition
+    items_def = [
+        {
+            "q_num": q,
+            "sec_num": ((q - 1) // 10) + 1,
+            "page_num": 1,
+            "q_type": "note-completion",
+            "prompt": f"Item {q}",
+            "target_val": f"Answer {q}",
+            "source_verified": False,
+        }
+        for q in range(1, 41)
+    ]
+
+    # Minimal transcript paragraphs
+    paragraphs = [
+        {"seq_index": 0, "text": "SECTION 1\nSpeaker 1 [00:00:01] Hello."},
+        {"seq_index": 1, "text": "SECTION 2\nSpeaker 1 [00:05:00] Next section."},
+        {"seq_index": 2, "text": "SECTION 3\nSpeaker 1 [00:10:00] Third section."},
+        {"seq_index": 3, "text": "SECTION 4\nSpeaker 1 [00:15:00] Final section."},
+    ]
+
+    res = orchestrator.run_pilot(
+        config=config,
+        publication_permission="public_synthetic",
+        reports_dir=tmp_path / "reports",
+        paragraphs=paragraphs,
+        items_def=items_def,
+    )
+
+    out_dir = tmp_path / "normalized"
+    # Inspect emitted section entities
+    for s_idx in range(1, 5):
+        s_file = out_dir / "listening_section" / f"SEC-VOL99-09-LS0{s_idx}.json"
+        assert s_file.exists(), f"Section {s_idx} file must exist"
+        with open(s_file, "r", encoding="utf-8") as f:
+            sec_data = json.load(f)
+        qp = sec_data["quality_profile"]
+        assert qp["answer_verification"] == "unverified", (
+            f"Section {s_idx} must have answer_verification='unverified', got {qp['answer_verification']}"
+        )
+        assert qp["answer_verification"] != "authoritative_key"
+        assert qp["lifecycle_status"] == "review_required"
+        assert "UNVERIFIED_ANSWER_KEYS" in qp["validation_flags"]
+
+    # Inspect emitted test entity
+    t_file = out_dir / "listening_test" / "TEST-IELTS-VOL99-09-LIS.json"
+    assert t_file.exists()
+    with open(t_file, "r", encoding="utf-8") as f:
+        t_data = json.load(f)
+    t_qp = t_data["quality_profile"]
+    assert t_qp["answer_verification"] == "unverified", (
+        f"Test must have answer_verification='unverified', got {t_qp['answer_verification']}"
+    )
+    assert t_qp["answer_verification"] != "authoritative_key"
+    assert t_qp["lifecycle_status"] == "review_required"
+    assert "UNVERIFIED_ANSWER_KEYS" in t_qp["validation_flags"]

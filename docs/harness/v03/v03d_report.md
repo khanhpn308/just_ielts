@@ -105,6 +105,18 @@ This cleanly matches prompts starting with lowercase characters, quotation marks
 *Observation:* Running normalization on a new test initially overwrote `manifest.json`, dropping existing pilot records and causing subsequent retrieval lookups to reject valid pilot entities.  
 *Enhancement:* `ReadingOrchestrator` was updated to partition manifest records by `test_slug`, preserving active records from prior tests and atomically merging new test entities into `manifest.json`.
 
+### 3.5 Cross-Test Answer Isolation
+*Observation:* In `AnswerReconciler`, if a requested Test/Passage could not be located in OCR pages, the reconciler previously fell back to all raw pages, risking cross-test key leakage.  
+*Enhancement:* `parse_pdf_ocr_explanation_keys` strictly tracks test boundaries and passage transitions. If the requested test or passage cannot be located, it never falls back to all pages, returning empty results (`{}`). Pages spanning test boundaries are cleanly sliced at the boundary, and ambiguous boundaries are preserved without guessing.
+
+### 3.6 Dynamic Listening Test Identity Resolution
+*Observation:* `ListeningNormalizationOrchestrator` previously fell back to Test 1 for unknown test configurations and used hardcoded test-specific configuration constants.  
+*Enhancement:* Silent fallback to Test 1 was removed. Unknown or unverified test requests fail clearly with explicit `ValueError`. New pilot configurations are resolved dynamically from verified database relationships (`source_relationships`) and inventory records (`sources`) without creating test-specific constants. Explicit configuration injection is preserved for synthetic testing.
+
+### 3.7 Truthful Aggregate Quality Status
+*Observation:* Test and Section entities were previously assigned `answer_verification="authoritative_key"` even when their child answer keys were unverified.  
+*Enhancement:* Aggregate quality profiles on `ListeningSection`, `ListeningTest`, `PassageOrSection`, and `IELTSTest` are now derived strictly from actual child entity quality profiles. When child answers remain unverified, the parent Section and Test entities receive `answer_verification="unverified"` and `lifecycle_status="review_required"` with `UNVERIFIED_ANSWER_KEYS` flag. Exactly 0 unverified answers claim verified status.
+
 ---
 
 ## 4. Quality Metrics Matrix
@@ -177,7 +189,7 @@ A total of 54 review items were generated across priority tiers and saved to `pr
 | **D5** | Verification status is truthful | **PASS** | Exactly 0 unverified answers claim verified status (`verified_answers_count = 0`). |
 | **D6** | Provenance is traceable | **PASS** | Every entity carries full `ProvenanceEnvelope` with source file ID, SHA-256, and block offsets. |
 | **D7** | Deterministic reruns | **PASS** | 100% checkpoint reuse on rerun (0 written, 271 skipped). |
-| **D8** | Existing tests pass | **PASS** | 222 public tests and 231 corpus tests pass with 0 regressions. |
+| **D8** | Existing tests pass | **PASS** | 224 public tests and 233 corpus tests pass with 0 regressions (including 12 generalization and acceptance regression tests). |
 | **D9** | Private source isolation | **PASS** | 0 private files or copyrighted exam content tracked or staged in Git. |
 | **D10** | Generalization assessed explicitly | **PASS** | Formats, error modes, and edge cases evaluated across both modalities. |
 
@@ -188,13 +200,13 @@ A total of 54 review items were generated across priority tiers and saved to `pr
 The automated test suite was executed using the project-local virtual environment (`./.venv/bin/python`):
 
 ```bash
-# Public Test Suite (including 10 new generalization tests)
+# Public Test Suite (including 12 generalization & acceptance correction tests)
 ./.venv/bin/python -m pytest -q tests/
-# Result: 222 passed, 9 skipped in 17.43s
+# Result: 224 passed, 9 skipped in 22.49s
 
 # Corpus Integration Suite
 ./.venv/bin/python -m pytest -q tests/ --corpus
-# Result: 231 passed in 39.34s
+# Result: 233 passed in 44.09s
 
 # Diagnostic Environment Check
 ./.venv/bin/python -m harness.cli check-env

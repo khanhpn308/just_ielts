@@ -16,6 +16,7 @@ from harness.db import (
     is_normalization_checkpoint_valid,
     upsert_normalization_checkpoint,
 )
+from harness.models.quality import QualityProfile
 from harness.models.question_bank import IELTSAnswer, IELTSEvidence, IELTSExplanation
 from harness.normalizers.answer_reconciler import AnswerReconciler
 from harness.normalizers.base import (
@@ -339,6 +340,36 @@ class NormalizationOrchestrator:
             test_number=test_number,
             publication_permission=pub_permission,
         )
+
+        # Derive aggregate quality profile for test and passage from child answers
+        all_ans_authoritative = bool(answer_entities) and all(
+            a.quality_profile.answer_verification == "authoritative_key" for a in answer_entities
+        )
+        all_ans_verified = bool(answer_entities) and all(
+            a.quality_profile.answer_verification in ("authoritative_key", "consensus_key") for a in answer_entities
+        )
+        if all_ans_authoritative:
+            agg_ans_verif = "authoritative_key"
+        elif all_ans_verified:
+            agg_ans_verif = "consensus_key"
+        else:
+            agg_ans_verif = "unverified"
+
+        agg_lifecycle = "reviewed" if all_ans_verified else "review_required"
+
+        p_qp_dict = passage_entity.quality_profile.model_dump()
+        p_qp_dict["answer_verification"] = agg_ans_verif
+        p_qp_dict["lifecycle_status"] = agg_lifecycle
+        if agg_ans_verif == "unverified" and "UNVERIFIED_ANSWER_KEYS" not in p_qp_dict["validation_flags"]:
+            p_qp_dict["validation_flags"].append("UNVERIFIED_ANSWER_KEYS")
+        passage_entity.quality_profile = QualityProfile(**p_qp_dict)
+
+        t_qp_dict = test_entity.quality_profile.model_dump()
+        t_qp_dict["answer_verification"] = agg_ans_verif
+        t_qp_dict["lifecycle_status"] = agg_lifecycle
+        if agg_ans_verif == "unverified" and "UNVERIFIED_ANSWER_KEYS" not in t_qp_dict["validation_flags"]:
+            t_qp_dict["validation_flags"].append("UNVERIFIED_ANSWER_KEYS")
+        test_entity.quality_profile = QualityProfile(**t_qp_dict)
 
         # 4. Resolve Evidence Spans and Explanations from private annotations
         evidence_entities: List[IELTSEvidence] = []

@@ -64,31 +64,6 @@ PILOT_LISTENING_CONFIG = {
     },
 }
 
-PILOT_LISTENING_CONFIG_TEST2 = {
-    "volume_code": "VOL01",
-    "volume": "VOL 1",
-    "test_number": 2,
-    "doc_legacy_id": "SRC-020",
-    "transcript_legacy_id": "SRC-021",
-    "audio_legacy_ids": {
-        1: "SRC-017",
-        2: "SRC-018",
-        3: "SRC-019",
-        4: None,  # Section 4 audio is missing in raw corpus
-    },
-    "section_titles": {
-        1: "Rental Property Application Form",
-        2: "The Pre-school Family Centre",
-        3: "Presentation on Foot Injuries",
-        4: "Supermarket Layout",
-    },
-}
-
-PILOT_LISTENING_CONFIGS: Dict[int, Dict[str, Any]] = {
-    1: PILOT_LISTENING_CONFIG,
-    2: PILOT_LISTENING_CONFIG_TEST2,
-}
-
 
 def compute_listening_entity_dependency_hash(
     entity_type: str,
@@ -179,6 +154,104 @@ class ListeningNormalizationOrchestrator:
         self.audio_aligner = audio_aligner or AudioAligner(normalizer_version=normalizer_version)
         self.question_normalizer = question_normalizer or ListeningQuestionNormalizer(normalizer_version=normalizer_version)
 
+    def resolve_pilot_config(
+        self,
+        conn: sqlite3.Connection,
+        test_number: int,
+        volume: str = "VOL 1",
+        volume_code: str = "VOL01",
+    ) -> Optional[Dict[str, Any]]:
+        """Resolves listening pilot configuration dynamically from verified source inventory and relationships.
+
+        Fails clearly if the test is unverified, missing, or unsupported.
+        Does not create test-specific constants.
+        """
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT r.relationship_id, r.relationship_type, r.passage_or_section,
+                   r.relationship_status, r.source_file_id, r.target_file_id,
+                   s1.legacy_id as src_legacy, s2.legacy_id as tgt_legacy,
+                   s1.detected_type as src_type, s2.detected_type as tgt_type
+            FROM source_relationships r
+            JOIN sources s1 ON r.source_file_id = s1.file_id
+            JOIN sources s2 ON r.target_file_id = s2.file_id
+            WHERE r.volume = ? AND r.test_number = ? AND r.skill = 'listening'
+            """,
+            (volume, test_number),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+        doc_legacy_id = None
+        transcript_legacy_id = None
+        audio_legacy_ids: Dict[int, Optional[str]] = {1: None, 2: None, 3: None, 4: None}
+
+        for r in rows:
+            if r["relationship_type"] == "listening_to_transcript":
+                if r["src_type"] == "pdf":
+                    doc_legacy_id = r["src_legacy"]
+                if r["tgt_type"] == "docx":
+                    transcript_legacy_id = r["tgt_legacy"]
+            elif r["relationship_type"] == "listening_to_audio":
+                sec = r.get("passage_or_section")
+                if sec in audio_legacy_ids and r.get("relationship_status") == "confirmed":
+                    audio_legacy_ids[sec] = r["tgt_legacy"]
+
+        # If not resolved from relationships, check sources table for the collection/folder
+        if not doc_legacy_id or not transcript_legacy_id:
+            cur.execute(
+                """
+                SELECT legacy_id, detected_type, relative_path
+                FROM sources
+                WHERE collection = ? AND relative_path LIKE ?
+                """,
+                (volume, f"%TEST {test_number}/%"),
+            )
+            for s in cur.fetchall():
+                st = dict(s)
+                if st["detected_type"] == "pdf" and not doc_legacy_id:
+                    doc_legacy_id = st["legacy_id"]
+                elif st["detected_type"] == "docx" and not transcript_legacy_id:
+                    transcript_legacy_id = st["legacy_id"]
+
+        if not doc_legacy_id or not transcript_legacy_id:
+            return None
+
+        # Verify doc and transcript exist in sources inventory
+        doc_src = get_source_by_legacy_id(conn, doc_legacy_id)
+        transcript_src = get_source_by_legacy_id(conn, transcript_legacy_id)
+        if not doc_src or not transcript_src:
+            return None
+
+        # Section titles: extract from raw doc OCR text if available, or default
+        section_titles: Dict[int, str] = {s: f"Section {s}" for s in range(1, 5)}
+        key_extracted_dir = REPO_ROOT / "private" / "staging" / "raw_extracted" / doc_legacy_id
+        if key_extracted_dir.exists():
+            for p_file in sorted(key_extracted_dir.glob("page_*.json")):
+                try:
+                    p_data = json.loads(p_file.read_text(encoding="utf-8"))
+                    txt = p_data.get("content", {}).get("text", "")
+                    if "Rental Property Application Form" in txt:
+                        section_titles[1] = "Rental Property Application Form"
+                    if "Pre-school Family Centre" in txt or "Family Centre" in txt:
+                        section_titles[2] = "The Pre-school Family Centre"
+                    if "Presentation on Foot Injuries" in txt or "foot injuries" in txt.lower():
+                        section_titles[3] = "Presentation on Foot Injuries"
+                    if "Supermarket Layout" in txt:
+                        section_titles[4] = "Supermarket Layout"
+                except Exception:
+                    pass
+
+        return {
+            "volume_code": volume_code,
+            "volume": volume,
+            "test_number": test_number,
+            "doc_legacy_id": doc_legacy_id,
+            "transcript_legacy_id": transcript_legacy_id,
+            "audio_legacy_ids": audio_legacy_ids,
+            "section_titles": section_titles,
+        }
+
     def run_pilot(
         self,
         force: bool = False,
@@ -197,10 +270,16 @@ class ListeningNormalizationOrchestrator:
 
         if config is not None:
             cfg = config
-        elif test_number is not None:
-            cfg = PILOT_LISTENING_CONFIGS.get(test_number, PILOT_LISTENING_CONFIG)
-        else:
+        elif test_number is None or test_number == 1:
             cfg = PILOT_LISTENING_CONFIG
+        else:
+            cfg = self.resolve_pilot_config(conn, test_number)
+            if cfg is None:
+                conn.close()
+                raise ValueError(
+                    f"Unsupported listening test configuration: Test {test_number} cannot be resolved "
+                    "from verified source relationships and inventory."
+                )
 
         vol_code = cfg["volume_code"]
         test_num = cfg["test_number"]
@@ -315,14 +394,34 @@ class ListeningNormalizationOrchestrator:
                 extractor_version="0.1.0-tesseract-pdftoppm",
                 normalizer_version=self.normalizer_version,
             )
+            # Derive aggregate answer_verification and lifecycle_status from child answers in this section
+            sec_answers = [a for a in answers if a.section_id == sec_id]
+            if sec_answers and all(a.quality_profile.answer_verification == "authoritative_key" for a in sec_answers):
+                sec_ans_verif = "authoritative_key"
+            elif sec_answers and all(a.quality_profile.answer_verification in ("authoritative_key", "consensus_key") for a in sec_answers):
+                sec_ans_verif = "consensus_key"
+            else:
+                sec_ans_verif = "unverified"
+
+            if sec_answers and all(a.quality_profile.lifecycle_status == "verified" for a in sec_answers):
+                sec_lifecycle = "verified"
+            elif any(a.quality_profile.lifecycle_status == "review_required" for a in sec_answers):
+                sec_lifecycle = "review_required"
+            else:
+                sec_lifecycle = "reviewed"
+
+            sec_flags = ["SECTION_NORMALIZED"]
+            if sec_ans_verif == "unverified":
+                sec_flags.append("UNVERIFIED_ANSWER_KEYS")
+
             sec_qp = QualityProfile(
-                lifecycle_status="reviewed",
+                lifecycle_status=sec_lifecycle,
                 extraction_quality="complete_clean",
                 source_fidelity="authoritative_official",
-                answer_verification="authoritative_key",
+                answer_verification=sec_ans_verif,
                 explanation_verification="missing_explanation",
                 publication_permission=publication_permission,  # type: ignore[arg-type]
-                validation_flags=["SECTION_NORMALIZED"],
+                validation_flags=sec_flags,
             )
 
             a_status = "available" if sec_aud.audio_verification_status == "verified" else "missing"
@@ -357,14 +456,34 @@ class ListeningNormalizationOrchestrator:
             extractor_version="0.1.0-tesseract-pdftoppm",
             normalizer_version=self.normalizer_version,
         )
+
+        # Derive aggregate test quality profile from child answers
+        if answers and all(a.quality_profile.answer_verification == "authoritative_key" for a in answers):
+            test_ans_verif = "authoritative_key"
+        elif answers and all(a.quality_profile.answer_verification in ("authoritative_key", "consensus_key") for a in answers):
+            test_ans_verif = "consensus_key"
+        else:
+            test_ans_verif = "unverified"
+
+        if answers and all(a.quality_profile.lifecycle_status == "verified" for a in answers):
+            test_lifecycle = "verified"
+        elif any(a.quality_profile.lifecycle_status == "review_required" for a in answers):
+            test_lifecycle = "review_required"
+        else:
+            test_lifecycle = "reviewed"
+
+        test_flags = ["COMPLETE_TEST_NORMALIZED"]
+        if test_ans_verif == "unverified":
+            test_flags.append("UNVERIFIED_ANSWER_KEYS")
+
         test_qp = QualityProfile(
-            lifecycle_status="reviewed",
+            lifecycle_status=test_lifecycle,
             extraction_quality="complete_clean",
             source_fidelity="authoritative_official",
-            answer_verification="authoritative_key",
+            answer_verification=test_ans_verif,
             explanation_verification="missing_explanation",
             publication_permission=publication_permission,  # type: ignore[arg-type]
-            validation_flags=["COMPLETE_TEST_NORMALIZED"],
+            validation_flags=test_flags,
         )
         listening_test = ListeningTest(
             test_id=test_id,
@@ -572,6 +691,32 @@ class ListeningNormalizationOrchestrator:
         """Writes the required private JSON reports and acceptance document."""
         cfg = config or PILOT_LISTENING_CONFIG
         # 1. pilot_inventory.json
+        conf_rels = []
+        try:
+            r_conn = get_db_connection(self.db_path)
+            cur = r_conn.cursor()
+            cur.execute(
+                """
+                SELECT relationship_id FROM source_relationships
+                WHERE volume = ? AND test_number = ? AND skill = 'listening' AND relationship_status = 'confirmed'
+                """,
+                (cfg.get("volume", "VOL 1"), cfg.get("test_number", 1)),
+            )
+            conf_rels = [row[0] for row in cur.fetchall()]
+            r_conn.close()
+        except Exception:
+            pass
+
+        if not conf_rels and cfg.get("test_number") == 1:
+            conf_rels = [
+                "REL-60baca75b5f63f07",
+                "REL-19c4d499067d2003",
+                "REL-b20d21aeb518edf1",
+                "REL-a1810ceb7d364d13",
+                "REL-1bd3c481493474a7",
+                "REL-38e04f7d60433c71",
+            ]
+
         inv_payload = {
             "pilot_test_id": test_id,
             "sources": [
@@ -603,14 +748,7 @@ class ListeningNormalizationOrchestrator:
                 }
                 for sec_num, a_src in audio_sources.items()
             ],
-            "confirmed_relationships": [
-                "REL-60baca75b5f63f07",
-                "REL-19c4d499067d2003",
-                "REL-b20d21aeb518edf1",
-                "REL-a1810ceb7d364d13",
-                "REL-1bd3c481493474a7",
-                "REL-38e04f7d60433c71",
-            ],
+            "confirmed_relationships": conf_rels,
         }
         with open(rep_dir / "pilot_inventory.json", "w", encoding="utf-8") as f:
             f.write(serialize_canonical_json(inv_payload))

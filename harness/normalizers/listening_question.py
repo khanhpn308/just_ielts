@@ -447,6 +447,15 @@ class ListeningQuestionNormalizer(BaseNormalizer):
             ans_id = f"ANS-{volume_code}-{test_number:02d}-LS-{q_num:03d}-KEY"
             evid_id = f"EVID-{volume_code}-{test_number:02d}-LS{sec_num:02d}-{q_num:02d}"
 
+            is_verified, ans_flags = validate_answer_source_verification(
+                item=item,
+                doc_source_record=doc_source_record,
+                volume_code=volume_code,
+                test_number=test_number,
+                artifact_metadata=art_meta,
+                conn=active_conn,
+            )
+
             # 1. Question Entity
             page_num = item.get("page_num", 1)
             q_prov = ProvenanceEnvelope(
@@ -462,13 +471,13 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 normalizer_version=self.normalizer_version,
             )
             q_qp = QualityProfile(
-                lifecycle_status="reviewed",
+                lifecycle_status="reviewed" if is_verified else "review_required",
                 extraction_quality="complete_clean",
                 source_fidelity="authoritative_official",
-                answer_verification="authoritative_key",
+                answer_verification="authoritative_key" if is_verified else "unverified",
                 explanation_verification="missing_explanation",
                 publication_permission=publication_permission,
-                validation_flags=["QUESTION_ORDER_VERIFIED"],
+                validation_flags=["QUESTION_ORDER_VERIFIED"] if is_verified else ["QUESTION_ORDER_VERIFIED", "UNVERIFIED_ANSWER_KEY"],
             )
             q_entity = ListeningQuestion(
                 question_id=q_id,
@@ -494,14 +503,6 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 or ""
             )
             ans_page = item.get("key_page") or art_meta.get("source_key_page") or 22
-            is_verified, ans_flags = validate_answer_source_verification(
-                item=item,
-                doc_source_record=doc_source_record,
-                volume_code=volume_code,
-                test_number=test_number,
-                artifact_metadata=art_meta,
-                conn=active_conn,
-            )
             ans_prov_status = "authoritative_source" if is_verified else "unverified"
 
             raw_block_locator = (

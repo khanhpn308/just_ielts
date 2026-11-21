@@ -197,7 +197,7 @@ class DocxReadingNormalizer(BaseNormalizer):
             lifecycle_status="reviewed",
             extraction_quality="complete_clean",
             source_fidelity="authoritative_official",
-            answer_verification="authoritative_key",
+            answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=[],
@@ -258,7 +258,7 @@ class DocxReadingNormalizer(BaseNormalizer):
             lifecycle_status="extracted",
             extraction_quality="complete_clean",
             source_fidelity="authoritative_official",
-            answer_verification="authoritative_key",
+            answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
             validation_flags=[],
@@ -438,7 +438,7 @@ class DocxReadingNormalizer(BaseNormalizer):
                 lifecycle_status="reviewed",
                 extraction_quality="complete_clean",
                 source_fidelity="authoritative_official",
-                answer_verification="authoritative_key",
+                answer_verification="unverified",
                 explanation_verification="source_provided",
                 publication_permission=publication_permission,  # type: ignore[arg-type]
                 validation_flags=[],
@@ -508,7 +508,7 @@ class DocxReadingNormalizer(BaseNormalizer):
                         lifecycle_status="extracted",
                         extraction_quality="complete_clean",
                         source_fidelity="authoritative_official",
-                        answer_verification="authoritative_key",
+                        answer_verification="unverified",
                         explanation_verification="source_provided",
                         publication_permission=publication_permission,  # type: ignore[arg-type]
                         validation_flags=[],
@@ -577,7 +577,7 @@ class DocxReadingNormalizer(BaseNormalizer):
                 lifecycle_status=status,  # type: ignore[arg-type]
                 extraction_quality="complete_clean" if matched_para else "segmented_imperfect",
                 source_fidelity="authoritative_official",
-                answer_verification="authoritative_key",
+                answer_verification="unverified",
                 explanation_verification="source_provided",
                 publication_permission=publication_permission,  # type: ignore[arg-type]
                 validation_flags=flags,
