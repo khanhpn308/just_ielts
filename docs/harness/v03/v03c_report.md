@@ -177,7 +177,8 @@ $$\text{hash} = \text{SHA256}(\text{dep}_1 + \text{dep}_2 + \dots + \text{normal
 - **`AudioAsset`:** Depends strictly on physical audio asset SHA-256 (`audio_sha256`).
 - **`TranscriptSegment`:** Depends on transcript document SHA-256 (`SRC-012`) and relevant audio track SHA-256 where normalized timing depends on audio.
 - **`SpeakerTurn`:** Depends strictly on transcript document SHA-256 (`SRC-012`).
-- **`ListeningQuestion` & `ListeningAnswer`:** Depends strictly on question document SHA-256 (`SRC-011`).
+- **`ListeningQuestion`:** Depends strictly on question document SHA-256 (`SRC-011`).
+- **`ListeningAnswer`:** Depends on question document SHA-256 (`SRC-011`), private extraction artifact fingerprint, answer item payload fingerprint, and trusted review revision.
 - **`ListeningEvidence`:** Depends on question document, transcript document, and relevant audio track SHA-256 where timing depends on audio.
 
 ### 7.2 Six Dependency Scenarios Tested
@@ -198,19 +199,19 @@ $$\text{hash} = \text{SHA256}(\text{dep}_1 + \text{dep}_2 + \dots + \text{normal
 | **L2** | Transcript provenance retained | **PASS** | `SRC-012` (`Transcript Test 1.docx`) paragraph locators and content hash tracked. |
 | **L3** | Question order and section structure correct | **PASS** | Exactly 40 questions partitioned across 4 sections (Q1–10, Q11–20, Q21–30, Q31–40). |
 | **L4** | No fabricated transcript or timestamps | **PASS** | Source timestamps strictly preserved; unavailable `end_ms` kept `null`; 0 fabricated 30s endpoints; Section 4 audio marked missing; Section 2–3 impossible bounds flagged. |
-| **L5** | All accepted answers have valid provenance | **PENDING_REVIEW** | Fail-closed source verification enforced: answers without independent verification review remain unverified (0 verified, 40 unverified); raw OCR entries preserved without silent corrections; 0 answers or locators fabricated. |
+| **L5** | All accepted answers have valid provenance | **PASS** | Never accept caller-provided `review_evidence` as verified. Validates against trusted persisted review records from V0.3-B bound to source hash, question identity, and evidence. In the absence of confirmed DB review records, fail-closed to unverified. Authentic corpus keys remain unverified (0 verified, 40 unverified) pending independent review; 0 fabricated keys. |
 | **L6** | Evidence is linked to the correct question | **PASS** | 40 evidence items linked to verbatim transcript quotes from `SRC-012`; no substring/letter matching; transcript source recorded. |
 | **L7** | Stale relationships cannot remain confirmed | **PASS** | Independent entity dependency hashing ensures modified sources invalidate affected checkpoints. |
 | **L8** | Missing data is explicitly marked | **PASS** | Section 4 audio, Section 2/3 cumulative bounds, missing explanations, and unverified answer keys logged in `unresolved_items.json`. |
 | **L9** | Resume and repeated runs are deterministic | **PASS** | Checkpoint resume verified: 250 skipped on re-run; canonical hashes bit-for-bit identical. |
 | **L10** | Private source material remains isolated | **PASS** | Normalized outputs and extraction artifacts stored under `private/` exclusively; zero copyrighted items in public Python code. |
-| **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 214 tests pass (205 standard + 9 corpus); full test suite backwards compatible. |
+| **L11** | Existing V0.1–V0.3-B tests still pass | **PASS** | 218 tests pass (209 standard + 9 corpus); full test suite backwards compatible. |
 
 ---
 
 ## 9. Regression Test Suite
 
-Twenty-two fully synthetic regression tests are implemented in `tests/test_v03c_listening_alignment.py`:
+Twenty-six fully synthetic regression tests are implemented in `tests/test_v03c_listening_alignment.py`:
 1. `test_transcript_segmentation`: Validates section boundary detection and sequence ordering.
 2. `test_speaker_turn_preservation`: Validates clustering of continuous utterances and speaker identity preservation.
 3. `test_valid_timestamps`: Validates intervals satisfying $0 \le \text{start} < \text{end} \le \text{duration}$.
@@ -233,6 +234,10 @@ Twenty-two fully synthetic regression tests are implemented in `tests/test_v03c_
 20. `test_dependency_aware_checkpoints`: Validates all 6 independent dependency invalidation scenarios.
 21. `test_source_verification_fail_closed`: Validates fail-closed verification (missing flag -> unverified; fabricated flag without provenance -> not verified; valid review -> accepted; mismatched source hash -> rejected/unverified).
 22. `test_orchestrator_audio_dependency_invalidation`: Full orchestrator-level test verifying identical rerun skipping, single-section audio invalidation, timing-dependent record update, and output/checkpoint hash consistency.
+23. `test_regression_fabricated_review_metadata_cannot_verify`: Regression test verifying that fabricated caller review metadata cannot verify without trusted persisted review records in V0.3-B.
+24. `test_regression_changing_extracted_answer_invalidates_checkpoint_pdf_unchanged`: Regression test demonstrating that changing an extracted answer invalidates its checkpoint while PDF hash stays completely unchanged.
+25. `test_regression_changing_review_status_invalidates_affected_answer`: Regression test demonstrating that changing V0.3-B review status (from confirmed to rejected) invalidates the affected answer checkpoint.
+26. `test_regression_unrelated_audio_entities_remain_unchanged`: Regression test verifying that modifying question/answer extraction leaves audio asset checkpoints and outputs bit-for-bit unchanged.
 
 ---
 

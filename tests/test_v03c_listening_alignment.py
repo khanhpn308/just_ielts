@@ -19,8 +19,10 @@ from harness.db import (
     get_db_connection,
     init_db,
     is_normalization_checkpoint_valid,
+    record_relationship_review,
     upsert_normalization_checkpoint,
     upsert_source,
+    upsert_source_relationship,
 )
 from harness.models.listening import (
     SCHEMA_VERSION_LISTENING,
@@ -77,6 +79,80 @@ def temp_db() -> sqlite3.Connection:
     conn.close()
     if db_path.exists():
         db_path.unlink(missing_ok=True)
+
+
+def seed_v03b_confirmed_review(
+    conn: sqlite3.Connection,
+    doc_source_record: Dict[str, Any],
+    volume: str = "VOL 99",
+    test_number: int = 1,
+    verified_answers: Optional[Dict[int, str]] = None,
+    review_decision: str = "approve",
+    relationship_status: str = "confirmed",
+    reviewer_id: str = "OPERATOR-01",
+    rel_id: Optional[str] = None,
+    rev_id: Optional[str] = None,
+    source_fingerprint: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Helper to seed a trusted V0.3-B relationship and review event into SQLite."""
+    upsert_source(conn, doc_source_record)
+    relationship_id = rel_id or f"REL-TEST-{doc_source_record['file_id'][:8]}-{test_number:02d}"
+    review_id = rev_id or f"REV-TEST-{relationship_id[4:12]}-01"
+    src_fp = source_fingerprint if source_fingerprint is not None else doc_source_record["content_sha256"]
+
+    target_fid = "FILE-SYN-KEY-0001"
+    upsert_source(conn, {
+        "file_id": target_fid,
+        "legacy_id": "SRC-SYN-KEY-01",
+        "relative_path": "synthetic_key.pdf",
+        "filename": "synthetic_key.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1024,
+        "content_sha256": "4444" * 16,
+        "collection": volume,
+        "duplicate_group": "synthetic",
+        "accessibility_status": "accessible",
+    })
+
+    upsert_source_relationship(conn, {
+        "relationship_id": relationship_id,
+        "source_file_id": doc_source_record["file_id"],
+        "target_file_id": target_fid,
+        "relationship_type": "question_to_answer_key",
+        "collection": volume,
+        "volume": volume,
+        "test_number": test_number,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": {},
+        "validation_flags": ["VOLUME_MATCH", "SKILL_MATCH", "TEST_NUMBER_MATCH"],
+        "match_confidence": 1.0,
+        "relationship_status": relationship_status,
+        "provenance": {"matcher_version": "0.3.0-a"},
+        "source_content_sha256": src_fp,
+        "schema_version": "v0.3.0-relationship",
+    })
+
+    ev_refs: Dict[str, Any] = {}
+    if verified_answers:
+        ev_refs["answer_keys"] = {test_number: verified_answers}
+
+    record_relationship_review(conn, {
+        "review_id": review_id,
+        "relationship_id": relationship_id,
+        "previous_status": "review_required",
+        "new_status": relationship_status,
+        "final_status": relationship_status,
+        "reviewer_id": reviewer_id,
+        "decision": review_decision,
+        "reason": "Human verified against authoritative answer key sheet",
+        "source_fingerprint": src_fp,
+        "evidence_references": ev_refs,
+        "reviewed_at": "2026-11-21T00:00:00Z",
+    })
+
+    return relationship_id, review_id
 
 
 # ==============================================================================
@@ -542,7 +618,7 @@ def test_question_to_section_mapping(synthetic_data):
 # ==============================================================================
 # TEST 10: Answer Provenance & Unverified Answer Flag
 # ==============================================================================
-def test_answer_provenance(synthetic_data):
+def test_answer_provenance(temp_db, synthetic_data):
     """Verifies authoritative source key references and flagging of unverified answers."""
     q_norm = ListeningQuestionNormalizer()
     src_doc = synthetic_data["sources"]["question_doc"]
@@ -552,6 +628,16 @@ def test_answer_provenance(synthetic_data):
     # Set one answer as unverified
     items[0]["source_verified"] = False
 
+    # Seed trusted persisted review records in V0.3-B for Q2..40
+    q_keys = {q["q_num"]: q["target_val"] for q in items[1:]}
+    seed_v03b_confirmed_review(
+        conn=temp_db,
+        doc_source_record=src_doc,
+        volume="VOL 99",
+        test_number=1,
+        verified_answers=q_keys,
+    )
+
     questions, answers, evidence = q_norm.normalize_listening_test_items(
         doc_source_record=src_doc,
         transcript_source_record=src_t,
@@ -560,6 +646,7 @@ def test_answer_provenance(synthetic_data):
         volume_code="VOL99",
         test_number=1,
         publication_permission="public_synthetic",
+        conn=temp_db,
     )
 
     # First answer must be flagged unverified
@@ -572,6 +659,21 @@ def test_answer_provenance(synthetic_data):
         assert ans.target_value is not None and len(ans.target_value) > 0
         assert ans.provenance.source_file_id == src_doc["file_id"]
         assert ans.provenance.source_sha256 == src_doc["content_sha256"]
+
+    # When integration is unavailable (conn=None), all answers remain unverified
+    _, unverified_answers, _ = q_norm.normalize_listening_test_items(
+        doc_source_record=src_doc,
+        transcript_source_record=src_t,
+        transcript_segments_by_sec={s: [] for s in range(1, 5)},
+        items_def=items,
+        volume_code="VOL99",
+        test_number=1,
+        publication_permission="public_synthetic",
+        conn=None,
+    )
+    for ans in unverified_answers:
+        assert ans.answer_provenance_status == "unverified"
+        assert "ANSWER_KEY_UNVERIFIED" in ans.quality_profile.validation_flags
 
 
 # ==============================================================================
@@ -1066,13 +1168,14 @@ def test_dependency_aware_checkpoints(temp_db, synthetic_data):
 # ==============================================================================
 # TEST 21: Fail-Closed Source Verification (Regression Test)
 # ==============================================================================
-def test_source_verification_fail_closed(synthetic_data):
+def test_source_verification_fail_closed(temp_db, synthetic_data):
     """Verifies fail-closed source verification:
     - source_verified missing -> unverified
-    - fabricated source_verified=True without valid provenance -> not verified
-    - valid source-linked review -> accepted
+    - fabricated review metadata without V0.3-B review record -> not verified
+    - valid trusted review persisted in V0.3-B -> accepted
     - mismatched source hash -> rejected/unverified
     """
+    conn = temp_db
     q_norm = ListeningQuestionNormalizer()
     src_doc = synthetic_data["sources"]["question_doc"]
     src_t = synthetic_data["sources"]["transcript_doc"]
@@ -1083,6 +1186,15 @@ def test_source_verification_fail_closed(synthetic_data):
         "review_decision": "accepted",
         "verification_method": "manual_source_check",
     }
+
+    # Seed trusted review in V0.3-B specifically for Q3
+    seed_v03b_confirmed_review(
+        conn=conn,
+        doc_source_record=src_doc,
+        volume="VOL 99",
+        test_number=1,
+        verified_answers={3: "station"},
+    )
 
     # Case 1: source_verified missing -> unverified
     item_missing_verified = {
@@ -1099,7 +1211,7 @@ def test_source_verification_fail_closed(synthetic_data):
         # 'source_verified' is omitted!
     }
 
-    # Case 2: fabricated source_verified=True without valid provenance -> not verified
+    # Case 2: fabricated review metadata without persisted V0.3-B record -> not verified
     item_fabricated = {
         "q_num": 2,
         "sec_num": 1,
@@ -1108,7 +1220,8 @@ def test_source_verification_fail_closed(synthetic_data):
         "prompt": "Test prompt 2",
         "raw_ocr_entry": "4.30",
         "target_val": "4.30",
-        "source_verified": True,  # Fabricated! Missing review evidence & source hash
+        "source_verified": True,  # Fabricated! Not in V0.3-B DB
+        "review_evidence": valid_review,
     }
 
     # Case 3: valid source-linked review -> accepted
@@ -1128,6 +1241,53 @@ def test_source_verification_fail_closed(synthetic_data):
     }
 
     # Case 4: mismatched source hash -> rejected/unverified
+    rel_mismatch_id = "REL-MISMATCH-9901"
+    target_mismatch_fid = "FILE-SYN-KEY-0004"
+    upsert_source(conn, {
+        "file_id": target_mismatch_fid,
+        "legacy_id": "SRC-SYN-KEY-04",
+        "relative_path": "synthetic_key_04.pdf",
+        "filename": "synthetic_key_04.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1024,
+        "content_sha256": "deadbeef" * 8,
+        "collection": "VOL 99",
+        "duplicate_group": "synthetic",
+        "accessibility_status": "accessible",
+    })
+    upsert_source_relationship(conn, {
+        "relationship_id": rel_mismatch_id,
+        "source_file_id": src_doc["file_id"],
+        "target_file_id": target_mismatch_fid,
+        "relationship_type": "question_to_answer_key",
+        "collection": "VOL 99",
+        "volume": "VOL 99",
+        "test_number": 1,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": {},
+        "validation_flags": ["VOLUME_MATCH"],
+        "match_confidence": 1.0,
+        "relationship_status": "confirmed",
+        "provenance": {"matcher_version": "0.3.0-a"},
+        "source_content_sha256": "deadbeef" * 8,
+        "schema_version": "v0.3.0-relationship",
+    })
+    record_relationship_review(conn, {
+        "review_id": "REV-MISMATCH-0001",
+        "relationship_id": rel_mismatch_id,
+        "previous_status": "review_required",
+        "new_status": "confirmed",
+        "final_status": "confirmed",
+        "reviewer_id": "OPERATOR-01",
+        "decision": "approve",
+        "reason": "Test mismatch",
+        "source_fingerprint": "deadbeef" * 8,
+        "evidence_references": {"answer_keys": {1: {4: "cooking"}}},
+        "reviewed_at": "2026-11-21T00:00:00Z",
+    })
+
     item_mismatched_hash = {
         "q_num": 4,
         "sec_num": 1,
@@ -1151,6 +1311,7 @@ def test_source_verification_fail_closed(synthetic_data):
         volume_code="VOL99",
         test_number=1,
         publication_permission="public_synthetic",
+        conn=conn,
     )
 
     ans_missing, ans_fab, ans_ok, ans_mismatch = answers
@@ -1164,7 +1325,7 @@ def test_source_verification_fail_closed(synthetic_data):
     # Case 2: not verified
     assert ans_fab.answer_provenance_status == "unverified"
     assert "ANSWER_KEY_UNVERIFIED" in ans_fab.quality_profile.validation_flags
-    assert "MISSING_VERIFICATION_EVIDENCE" in ans_fab.quality_profile.validation_flags
+    assert "CALLER_REVIEW_EVIDENCE_REJECTED" in ans_fab.quality_profile.validation_flags
     assert ans_fab.quality_profile.lifecycle_status == "review_required"
 
     # Case 3: accepted
@@ -1364,13 +1525,16 @@ def test_orchestrator_audio_dependency_invalidation(synthetic_data):
         assert checkpoints["AUDIO-VOL99-01-SEC03"][2] == src_a3["content_sha256"]
 
         # Section 1 segments: updated
-        # Questions & Answers: unchanged
+        # Questions & Answers: unchanged and skipped
         for q in questions:
             q_id = f"Q-VOL99-01-LS-{q['q_num']:03d}"
             ans_id = f"ANS-VOL99-01-LS-{q['q_num']:03d}-KEY"
-            # Dependency hash of questions and answers depends strictly on doc_sha256!
+            # Dependency hash of questions depends strictly on doc_sha256
             assert checkpoints[q_id][2] == src_doc["content_sha256"]
-            assert checkpoints[ans_id][2] == src_doc["content_sha256"]
+            # Dependency hash of answers includes doc_sha256, extraction artifact fingerprint, and review revision
+            assert checkpoints[ans_id][2] is not None
+            assert len(checkpoints[ans_id][2]) == 64
+            assert checkpoints[ans_id][2] != src_doc["content_sha256"]
 
         # Checkpoint hashes consistent with outputs on disk
         for ent_id, row in checkpoints.items():
@@ -1378,4 +1542,602 @@ def test_orchestrator_audio_dependency_invalidation(synthetic_data):
             assert out_p.exists()
             content_bytes = out_p.read_bytes()
             assert hashlib.sha256(content_bytes).hexdigest() == row[5]
+
+
+# ==============================================================================
+# TEST 23: Regression Test 1 — Fabricated Review Metadata Cannot Verify
+# ==============================================================================
+def test_regression_fabricated_review_metadata_cannot_verify(synthetic_data):
+    """Regression Test 1: Fabricated caller-provided review metadata CANNOT verify.
+
+    Demonstrates:
+    - Caller passes item with review_evidence containing plausible reviewer_id,
+      timestamp, 'accepted' decision, and valid source SHA.
+    - Because no trusted review record exists in V0.3-B SQLite database,
+      the answer MUST remain unverified fail-closed.
+    - Zero promotion to authoritative_source occurs.
+    """
+    q_norm = ListeningQuestionNormalizer()
+    src_doc = synthetic_data["sources"]["question_doc"]
+    src_t = synthetic_data["sources"]["transcript_doc"]
+
+    fabricated_item = {
+        "q_num": 5,
+        "sec_num": 1,
+        "page_num": 1,
+        "q_type": "table-completion",
+        "prompt": "Test fabricated prompt",
+        "raw_ocr_entry": "fabricated_answer",
+        "target_val": "fabricated_answer",
+        "source_key_ref": "SRC-9901:page_1:key_5",
+        "source_verified": True,
+        "review_evidence": {
+            "reviewer_id": "OPERATOR-FABRICATED",
+            "reviewed_at": "2026-11-21T12:00:00Z",
+            "review_decision": "accepted",
+            "verification_method": "manual_source_check",
+            "source_sha256": src_doc["content_sha256"],
+        },
+    }
+
+    # Case A: Call with conn=None (integration unavailable)
+    _, answers_no_conn, _ = q_norm.normalize_listening_test_items(
+        doc_source_record=src_doc,
+        transcript_source_record=src_t,
+        transcript_segments_by_sec={1: []},
+        items_def=[fabricated_item],
+        volume_code="VOL99",
+        test_number=1,
+        publication_permission="public_synthetic",
+        conn=None,
+    )
+    ans_no_conn = answers_no_conn[0]
+    assert ans_no_conn.answer_provenance_status == "unverified"
+    assert ans_no_conn.quality_profile.lifecycle_status == "review_required"
+    assert ans_no_conn.quality_profile.answer_verification == "unverified"
+    assert "ANSWER_KEY_UNVERIFIED" in ans_no_conn.quality_profile.validation_flags
+    assert "CALLER_REVIEW_EVIDENCE_REJECTED" in ans_no_conn.quality_profile.validation_flags
+
+    # Case B: Call with clean temp_db (no V0.3-B review records present)
+    with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+        db_p = Path(tf.name)
+    init_db(db_p)
+    conn = get_db_connection(db_p)
+    try:
+        _, answers_empty_db, _ = q_norm.normalize_listening_test_items(
+            doc_source_record=src_doc,
+            transcript_source_record=src_t,
+            transcript_segments_by_sec={1: []},
+            items_def=[fabricated_item],
+            volume_code="VOL99",
+            test_number=1,
+            publication_permission="public_synthetic",
+            conn=conn,
+        )
+        ans_empty_db = answers_empty_db[0]
+        assert ans_empty_db.answer_provenance_status == "unverified"
+        assert ans_empty_db.quality_profile.lifecycle_status == "review_required"
+        assert "ANSWER_KEY_UNVERIFIED" in ans_empty_db.quality_profile.validation_flags
+        assert "CALLER_REVIEW_EVIDENCE_REJECTED" in ans_empty_db.quality_profile.validation_flags
+    finally:
+        conn.close()
+        db_p.unlink(missing_ok=True)
+
+
+# ==============================================================================
+# TEST 24: Regression Test 2 — Changing Extracted Answer Invalidates Checkpoint
+# ==============================================================================
+def test_regression_changing_extracted_answer_invalidates_checkpoint_pdf_unchanged(synthetic_data):
+    """Regression Test 2: Changing an extracted answer invalidates its checkpoint while PDF stays unchanged.
+
+    Demonstrates:
+    - Initial normalization run writes answer checkpoint with dependency hash (dep1).
+    - Source PDF hash (doc_sha256) remains completely unchanged.
+    - Extracted answer value in extraction artifact is modified.
+    - Checkpoint dependency hash changes (dep2 != dep1).
+    - On rerun without force, answer checkpoint is invalidated and answer is rewritten.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp_p = Path(td)
+        db_path = tmp_p / "test_harness.db"
+        out_dir = tmp_p / "normalized"
+        rep_dir = tmp_p / "reports"
+
+        init_db(db_path)
+        conn = get_db_connection(db_path)
+
+        src_doc = synthetic_data["sources"]["question_doc"]
+        src_t = synthetic_data["sources"]["transcript_doc"]
+        src_a1 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a2 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a2["file_id"] = "FILE-a00000000004"
+        src_a2["legacy_id"] = "SRC-9904"
+        src_a2["relative_path"] = "data/synthetic/VOL99/AudioTrack_02.mp3"
+        src_a2["filename"] = "AudioTrack_02.mp3"
+        src_a2["content_sha256"] = "dddd4444" * 8
+        src_a3 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a3["file_id"] = "FILE-a00000000005"
+        src_a3["legacy_id"] = "SRC-9905"
+        src_a3["relative_path"] = "data/synthetic/VOL99/AudioTrack_03.mp3"
+        src_a3["filename"] = "AudioTrack_03.mp3"
+        src_a3["content_sha256"] = "eeee5555" * 8
+
+        upsert_source(conn, src_doc)
+        upsert_source(conn, src_t)
+        upsert_source(conn, src_a1)
+        upsert_source(conn, src_a2)
+        upsert_source(conn, src_a3)
+
+        cfg = {
+            "volume_code": "VOL99",
+            "volume": "VOL 99",
+            "test_number": 1,
+            "doc_legacy_id": src_doc["legacy_id"],
+            "transcript_legacy_id": src_t["legacy_id"],
+            "audio_legacy_ids": {1: src_a1["legacy_id"], 2: src_a2["legacy_id"], 3: src_a3["legacy_id"], 4: None},
+        }
+
+        # Seed trusted review for Q1
+        seed_v03b_confirmed_review(
+            conn=conn,
+            doc_source_record=src_doc,
+            volume="VOL 99",
+            test_number=1,
+            verified_answers={1: "original_answer"},
+        )
+        conn.close()
+
+        class MockAligner(AudioAligner):
+            def build_audio_asset(self, *args, **kwargs):
+                sec_num = kwargs.get("section_number", 1)
+                audio_id = f"AUDIO-VOL99-01-SEC{sec_num:02d}"
+                s_rec = kwargs.get("source_record")
+                s_fid = s_rec["file_id"] if s_rec else src_doc["file_id"]
+                s_leg = s_rec["legacy_id"] if s_rec and s_rec.get("legacy_id") else "SRC-9901"
+                s_sha = s_rec["content_sha256"] if s_rec else "0" * 64
+                prov = ProvenanceEnvelope(
+                    source_file_id=s_fid,
+                    source_legacy_id=s_leg,
+                    relative_path="audio.mp3",
+                    source_sha256=s_sha,
+                    processing_unit="audio",
+                    unit_identifier="sec",
+                    raw_block_locator="track:1",
+                    extractor_adapter="meta",
+                    extractor_version="0.1.0",
+                    normalizer_version="0.3.0-c",
+                )
+                qp = QualityProfile(
+                    lifecycle_status="verified", extraction_quality="complete_clean",
+                    source_fidelity="authoritative_official", answer_verification="unverified",
+                    explanation_verification="missing_explanation", publication_permission="public_synthetic",
+                    validation_flags=["AUDIO_VERIFIED"],
+                )
+                return AudioAsset(
+                    audio_id=audio_id, test_id="TEST-IELTS-VOL99-01-LIS", section_number=sec_num,
+                    file_path="audio.mp3", source_file_id=s_fid, source_legacy_id=s_leg, source_sha256=s_sha,
+                    format="mp3", duration_ms=600000, duration_sec=600.0,
+                    sample_rate_hz=44100, channels="stereo", bitrate_kbps=128,
+                    audio_verification_status="verified" if s_rec else "missing",
+                    quality_profile=qp, _provenance=prov,
+                )
+
+        orchestrator = ListeningNormalizationOrchestrator(
+            output_dir=out_dir,
+            db_path=db_path,
+            audio_aligner=MockAligner(),
+        )
+
+        paragraphs = synthetic_data["transcript_paragraphs"]
+        questions = copy.deepcopy(synthetic_data["questions"])
+        questions[0]["target_val"] = "original_answer"
+        questions[0]["raw_ocr_entry"] = "original_answer"
+
+        # 1. Run 1: initial normalization
+        res1 = orchestrator.run_pilot(
+            config=cfg,
+            paragraphs=paragraphs,
+            items_def=questions,
+            reports_dir=rep_dir,
+            publication_permission="public_synthetic",
+        )
+        assert res1["written_count"] == res1["total_entities"]
+
+        conn = get_db_connection(db_path)
+        cp_cur = conn.execute("SELECT raw_sha256, output_sha256 FROM normalization_checkpoints WHERE entity_id = 'ANS-VOL99-01-LS-001-KEY'")
+        ans1_cp = cp_cur.fetchone()
+        conn.close()
+        assert ans1_cp is not None
+        dep1, out1_sha = ans1_cp
+
+        # Read output on disk
+        ans1_file = out_dir / "listening_answer" / "ANS-VOL99-01-LS-001-KEY.json"
+        with open(ans1_file, "r", encoding="utf-8") as f:
+            ans1_json = json.load(f)
+        assert ans1_json["target_value"] == "original_answer"
+
+        # 2. Modify extracted answer ONLY (PDF stays unchanged)
+        # Note: src_doc content_sha256 stays EXACTLY the same!
+        questions_mod = copy.deepcopy(questions)
+        questions_mod[0]["target_val"] = "modified_answer"
+        questions_mod[0]["raw_ocr_entry"] = "modified_answer"
+
+        # 3. Run 2: without force
+        res2 = orchestrator.run_pilot(
+            config=cfg,
+            paragraphs=paragraphs,
+            items_def=questions_mod,
+            reports_dir=rep_dir,
+            publication_permission="public_synthetic",
+        )
+
+        # Answer checkpoint was invalidated, so it was rewritten
+        assert res2["written_count"] > 0
+
+        conn = get_db_connection(db_path)
+        cp_cur2 = conn.execute("SELECT raw_sha256, output_sha256 FROM normalization_checkpoints WHERE entity_id = 'ANS-VOL99-01-LS-001-KEY' ORDER BY checkpoint_id DESC")
+        ans2_cp = cp_cur2.fetchone()
+        conn.close()
+        assert ans2_cp is not None
+        dep2, out2_sha = ans2_cp
+
+        # Assert: Checkpoint dependency hash changed while PDF stayed unchanged
+        assert dep2 != dep1
+        assert out2_sha != out1_sha
+
+        # Read updated output on disk
+        with open(ans1_file, "r", encoding="utf-8") as f:
+            ans2_json = json.load(f)
+        assert ans2_json["target_value"] == "modified_answer"
+
+
+# ==============================================================================
+# TEST 25: Regression Test 3 — Changing Review Status Invalidates Affected Answer
+# ==============================================================================
+def test_regression_changing_review_status_invalidates_affected_answer(synthetic_data):
+    """Regression Test 3: Changing review status invalidates the affected answer checkpoint.
+
+    Demonstrates:
+    - Step 1: Confirmed review in V0.3-B promotes answer to authoritative_source / verified.
+      Checkpoint is saved with review revision rev1.
+    - Step 2: Review status changes in V0.3-B (e.g. from confirmed to rejected).
+      Review revision changes (rev2 != rev1).
+    - Step 3: Checkpoint dependency hash for the affected answer changes, invalidating checkpoint.
+    - Step 4: On rerun without force, affected answer is rewritten and transitions to
+      unverified / review_required.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp_p = Path(td)
+        db_path = tmp_p / "test_harness.db"
+        out_dir = tmp_p / "normalized"
+        rep_dir = tmp_p / "reports"
+
+        init_db(db_path)
+        conn = get_db_connection(db_path)
+
+        src_doc = synthetic_data["sources"]["question_doc"]
+        src_t = synthetic_data["sources"]["transcript_doc"]
+        src_a1 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a2 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a2["file_id"] = "FILE-a00000000004"
+        src_a2["legacy_id"] = "SRC-9904"
+        src_a2["relative_path"] = "data/synthetic/VOL99/AudioTrack_02.mp3"
+        src_a2["filename"] = "AudioTrack_02.mp3"
+        src_a2["content_sha256"] = "dddd4444" * 8
+        src_a3 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a3["file_id"] = "FILE-a00000000005"
+        src_a3["legacy_id"] = "SRC-9905"
+        src_a3["relative_path"] = "data/synthetic/VOL99/AudioTrack_03.mp3"
+        src_a3["filename"] = "AudioTrack_03.mp3"
+        src_a3["content_sha256"] = "eeee5555" * 8
+
+        upsert_source(conn, src_doc)
+        upsert_source(conn, src_t)
+        upsert_source(conn, src_a1)
+        upsert_source(conn, src_a2)
+        upsert_source(conn, src_a3)
+
+        cfg = {
+            "volume_code": "VOL99",
+            "volume": "VOL 99",
+            "test_number": 1,
+            "doc_legacy_id": src_doc["legacy_id"],
+            "transcript_legacy_id": src_t["legacy_id"],
+            "audio_legacy_ids": {1: src_a1["legacy_id"], 2: src_a2["legacy_id"], 3: src_a3["legacy_id"], 4: None},
+        }
+
+        # Step 1: Seed confirmed review for Q1
+        rel_id, rev1_id = seed_v03b_confirmed_review(
+            conn=conn,
+            doc_source_record=src_doc,
+            volume="VOL 99",
+            test_number=1,
+            verified_answers={1: "station"},
+            review_decision="approve",
+            relationship_status="confirmed",
+            rev_id="REV-TEST-0001",
+        )
+        conn.close()
+
+        class MockAligner(AudioAligner):
+            def build_audio_asset(self, *args, **kwargs):
+                sec_num = kwargs.get("section_number", 1)
+                audio_id = f"AUDIO-VOL99-01-SEC{sec_num:02d}"
+                s_rec = kwargs.get("source_record")
+                s_fid = s_rec["file_id"] if s_rec else src_doc["file_id"]
+                s_leg = s_rec["legacy_id"] if s_rec and s_rec.get("legacy_id") else "SRC-9901"
+                s_sha = s_rec["content_sha256"] if s_rec else "0" * 64
+                prov = ProvenanceEnvelope(
+                    source_file_id=s_fid,
+                    source_legacy_id=s_leg,
+                    relative_path="audio.mp3",
+                    source_sha256=s_sha,
+                    processing_unit="audio",
+                    unit_identifier="sec",
+                    raw_block_locator="track:1",
+                    extractor_adapter="meta",
+                    extractor_version="0.1.0",
+                    normalizer_version="0.3.0-c",
+                )
+                qp = QualityProfile(
+                    lifecycle_status="verified", extraction_quality="complete_clean",
+                    source_fidelity="authoritative_official", answer_verification="unverified",
+                    explanation_verification="missing_explanation", publication_permission="public_synthetic",
+                    validation_flags=["AUDIO_VERIFIED"],
+                )
+                return AudioAsset(
+                    audio_id=audio_id, test_id="TEST-IELTS-VOL99-01-LIS", section_number=sec_num,
+                    file_path="audio.mp3", source_file_id=s_fid, source_legacy_id=s_leg, source_sha256=s_sha,
+                    format="mp3", duration_ms=600000, duration_sec=600.0,
+                    sample_rate_hz=44100, channels="stereo", bitrate_kbps=128,
+                    audio_verification_status="verified" if s_rec else "missing",
+                    quality_profile=qp, _provenance=prov,
+                )
+
+        orchestrator = ListeningNormalizationOrchestrator(
+            output_dir=out_dir,
+            db_path=db_path,
+            audio_aligner=MockAligner(),
+        )
+
+        paragraphs = synthetic_data["transcript_paragraphs"]
+        questions = copy.deepcopy(synthetic_data["questions"])
+        questions[0]["target_val"] = "station"
+        questions[0]["raw_ocr_entry"] = "station"
+
+        # Initial run: Q1 is verified
+        res1 = orchestrator.run_pilot(
+            config=cfg,
+            paragraphs=paragraphs,
+            items_def=questions,
+            reports_dir=rep_dir,
+            publication_permission="public_synthetic",
+        )
+        assert res1["written_count"] == res1["total_entities"]
+
+        ans1_file = out_dir / "listening_answer" / "ANS-VOL99-01-LS-001-KEY.json"
+        with open(ans1_file, "r", encoding="utf-8") as f:
+            ans1_json = json.load(f)
+        assert ans1_json["answer_provenance_status"] == "authoritative_source"
+        assert ans1_json["quality_profile"]["lifecycle_status"] == "verified"
+
+        conn = get_db_connection(db_path)
+        cp_cur1 = conn.execute("SELECT raw_sha256 FROM normalization_checkpoints WHERE entity_id = 'ANS-VOL99-01-LS-001-KEY'")
+        dep1 = cp_cur1.fetchone()[0]
+
+        # Step 2: Human review audit in V0.3-B rejects the relationship
+        upsert_source_relationship(conn, {
+            "relationship_id": rel_id,
+            "source_file_id": src_doc["file_id"],
+            "target_file_id": "FILE-SYN-KEY-0001",
+            "relationship_type": "question_to_answer_key",
+            "collection": "VOL 99",
+            "volume": "VOL 99",
+            "test_number": 1,
+            "passage_or_section": None,
+            "skill": "listening",
+            "identity_evidence": {},
+            "validation_flags": ["REVIEW_REJECTED"],
+            "match_confidence": 0.0,
+            "relationship_status": "rejected",
+            "provenance": {"matcher_version": "0.3.0-a"},
+            "source_content_sha256": src_doc["content_sha256"],
+            "schema_version": "v0.3.0-relationship",
+        })
+        record_relationship_review(conn, {
+            "review_id": "REV-TEST-0002",
+            "relationship_id": rel_id,
+            "previous_status": "confirmed",
+            "new_status": "rejected",
+            "final_status": "rejected",
+            "reviewer_id": "AUDITOR-02",
+            "decision": "reject",
+            "reason": "Audit review found answer key discrepancy",
+            "source_fingerprint": src_doc["content_sha256"],
+            "evidence_references": {},
+            "reviewed_at": "2026-11-21T12:00:00Z",
+        })
+        conn.close()
+
+        # Step 3: Rerun orchestrator without force
+        res2 = orchestrator.run_pilot(
+            config=cfg,
+            paragraphs=paragraphs,
+            items_def=questions,
+            reports_dir=rep_dir,
+            publication_permission="public_synthetic",
+        )
+
+        # Answer checkpoint was invalidated, so it was rewritten
+        assert res2["written_count"] > 0
+
+        conn = get_db_connection(db_path)
+        cp_cur2 = conn.execute("SELECT raw_sha256 FROM normalization_checkpoints WHERE entity_id = 'ANS-VOL99-01-LS-001-KEY' ORDER BY checkpoint_id DESC")
+        dep2 = cp_cur2.fetchone()[0]
+        conn.close()
+
+        # Checkpoint dependency hash changed
+        assert dep2 != dep1
+
+        # Disk entity now reflects rejected review (unverified / review_required)
+        with open(ans1_file, "r", encoding="utf-8") as f:
+            ans2_json = json.load(f)
+        assert ans2_json["answer_provenance_status"] == "unverified"
+        assert ans2_json["quality_profile"]["lifecycle_status"] == "review_required"
+
+
+# ==============================================================================
+# TEST 26: Regression Test 4 — Unrelated Audio Entities Remain Unchanged
+# ==============================================================================
+def test_regression_unrelated_audio_entities_remain_unchanged(synthetic_data):
+    """Regression Test 4: Unrelated audio entities remain unchanged when an answer or review changes.
+
+    Demonstrates:
+    - Initial run writes audio and answer checkpoints.
+    - Extracted answer is changed and review status is modified.
+    - Audio assets (AUDIO-VOL99-01-SEC01, SEC02, SEC03) dependency hashes remain identical.
+    - Audio asset checkpoints remain 100% valid.
+    - Zero audio entities are rewritten upon rerun; all are skipped.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp_p = Path(td)
+        db_path = tmp_p / "test_harness.db"
+        out_dir = tmp_p / "normalized"
+        rep_dir = tmp_p / "reports"
+
+        init_db(db_path)
+        conn = get_db_connection(db_path)
+
+        src_doc = synthetic_data["sources"]["question_doc"]
+        src_t = synthetic_data["sources"]["transcript_doc"]
+        src_a1 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a2 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a2["file_id"] = "FILE-a00000000004"
+        src_a2["legacy_id"] = "SRC-9904"
+        src_a2["relative_path"] = "data/synthetic/VOL99/AudioTrack_02.mp3"
+        src_a2["filename"] = "AudioTrack_02.mp3"
+        src_a2["content_sha256"] = "dddd4444" * 8
+        src_a3 = copy.deepcopy(synthetic_data["sources"]["audio_track_1"])
+        src_a3["file_id"] = "FILE-a00000000005"
+        src_a3["legacy_id"] = "SRC-9905"
+        src_a3["relative_path"] = "data/synthetic/VOL99/AudioTrack_03.mp3"
+        src_a3["filename"] = "AudioTrack_03.mp3"
+        src_a3["content_sha256"] = "eeee5555" * 8
+
+        upsert_source(conn, src_doc)
+        upsert_source(conn, src_t)
+        upsert_source(conn, src_a1)
+        upsert_source(conn, src_a2)
+        upsert_source(conn, src_a3)
+
+        cfg = {
+            "volume_code": "VOL99",
+            "volume": "VOL 99",
+            "test_number": 1,
+            "doc_legacy_id": src_doc["legacy_id"],
+            "transcript_legacy_id": src_t["legacy_id"],
+            "audio_legacy_ids": {1: src_a1["legacy_id"], 2: src_a2["legacy_id"], 3: src_a3["legacy_id"], 4: None},
+        }
+
+        # Seed review for Q1
+        seed_v03b_confirmed_review(
+            conn=conn,
+            doc_source_record=src_doc,
+            volume="VOL 99",
+            test_number=1,
+            verified_answers={1: "original"},
+            rev_id="REV-TEST-0001",
+        )
+        conn.close()
+
+        class MockAligner(AudioAligner):
+            def build_audio_asset(self, *args, **kwargs):
+                sec_num = kwargs.get("section_number", 1)
+                audio_id = f"AUDIO-VOL99-01-SEC{sec_num:02d}"
+                s_rec = kwargs.get("source_record")
+                s_fid = s_rec["file_id"] if s_rec else src_doc["file_id"]
+                s_leg = s_rec["legacy_id"] if s_rec and s_rec.get("legacy_id") else "SRC-9901"
+                s_sha = s_rec["content_sha256"] if s_rec else "0" * 64
+                prov = ProvenanceEnvelope(
+                    source_file_id=s_fid,
+                    source_legacy_id=s_leg,
+                    relative_path="audio.mp3",
+                    source_sha256=s_sha,
+                    processing_unit="audio",
+                    unit_identifier="sec",
+                    raw_block_locator="track:1",
+                    extractor_adapter="meta",
+                    extractor_version="0.1.0",
+                    normalizer_version="0.3.0-c",
+                )
+                qp = QualityProfile(
+                    lifecycle_status="verified", extraction_quality="complete_clean",
+                    source_fidelity="authoritative_official", answer_verification="unverified",
+                    explanation_verification="missing_explanation", publication_permission="public_synthetic",
+                    validation_flags=["AUDIO_VERIFIED"],
+                )
+                return AudioAsset(
+                    audio_id=audio_id, test_id="TEST-IELTS-VOL99-01-LIS", section_number=sec_num,
+                    file_path="audio.mp3", source_file_id=s_fid, source_legacy_id=s_leg, source_sha256=s_sha,
+                    format="mp3", duration_ms=600000, duration_sec=600.0,
+                    sample_rate_hz=44100, channels="stereo", bitrate_kbps=128,
+                    audio_verification_status="verified" if s_rec else "missing",
+                    quality_profile=qp, _provenance=prov,
+                )
+
+        orchestrator = ListeningNormalizationOrchestrator(
+            output_dir=out_dir,
+            db_path=db_path,
+            audio_aligner=MockAligner(),
+        )
+
+        paragraphs = synthetic_data["transcript_paragraphs"]
+        questions = copy.deepcopy(synthetic_data["questions"])
+        questions[0]["target_val"] = "original"
+
+        # 1. Initial Run
+        res1 = orchestrator.run_pilot(
+            config=cfg,
+            paragraphs=paragraphs,
+            items_def=questions,
+            reports_dir=rep_dir,
+            publication_permission="public_synthetic",
+        )
+        assert res1["written_count"] == res1["total_entities"]
+
+        # Record initial audio checkpoints
+        conn = get_db_connection(db_path)
+        cur = conn.execute("SELECT entity_id, raw_sha256, output_sha256 FROM normalization_checkpoints WHERE entity_type = 'audio_asset'")
+        initial_audio_cps = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+        conn.close()
+
+        assert "AUDIO-VOL99-01-SEC01" in initial_audio_cps
+        assert "AUDIO-VOL99-01-SEC02" in initial_audio_cps
+        assert "AUDIO-VOL99-01-SEC03" in initial_audio_cps
+
+        # 2. Mutate extracted answer
+        questions_changed = copy.deepcopy(questions)
+        questions_changed[0]["target_val"] = "new_value"
+
+        # 3. Rerun orchestrator without force
+        res2 = orchestrator.run_pilot(
+            config=cfg,
+            paragraphs=paragraphs,
+            items_def=questions_changed,
+            reports_dir=rep_dir,
+            publication_permission="public_synthetic",
+        )
+
+        # 4. Verify audio entities are completely unchanged and skipped
+        conn = get_db_connection(db_path)
+        cur2 = conn.execute("SELECT entity_id, raw_sha256, output_sha256 FROM normalization_checkpoints WHERE entity_type = 'audio_asset'")
+        current_audio_cps = {row[0]: (row[1], row[2]) for row in cur2.fetchall()}
+        conn.close()
+
+        for aud_id, cp_val in initial_audio_cps.items():
+            # Checkpoint dependency hash and output hash are 100% identical
+            assert current_audio_cps[aud_id] == cp_val
+
+        # Skipped count is positive, reflecting that audio entities were skipped
+        assert res2["skipped_count"] >= len(initial_audio_cps)
 

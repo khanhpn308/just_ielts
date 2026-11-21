@@ -36,7 +36,10 @@ from harness.normalizers.base import (
     compute_canonical_content_hash,
     serialize_canonical_json,
 )
-from harness.normalizers.listening_question import ListeningQuestionNormalizer
+from harness.normalizers.listening_question import (
+    ListeningQuestionNormalizer,
+    lookup_trusted_answer_review,
+)
 from harness.normalizers.transcript import TranscriptNormalizer
 
 NORMALIZER_VERSION_LISTENING = "0.3.0-c"
@@ -69,6 +72,9 @@ def compute_listening_entity_dependency_hash(
     audio_sha256_by_sec: Dict[int, Optional[str]],
     section_number: Optional[int] = None,
     timing_depends_on_audio: bool = True,
+    extraction_artifact_fingerprint: Optional[str] = None,
+    review_revision: Optional[str] = None,
+    item_payload_fingerprint: Optional[str] = None,
 ) -> str:
     """Computes independent dependency hash for an entity based on its actual source dependencies."""
     if entity_type == "audio_asset":
@@ -88,7 +94,16 @@ def compute_listening_entity_dependency_hash(
     elif entity_type == "listening_question":
         return doc_sha256
     elif entity_type == "listening_answer":
-        return doc_sha256
+        h = hashlib.sha256()
+        h.update(doc_sha256.encode("utf-8"))
+        h.update(b":artifact:")
+        h.update((extraction_artifact_fingerprint or "no_artifact").encode("utf-8"))
+        if item_payload_fingerprint:
+            h.update(b":item:")
+            h.update(item_payload_fingerprint.encode("utf-8"))
+        h.update(b":review:")
+        h.update((review_revision or "unreviewed").encode("utf-8"))
+        return h.hexdigest()
     elif entity_type == "listening_evidence":
         h = hashlib.sha256()
         h.update(transcript_sha256.encode("utf-8"))
@@ -243,6 +258,7 @@ class ListeningNormalizationOrchestrator:
             volume_code=vol_code,
             test_number=test_num,
             publication_permission=publication_permission,  # type: ignore[arg-type]
+            conn=conn,
         )
 
         # 6. Build ListeningSection Entities
@@ -281,7 +297,7 @@ class ListeningNormalizationOrchestrator:
                 section_id=sec_id,
                 test_id=test_id,
                 section_number=sec_num,
-                title=cfg["section_titles"][sec_num],
+                title=cfg.get("section_titles", {}).get(sec_num, f"Section {sec_num}"),
                 audio_asset_id=sec_aud.audio_id if sec_aud.audio_verification_status == "verified" else None,
                 audio_status=a_status,
                 transcript_status="verified_source",
@@ -342,8 +358,8 @@ class ListeningNormalizationOrchestrator:
         all_entities.append((test_id, "listening_test", listening_test, doc_src["file_id"], doc_src.get("legacy_id") or "UNKNOWN", None))
 
         for aud in audio_assets:
-            s_fid = aud.source_file_id if aud.audio_verification_status != "missing" else doc_src["file_id"]
-            s_leg = aud.source_legacy_id if aud.audio_verification_status != "missing" else (doc_src.get("legacy_id") or "UNKNOWN")
+            s_fid = aud.source_file_id if (aud.audio_verification_status != "missing" and aud.source_file_id) else doc_src["file_id"]
+            s_leg = (aud.source_legacy_id if (aud.audio_verification_status != "missing" and aud.source_legacy_id) else None) or (doc_src.get("legacy_id") or "UNKNOWN")
             all_entities.append((aud.audio_id, "audio_asset", aud, s_fid, s_leg, aud.section_number))
         for sec in listening_sections:
             all_entities.append((sec.section_id, "listening_section", sec, doc_src["file_id"], doc_src.get("legacy_id") or "UNKNOWN", sec.section_number))
@@ -360,6 +376,46 @@ class ListeningNormalizationOrchestrator:
         for ev in evidence_list:
             sec_num = int(ev.section_id[-2:])
             all_entities.append((ev.evidence_id, "listening_evidence", ev, transcript_src["file_id"], transcript_src.get("legacy_id") or "UNKNOWN", sec_num))
+
+        # Artifact fingerprint and review revisions for answer checkpoints
+        if extraction_artifact_path and extraction_artifact_path.exists():
+            art_fingerprint = hashlib.sha256(extraction_artifact_path.read_bytes()).hexdigest()
+        elif items_def:
+            art_fingerprint = hashlib.sha256(json.dumps(items_def, sort_keys=True).encode("utf-8")).hexdigest()
+        else:
+            if publication_permission == "public_synthetic":
+                art_path = REPO_ROOT / "tests" / "fixtures" / "synthetic_listening" / "synthetic_listening_fixtures.json"
+            else:
+                art_path = REPO_ROOT / "private" / "source_data" / "listening" / f"{vol_code.lower()}_test{test_num:02d}_extraction.json"
+            if art_path and art_path.exists():
+                art_fingerprint = hashlib.sha256(art_path.read_bytes()).hexdigest()
+            else:
+                art_fingerprint = "no_artifact"
+
+        rev_revisions_by_ans_id: Dict[str, str] = {}
+        item_payload_hashes_by_ans_id: Dict[str, str] = {}
+        for ans in answers:
+            q_num = int(ans.question_id.split("-")[-1])
+            is_v, rev_rec, _ = lookup_trusted_answer_review(
+                conn=conn,
+                doc_source_record=doc_src,
+                volume_code=vol_code,
+                test_number=test_num,
+                question_number=q_num,
+                target_value=ans.target_value,
+            )
+            if rev_rec:
+                rev_id = rev_rec.get("review_id", "REV-0")
+                final_st = rev_rec.get("final_status") or rev_rec.get("new_status") or "unknown"
+                dec = rev_rec.get("decision") or "unknown"
+                rev_t = rev_rec.get("reviewed_at") or rev_rec.get("created_at") or ""
+                rev_revisions_by_ans_id[ans.answer_id] = f"{rev_id}:{final_st}:{dec}:{rev_t}"
+            else:
+                rev_revisions_by_ans_id[ans.answer_id] = "unreviewed"
+
+            item_payload_hashes_by_ans_id[ans.answer_id] = hashlib.sha256(
+                f"{ans.target_value}:{sorted(ans.acceptable_alternates)}:{ans.source_key_ref}".encode("utf-8")
+            ).hexdigest()
 
         written_count = 0
         skipped_count = 0
@@ -387,6 +443,9 @@ class ListeningNormalizationOrchestrator:
                 audio_sha256_by_sec=audio_sha_by_sec,
                 section_number=sec_num,
                 timing_depends_on_audio=timing_dep,
+                extraction_artifact_fingerprint=art_fingerprint if ent_type == "listening_answer" else None,
+                review_revision=rev_revisions_by_ans_id.get(ent_id) if ent_type == "listening_answer" else None,
+                item_payload_fingerprint=item_payload_hashes_by_ans_id.get(ent_id) if ent_type == "listening_answer" else None,
             )
 
             if not force and is_normalization_checkpoint_valid(
@@ -414,7 +473,7 @@ class ListeningNormalizationOrchestrator:
                     "entity_id": ent_id,
                     "entity_type": ent_type,
                     "source_file_id": s_fid,
-                    "source_legacy_id": s_leg,
+                    "source_legacy_id": s_leg or (doc_src.get("legacy_id") or "UNKNOWN"),
                     "normalizer_version": self.normalizer_version,
                     "schema_version": SCHEMA_VERSION_LISTENING,
                     "config_hash": "default",

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+import re
+import sqlite3
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from harness.config import REPO_ROOT
 from harness.models.listening import (
@@ -27,31 +29,196 @@ from harness.normalizers.base import BaseNormalizer
 NORMALIZER_VERSION_QUESTION = "0.3.0-c"
 
 
+def normalize_volume_code(vol: Optional[str]) -> str:
+    """Normalizes volume identifiers for reliable alignment across sources."""
+    if not vol:
+        return ""
+    clean = re.sub(r"[^A-Za-z0-9]", "", str(vol)).upper()
+    m = re.match(r"^VOL(\d+)$", clean)
+    if m:
+        return f"VOL{int(m.group(1))}"
+    return clean
+
+
+def lookup_trusted_answer_review(
+    conn: Optional[sqlite3.Connection],
+    doc_source_record: Dict[str, Any],
+    volume_code: str,
+    test_number: int,
+    question_number: int,
+    target_value: Optional[str] = None,
+) -> Tuple[bool, Optional[Dict[str, Any]], List[str]]:
+    """Validates an answer against trusted persisted human review records from Phase V0.3-B.
+
+    Enforces:
+    1. Zero trust in caller metadata; verification requires immutable database review log.
+    2. Review must bind to source content hash, question identity (volume, test, question number), and evidence.
+    3. Final review status must be 'confirmed' with decision 'approve'.
+    4. If integration is unavailable or table/records missing, returns False (unverified).
+    """
+    if conn is None:
+        return False, None, ["REVIEW_INTEGRATION_UNAVAILABLE"]
+
+    # Check that V0.3-B tables exist
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('source_relationships', 'relationship_reviews')"
+    )
+    tables = {row[0] for row in cur.fetchall()}
+    if "source_relationships" not in tables or "relationship_reviews" not in tables:
+        return False, None, ["REVIEW_INTEGRATION_UNAVAILABLE"]
+
+    expected_doc_sha = (doc_source_record.get("content_sha256") or "").strip().lower()
+    doc_fid = doc_source_record.get("file_id")
+    target_vol_norm = normalize_volume_code(volume_code)
+
+    # Find matching relationships linking question booklet to answer key or explanation
+    cur_rel = conn.execute(
+        """
+        SELECT * FROM source_relationships
+        WHERE relationship_type IN ('question_to_answer_key', 'question_to_explanation')
+          AND skill = 'listening'
+          AND (source_file_id = ? OR source_content_sha256 = ?)
+        """,
+        (doc_fid, expected_doc_sha),
+    )
+    matching_rels = cur_rel.fetchall()
+    if not matching_rels:
+        return False, None, ["MISSING_PERSISTED_REVIEW_RECORD"]
+
+    saw_candidate_rel = False
+    for rel_row in matching_rels:
+        rel_d = dict(rel_row)
+        rel_vol_norm = normalize_volume_code(rel_d.get("volume"))
+        if rel_vol_norm and rel_vol_norm != target_vol_norm:
+            continue
+
+        rel_test = rel_d.get("test_number")
+        if rel_test is not None and int(rel_test) != int(test_number):
+            continue
+
+        saw_candidate_rel = True
+
+        # Fetch immutable review history for this relationship, latest first
+        cur_rev = conn.execute(
+            "SELECT * FROM relationship_reviews WHERE relationship_id = ? ORDER BY created_at DESC",
+            (rel_d["relationship_id"],),
+        )
+        reviews = cur_rev.fetchall()
+        if not reviews:
+            continue
+
+        latest_rev = dict(reviews[0])
+        ev_refs = latest_rev.get("evidence_references")
+        if isinstance(ev_refs, str):
+            try:
+                ev_refs = json.loads(ev_refs)
+            except Exception:
+                ev_refs = {}
+        latest_rev["evidence_references"] = ev_refs or {}
+
+        # 1. Question Identity and Evidence Binding
+        is_bound = False
+        val_mismatch = False
+        ak = ev_refs.get("answer_keys") or ev_refs.get("staged_data", {}).get("answer_keys")
+        if isinstance(ak, dict):
+            t_keys = ak.get(test_number) if test_number in ak else ak.get(str(test_number))
+            if isinstance(t_keys, dict):
+                expected_q_val = t_keys.get(question_number) if question_number in t_keys else t_keys.get(str(question_number))
+                if expected_q_val is not None:
+                    if isinstance(expected_q_val, list):
+                        allowed = [str(x).strip().lower() for x in expected_q_val]
+                        if target_value and str(target_value).strip().lower() not in allowed:
+                            val_mismatch = True
+                    else:
+                        if target_value and str(target_value).strip().lower() != str(expected_q_val).strip().lower():
+                            val_mismatch = True
+                    is_bound = True
+
+        vq = ev_refs.get("verified_questions") or ev_refs.get("question_numbers")
+        if isinstance(vq, list):
+            if question_number in vq or str(question_number) in vq:
+                is_bound = True
+
+        qr = ev_refs.get("question_range") or ev_refs.get("expected_question_range")
+        if isinstance(qr, (list, tuple)) and len(qr) == 2:
+            if qr[0] <= question_number <= qr[1]:
+                is_bound = True
+
+        # Fallback: if relationship covers the test or section and confirmed as authoritative key
+        if not ak and not vq and not qr:
+            sec_num = rel_d.get("passage_or_section")
+            if sec_num is None or ((question_number - 1) // 10 + 1) == sec_num:
+                is_bound = True
+
+        if not is_bound:
+            continue
+
+        if val_mismatch:
+            return False, latest_rev, ["ANSWER_VALUE_EVIDENCE_MISMATCH"]
+
+        # 2. Check source content hash binding on relationship and review record
+        rel_src_sha = (rel_d.get("source_content_sha256") or "").strip().lower()
+        if rel_src_sha and rel_src_sha != expected_doc_sha:
+            return False, latest_rev, ["SOURCE_HASH_MISMATCH"]
+
+        rev_src_fp = (latest_rev.get("source_fingerprint") or "").strip().lower()
+        if rev_src_fp and rev_src_fp != expected_doc_sha:
+            return False, latest_rev, ["SOURCE_HASH_MISMATCH"]
+
+        # 3. Decision and Status Evaluation
+        final_st = latest_rev.get("final_status") or latest_rev.get("new_status") or rel_d.get("relationship_status")
+        dec = latest_rev.get("decision")
+        if final_st != "confirmed" or dec not in ("approve", "accepted"):
+            return False, latest_rev, ["REVIEW_NOT_CONFIRMED"]
+
+        return True, latest_rev, ["ANSWER_KEY_PROVENANCE_VERIFIED"]
+
+    if saw_candidate_rel:
+        return False, None, ["QUESTION_NOT_COVERED_BY_REVIEW"]
+    return False, None, ["MISSING_PERSISTED_REVIEW_RECORD"]
+
+
 def validate_answer_source_verification(
     item: Dict[str, Any],
     doc_source_record: Dict[str, Any],
     volume_code: str,
     test_number: int,
     artifact_metadata: Optional[Dict[str, Any]] = None,
-) -> Tuple[bool, List[str]]:
+    conn: Optional[sqlite3.Connection] = None,
+    return_review_record: bool = False,
+) -> Tuple[Any, ...]:
     """Validates source verification evidence for a listening answer fail-closed.
 
     Enforces:
     1. Default source_verified to False.
-    2. Never promote answers to authoritative_source solely from caller-provided JSON metadata.
-    3. Validate artifact identity, source hash, question number, answer locator, and review evidence.
-    4. If verification is missing or invalid, retain unverified.
+    2. NEVER accept caller-provided review_evidence as independently verified.
+    3. Validate against trusted persisted review records from V0.3-B, bound to source hash,
+       question identity, and evidence.
+    4. If that integration is unavailable, disable automatic promotion to authoritative_source.
+       Keep all such answers unverified.
     5. Do not fabricate missing answers or locators.
     """
     art_meta = artifact_metadata or {}
+    q_num = item.get("q_num")
+    target_val = item.get("target_val")
 
-    # 1. Check explicit source_verified flag (defaults to False)
-    if not item.get("source_verified", False):
-        return False, ["ANSWER_KEY_UNVERIFIED"]
+    # Basic structural validations
+    if not isinstance(q_num, int) or q_num < 1 or q_num > 40:
+        res = (False, ["ANSWER_KEY_UNVERIFIED", "INVALID_QUESTION_NUMBER"])
+        return (*res, None) if return_review_record else res
 
-    # 2. Check for Source Verification / Review Evidence
-    # Never promote solely from caller metadata without validated review evidence
-    review = (
+    if target_val is None or not str(target_val).strip():
+        res = (False, ["ANSWER_KEY_UNVERIFIED", "MISSING_TARGET_VALUE"])
+        return (*res, None) if return_review_record else res
+
+    raw_ocr = item.get("raw_ocr_entry") or item.get("raw_ans")
+    key_ref = item.get("source_key_ref")
+    if not raw_ocr and not key_ref:
+        res = (False, ["ANSWER_KEY_UNVERIFIED", "MISSING_ANSWER_LOCATOR"])
+        return (*res, None) if return_review_record else res
+
+    # 1. Never accept caller-provided review_evidence as independently verified
+    has_caller_review = bool(
         item.get("review_evidence")
         or item.get("verification_evidence")
         or item.get("source_verification")
@@ -59,98 +226,68 @@ def validate_answer_source_verification(
         or art_meta.get("verification_evidence")
         or art_meta.get("source_verification")
     )
-    if not review or not isinstance(review, dict):
-        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_VERIFICATION_EVIDENCE"]
 
-    reviewer_id = (
-        review.get("reviewer_id")
-        or review.get("reviewed_by")
-        or review.get("operator_id")
-        or review.get("verified_by")
-    )
-    if not reviewer_id or not str(reviewer_id).strip() or len(str(reviewer_id).strip()) < 2:
-        return False, ["ANSWER_KEY_UNVERIFIED", "INVALID_REVIEWER_IDENTITY"]
-
-    reviewed_at = review.get("reviewed_at") or review.get("verified_at")
-    if not reviewed_at or not str(reviewed_at).strip():
-        return False, ["ANSWER_KEY_UNVERIFIED", "INVALID_REVIEW_TIMESTAMP"]
-
-    decision = (
-        review.get("review_decision")
-        or review.get("decision")
-        or review.get("verification_method")
-        or review.get("status")
-    )
-    accepted_decisions = {
-        "accepted",
-        "verified",
-        "manual_source_check",
-        "authoritative_key",
-        "source_verified",
-        "independent_source_verified",
-    }
-    if not decision or str(decision).lower() not in accepted_decisions:
-        return False, ["ANSWER_KEY_UNVERIFIED", "REVIEW_NOT_ACCEPTED"]
-
-    # 3. Validate Artifact Identity
-    item_file_id = item.get("source_file_id") or art_meta.get("source_doc_file_id") or art_meta.get("source_file_id")
-    if item_file_id and item_file_id != doc_source_record.get("file_id"):
-        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
-
-    item_leg_id = item.get("source_legacy_id") or art_meta.get("source_doc_legacy_id") or art_meta.get("source_legacy_id")
-    if item_leg_id and doc_source_record.get("legacy_id") and item_leg_id != doc_source_record.get("legacy_id"):
-        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
-
-    art_vol = item.get("volume_code") or art_meta.get("volume_code")
-    if art_vol and str(art_vol).upper() != str(volume_code).upper():
-        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
-
-    art_test = item.get("test_number") or art_meta.get("test_number")
-    if art_test is not None and int(art_test) != int(test_number):
-        return False, ["ANSWER_KEY_UNVERIFIED", "IDENTITY_MISMATCH"]
-
-    # 4. Validate Source Cryptographic Hash
-    src_hash = (
+    # Check caller-provided source hash if present
+    item_src_sha = (
         item.get("source_sha256")
-        or item.get("source_hash")
         or item.get("source_content_sha256")
-        or review.get("source_sha256")
-        or review.get("source_content_sha256")
-        or review.get("source_hash")
         or art_meta.get("source_sha256")
-        or art_meta.get("source_doc_sha256")
         or art_meta.get("source_content_sha256")
     )
-    if not src_hash or not str(src_hash).strip():
-        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_SOURCE_HASH"]
+    expected_doc_sha = (doc_source_record.get("content_sha256") or "").strip().lower()
+    if item_src_sha and str(item_src_sha).strip().lower() != expected_doc_sha:
+        flags = ["ANSWER_KEY_UNVERIFIED", "SOURCE_HASH_MISMATCH"]
+        if has_caller_review:
+            flags.append("CALLER_REVIEW_EVIDENCE_REJECTED")
+        res = (False, flags)
+        return (*res, None) if return_review_record else res
 
-    expected_hash = (doc_source_record.get("content_sha256") or "").strip().lower()
-    if str(src_hash).strip().lower() != expected_hash:
-        return False, ["ANSWER_KEY_UNVERIFIED", "SOURCE_HASH_MISMATCH"]
+    # If integration is unavailable (no DB connection), fail-closed
+    if conn is None:
+        flags = ["ANSWER_KEY_UNVERIFIED"]
+        if has_caller_review:
+            flags.append("CALLER_REVIEW_EVIDENCE_REJECTED")
+        else:
+            flags.append("REVIEW_INTEGRATION_UNAVAILABLE")
+        res = (False, flags)
+        return (*res, None) if return_review_record else res
 
-    # 5. Validate Question Number
-    q_num = item.get("q_num")
-    if not isinstance(q_num, int) or q_num < 1 or q_num > 40:
-        return False, ["ANSWER_KEY_UNVERIFIED", "INVALID_QUESTION_NUMBER"]
+    # Validate against trusted persisted review records from V0.3-B
+    is_v, rev_rec, v_flags = lookup_trusted_answer_review(
+        conn=conn,
+        doc_source_record=doc_source_record,
+        volume_code=volume_code,
+        test_number=test_number,
+        question_number=q_num,
+        target_value=target_val,
+    )
 
-    # 6. Validate Answer Locator & Non-empty Target Value (Do not fabricate missing answers or locators)
-    target_val = item.get("target_val")
-    if target_val is None or not str(target_val).strip():
-        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_TARGET_VALUE"]
+    if not is_v:
+        flags = ["ANSWER_KEY_UNVERIFIED"]
+        if has_caller_review:
+            flags.append("CALLER_REVIEW_EVIDENCE_REJECTED")
+        for vf in v_flags:
+            if vf not in flags:
+                flags.append(vf)
+        res = (False, flags)
+        return (*res, rev_rec) if return_review_record else res
 
-    raw_ocr = item.get("raw_ocr_entry") or item.get("raw_ans")
-    key_ref = item.get("source_key_ref")
-    if not raw_ocr and not key_ref:
-        return False, ["ANSWER_KEY_UNVERIFIED", "MISSING_ANSWER_LOCATOR"]
-
-    return True, ["ANSWER_KEY_PROVENANCE_VERIFIED"]
+    res = (True, ["ANSWER_KEY_PROVENANCE_VERIFIED"])
+    return (*res, rev_rec) if return_review_record else res
 
 
 class ListeningQuestionNormalizer(BaseNormalizer):
     """Normalizes listening questions, answers, and evidence linkages from verified extraction artifacts."""
 
-    def __init__(self, normalizer_version: str = NORMALIZER_VERSION_QUESTION):
+    def __init__(
+        self,
+        normalizer_version: str = NORMALIZER_VERSION_QUESTION,
+        conn: Optional[sqlite3.Connection] = None,
+        db_path: Optional[Union[str, Path]] = None,
+    ):
         super().__init__(normalizer_version=normalizer_version)
+        self.conn = conn
+        self.db_path = db_path
 
     def normalize(self, *args: Any, **kwargs: Any) -> Any:
         """Normalized execution delegating to normalize_listening_test_items."""
@@ -237,6 +374,7 @@ class ListeningQuestionNormalizer(BaseNormalizer):
         test_number: int = 1,
         publication_permission: PublicationPermission = "private_copyrighted",
         artifact_metadata: Optional[Dict[str, Any]] = None,
+        conn: Optional[sqlite3.Connection] = None,
     ) -> Tuple[List[ListeningQuestion], List[ListeningAnswer], List[ListeningEvidence]]:
         """Constructs canonical ListeningQuestion, ListeningAnswer, and ListeningEvidence entities.
 
@@ -247,6 +385,13 @@ class ListeningQuestionNormalizer(BaseNormalizer):
         - Grounding against transcript sentences without substring matching on target value
         - Evidence provenance recorded from transcript source
         """
+        active_conn = conn or self.conn
+        close_conn = False
+        if not active_conn and self.db_path and Path(self.db_path).exists():
+            from harness.db import get_db_connection
+            active_conn = get_db_connection(self.db_path)
+            close_conn = True
+
         test_id = f"TEST-IELTS-{volume_code}-{test_number:02d}-LIS"
         questions: List[ListeningQuestion] = []
         answers: List[ListeningAnswer] = []
@@ -326,6 +471,7 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 volume_code=volume_code,
                 test_number=test_number,
                 artifact_metadata=art_meta,
+                conn=active_conn,
             )
             ans_prov_status = "authoritative_source" if is_verified else "unverified"
 
@@ -473,5 +619,8 @@ class ListeningQuestionNormalizer(BaseNormalizer):
                 _provenance=evid_prov,
             )
             evidence_list.append(evid_entity)
+
+        if close_conn and active_conn:
+            active_conn.close()
 
         return questions, answers, evidence_list
