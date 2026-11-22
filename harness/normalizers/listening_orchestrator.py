@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 from harness.config import DB_PATH, REPO_ROOT
@@ -164,6 +166,8 @@ class ListeningNormalizationOrchestrator:
         """Resolves listening pilot configuration dynamically from verified source inventory and relationships.
 
         Fails clearly if the test is unverified, missing, or unsupported.
+        Prefers confirmed source relationships, detects ambiguous matches,
+        prevents cross-test source mixing, and flags unresolved relationships for review.
         Does not create test-specific constants.
         """
         cur = conn.cursor()
@@ -172,7 +176,8 @@ class ListeningNormalizationOrchestrator:
             SELECT r.relationship_id, r.relationship_type, r.passage_or_section,
                    r.relationship_status, r.source_file_id, r.target_file_id,
                    s1.legacy_id as src_legacy, s2.legacy_id as tgt_legacy,
-                   s1.detected_type as src_type, s2.detected_type as tgt_type
+                   s1.detected_type as src_type, s2.detected_type as tgt_type,
+                   s1.relative_path as src_path, s2.relative_path as tgt_path
             FROM source_relationships r
             JOIN sources s1 ON r.source_file_id = s1.file_id
             JOIN sources s2 ON r.target_file_id = s2.file_id
@@ -185,19 +190,49 @@ class ListeningNormalizationOrchestrator:
         doc_legacy_id = None
         transcript_legacy_id = None
         audio_legacy_ids: Dict[int, Optional[str]] = {1: None, 2: None, 3: None, 4: None}
+        has_unresolved_relationships = False
+        unresolved_relationship_ids: List[str] = []
 
-        for r in rows:
-            if r["relationship_type"] == "listening_to_transcript":
-                if r["src_type"] == "pdf":
-                    doc_legacy_id = r["src_legacy"]
-                if r["tgt_type"] == "docx":
-                    transcript_legacy_id = r["tgt_legacy"]
-            elif r["relationship_type"] == "listening_to_audio":
-                sec = r.get("passage_or_section")
-                if sec in audio_legacy_ids and r.get("relationship_status") == "confirmed":
-                    audio_legacy_ids[sec] = r["tgt_legacy"]
+        confirmed_rows = [r for r in rows if r.get("relationship_status") == "confirmed"]
+        unconfirmed_rows = [r for r in rows if r.get("relationship_status") != "confirmed"]
 
-        # If not resolved from relationships, check sources table for the collection/folder
+        # 1. Prefer confirmed booklet-to-transcript relationships
+        conf_transcript_rels = [
+            r for r in confirmed_rows if r["relationship_type"] == "listening_to_transcript"
+        ]
+        if conf_transcript_rels:
+            conf_pdfs = {r["src_legacy"] for r in conf_transcript_rels if r["src_type"] == "pdf"}
+            conf_docxs = {r["tgt_legacy"] for r in conf_transcript_rels if r["tgt_type"] == "docx"}
+            if len(conf_pdfs) > 1 or len(conf_docxs) > 1:
+                raise ValueError(
+                    f"Ambiguous confirmed booklet/transcript relationships for {volume} Test {test_number}: "
+                    f"multiple candidates (PDFs: {conf_pdfs}, DOCXs: {conf_docxs})"
+                )
+            if conf_pdfs:
+                doc_legacy_id = next(iter(conf_pdfs))
+            if conf_docxs:
+                transcript_legacy_id = next(iter(conf_docxs))
+        else:
+            # 2. Inspect candidate / unconfirmed relationships
+            cand_transcript_rels = [
+                r for r in unconfirmed_rows if r["relationship_type"] == "listening_to_transcript"
+            ]
+            if cand_transcript_rels:
+                cand_pdfs = {r["src_legacy"] for r in cand_transcript_rels if r["src_type"] == "pdf"}
+                cand_docxs = {r["tgt_legacy"] for r in cand_transcript_rels if r["tgt_type"] == "docx"}
+                if len(cand_pdfs) > 1 or len(cand_docxs) > 1:
+                    raise ValueError(
+                        f"Ambiguous candidate booklet/transcript relationships for {volume} Test {test_number}: "
+                        f"multiple candidates (PDFs: {cand_pdfs}, DOCXs: {cand_docxs})"
+                    )
+                if cand_pdfs:
+                    doc_legacy_id = next(iter(cand_pdfs))
+                if cand_docxs:
+                    transcript_legacy_id = next(iter(cand_docxs))
+                has_unresolved_relationships = True
+                unresolved_relationship_ids.extend([r["relationship_id"] for r in cand_transcript_rels])
+
+        # 3. If not resolved from relationships, check sources table for the collection/folder
         if not doc_legacy_id or not transcript_legacy_id:
             cur.execute(
                 """
@@ -207,12 +242,25 @@ class ListeningNormalizationOrchestrator:
                 """,
                 (volume, f"%TEST {test_number}/%"),
             )
-            for s in cur.fetchall():
-                st = dict(s)
-                if st["detected_type"] == "pdf" and not doc_legacy_id:
-                    doc_legacy_id = st["legacy_id"]
-                elif st["detected_type"] == "docx" and not transcript_legacy_id:
-                    transcript_legacy_id = st["legacy_id"]
+            inv_sources = [dict(s) for s in cur.fetchall()]
+            inv_pdfs = [s["legacy_id"] for s in inv_sources if s["detected_type"] == "pdf"]
+            inv_docxs = [s["legacy_id"] for s in inv_sources if s["detected_type"] == "docx"]
+
+            if len(inv_pdfs) > 1:
+                raise ValueError(
+                    f"Ambiguous booklet inventory for {volume} Test {test_number}: found multiple PDFs: {inv_pdfs}"
+                )
+            if len(inv_docxs) > 1:
+                raise ValueError(
+                    f"Ambiguous transcript inventory for {volume} Test {test_number}: found multiple DOCXs: {inv_docxs}"
+                )
+
+            if not doc_legacy_id and len(inv_pdfs) == 1:
+                doc_legacy_id = inv_pdfs[0]
+                has_unresolved_relationships = True
+            if not transcript_legacy_id and len(inv_docxs) == 1:
+                transcript_legacy_id = inv_docxs[0]
+                has_unresolved_relationships = True
 
         if not doc_legacy_id or not transcript_legacy_id:
             return None
@@ -223,7 +271,52 @@ class ListeningNormalizationOrchestrator:
         if not doc_src or not transcript_src:
             return None
 
-        # Section titles: extract from raw doc OCR text if available, or default
+        # 4. Resolve audio files per section (1 to 4)
+        for sec in range(1, 5):
+            conf_aud = [
+                r for r in confirmed_rows
+                if r["relationship_type"] == "listening_to_audio" and r.get("passage_or_section") == sec
+            ]
+            if conf_aud:
+                targets = {r["tgt_legacy"] for r in conf_aud}
+                if len(targets) > 1:
+                    raise ValueError(
+                        f"Ambiguous confirmed audio relationships for {volume} Test {test_number} Section {sec}: {targets}"
+                    )
+                audio_legacy_ids[sec] = next(iter(targets))
+            else:
+                cand_aud = [
+                    r for r in unconfirmed_rows
+                    if r["relationship_type"] == "listening_to_audio" and r.get("passage_or_section") == sec
+                ]
+                if cand_aud:
+                    targets = {r["tgt_legacy"] for r in cand_aud}
+                    if len(targets) > 1:
+                        raise ValueError(
+                            f"Ambiguous candidate audio relationships for {volume} Test {test_number} Section {sec}: {targets}"
+                        )
+                    audio_legacy_ids[sec] = next(iter(targets))
+                    has_unresolved_relationships = True
+                    unresolved_relationship_ids.extend([r["relationship_id"] for r in cand_aud])
+
+        # 5. Strict Source Isolation Check: ensure no files from other tests or volumes are mixed
+        all_sources = [("booklet", doc_src), ("transcript", transcript_src)]
+        for sec, a_id in audio_legacy_ids.items():
+            if a_id:
+                a_src = get_source_by_legacy_id(conn, a_id)
+                if a_src:
+                    all_sources.append((f"audio_sec_{sec}", a_src))
+
+        for role, s_rec in all_sources:
+            r_path = s_rec.get("relative_path", "")
+            m_test = re.search(r"TEST\s*(\d+)", r_path, re.IGNORECASE)
+            if m_test and int(m_test.group(1)) != test_number:
+                raise ValueError(
+                    f"Source isolation violation: {role} source {s_rec.get('legacy_id')} ({r_path}) "
+                    f"belongs to Test {m_test.group(1)}, not requested Test {test_number}"
+                )
+
+        # 6. Section titles: extract from raw doc OCR text if available, or default
         section_titles: Dict[int, str] = {s: f"Section {s}" for s in range(1, 5)}
         key_extracted_dir = REPO_ROOT / "private" / "staging" / "raw_extracted" / doc_legacy_id
         if key_extracted_dir.exists():
@@ -250,6 +343,8 @@ class ListeningNormalizationOrchestrator:
             "transcript_legacy_id": transcript_legacy_id,
             "audio_legacy_ids": audio_legacy_ids,
             "section_titles": section_titles,
+            "has_unresolved_relationships": has_unresolved_relationships,
+            "unresolved_relationship_ids": list(set(unresolved_relationship_ids)),
         }
 
     def run_pilot(
@@ -413,6 +508,9 @@ class ListeningNormalizationOrchestrator:
             sec_flags = ["SECTION_NORMALIZED"]
             if sec_ans_verif == "unverified":
                 sec_flags.append("UNVERIFIED_ANSWER_KEYS")
+            if cfg.get("has_unresolved_relationships"):
+                sec_lifecycle = "review_required"
+                sec_flags.append("UNRESOLVED_SOURCE_RELATIONSHIPS")
 
             sec_qp = QualityProfile(
                 lifecycle_status=sec_lifecycle,
@@ -475,6 +573,9 @@ class ListeningNormalizationOrchestrator:
         test_flags = ["COMPLETE_TEST_NORMALIZED"]
         if test_ans_verif == "unverified":
             test_flags.append("UNVERIFIED_ANSWER_KEYS")
+        if cfg.get("has_unresolved_relationships"):
+            test_lifecycle = "review_required"
+            test_flags.append("UNRESOLVED_SOURCE_RELATIONSHIPS")
 
         test_qp = QualityProfile(
             lifecycle_status=test_lifecycle,
@@ -749,6 +850,7 @@ class ListeningNormalizationOrchestrator:
                 for sec_num, a_src in audio_sources.items()
             ],
             "confirmed_relationships": conf_rels,
+            "unresolved_relationships": cfg.get("unresolved_relationship_ids", []),
         }
         with open(rep_dir / "pilot_inventory.json", "w", encoding="utf-8") as f:
             f.write(serialize_canonical_json(inv_payload))
@@ -769,6 +871,7 @@ class ListeningNormalizationOrchestrator:
             "evidence_count": len(evidence),
             "grounded_evidence_count": grounded_evidence,
             "unresolved_evidence_count": unresolved_evidence,
+            "unresolved_source_relationships": cfg.get("unresolved_relationship_ids", []),
             "answer_coverage_pct": 100.0,
             "transcript_coverage_pct": 100.0,
             "sections": [

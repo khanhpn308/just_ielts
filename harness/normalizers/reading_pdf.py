@@ -54,6 +54,21 @@ class PdfReadingNormalizer(BaseNormalizer):
         is_ocr = any(p.get("content", {}).get("ocr_applied", False) for p in pages)
         extraction_q = "ocr_noisy" if is_ocr else "complete_clean"
 
+        # Check explicit test boundaries in PDF pages
+        detected_tests: List[int] = []
+        for p in pages:
+            txt = p.get("content", {}).get("text", "")
+            for m in re.finditer(r"\bTEST\s+(\d+)\b", txt, re.IGNORECASE):
+                t_val = int(m.group(1))
+                if t_val not in detected_tests:
+                    detected_tests.append(t_val)
+
+        if detected_tests:
+            if test_number not in detected_tests:
+                raise ValueError(
+                    f"Requested Test {test_number} not found in PDF page boundaries. Detected tests: {detected_tests}"
+                )
+
         # Combine page texts
         all_text = "\n\n".join(
             p.get("content", {}).get("text", "") for p in pages

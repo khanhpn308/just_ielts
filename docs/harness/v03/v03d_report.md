@@ -117,6 +117,14 @@ This cleanly matches prompts starting with lowercase characters, quotation marks
 *Observation:* Test and Section entities were previously assigned `answer_verification="authoritative_key"` even when their child answer keys were unverified.  
 *Enhancement:* Aggregate quality profiles on `ListeningSection`, `ListeningTest`, `PassageOrSection`, and `IELTSTest` are now derived strictly from actual child entity quality profiles. When child answers remain unverified, the parent Section and Test entities receive `answer_verification="unverified"` and `lifecycle_status="review_required"` with `UNVERIFIED_ANSWER_KEYS` flag. Exactly 0 unverified answers claim verified status.
 
+### 3.8 Reading Test Boundary Validation & Answer Key Isolation
+*Observation:* When a requested Test number was missing from a multi-test DOCX (e.g. requesting Test 99 from a document containing Tests 5 and 6), `DocxReadingNormalizer` previously fell back to the first passage in the document, creating cross-test entity mislabeling risks. Similarly, `AnswerReconciler.parse_pdf_ocr_explanation_keys` initialized current Test identity from the requested test number when source identity was unverified.  
+*Enhancement:* `DocxReadingNormalizer` strictly validates requested test numbers against document boundaries and trustworthy metadata, rejecting missing or ambiguous test requests with explicit `ValueError`. Negative regression test 13 verifies that requesting Test 99 from a document with Tests 5 and 6 fails cleanly without generating entities, ensuring Reading Tests 5 and 6 remain independent. `AnswerReconciler` strictly requires source-backed Test identification before accepting OCR keys and keeps ambiguous boundaries unresolved, verified by synthetic regression test 14.
+
+### 3.9 Listening Source Relationships & Isolation
+*Observation:* `ListeningNormalizationOrchestrator.resolve_pilot_config` previously did not distinguish confirmed from candidate relationships, did not detect ambiguous booklet/transcript inventory, and risked mixing source files across tests.  
+*Enhancement:* Dynamic configuration resolution now strictly prefers confirmed source relationships, detects and rejects ambiguous booklet or transcript candidate matches in inventory, strictly asserts that all resolved sources belong to the requested test without cross-test mixing, and flags unconfirmed/candidate relationships with `UNRESOLVED_SOURCE_RELATIONSHIPS` validation flags and `lifecycle_status="review_required"`. Verified by regression test 15.
+
 ---
 
 ## 4. Quality Metrics Matrix
@@ -189,7 +197,7 @@ A total of 54 review items were generated across priority tiers and saved to `pr
 | **D5** | Verification status is truthful | **PASS** | Exactly 0 unverified answers claim verified status (`verified_answers_count = 0`). |
 | **D6** | Provenance is traceable | **PASS** | Every entity carries full `ProvenanceEnvelope` with source file ID, SHA-256, and block offsets. |
 | **D7** | Deterministic reruns | **PASS** | 100% checkpoint reuse on rerun (0 written, 271 skipped). |
-| **D8** | Existing tests pass | **PASS** | 224 public tests and 233 corpus tests pass with 0 regressions (including 12 generalization and acceptance regression tests). |
+| **D8** | Existing tests pass | **PASS** | 227 public tests and 236 corpus tests pass with 0 regressions (including 15 generalization and acceptance regression tests). |
 | **D9** | Private source isolation | **PASS** | 0 private files or copyrighted exam content tracked or staged in Git. |
 | **D10** | Generalization assessed explicitly | **PASS** | Formats, error modes, and edge cases evaluated across both modalities. |
 
@@ -200,13 +208,13 @@ A total of 54 review items were generated across priority tiers and saved to `pr
 The automated test suite was executed using the project-local virtual environment (`./.venv/bin/python`):
 
 ```bash
-# Public Test Suite (including 12 generalization & acceptance correction tests)
+# Public Test Suite (including 15 generalization & acceptance correction tests)
 ./.venv/bin/python -m pytest -q tests/
-# Result: 224 passed, 9 skipped in 22.49s
+# Result: 227 passed, 9 skipped in 14.35s
 
 # Corpus Integration Suite
 ./.venv/bin/python -m pytest -q tests/ --corpus
-# Result: 233 passed in 44.09s
+# Result: 236 passed in 44.19s
 
 # Diagnostic Environment Check
 ./.venv/bin/python -m harness.cli check-env

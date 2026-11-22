@@ -642,3 +642,234 @@ def test_12_unverified_answers_do_not_produce_verified_aggregate(
     assert t_qp["answer_verification"] != "authoritative_key"
     assert t_qp["lifecycle_status"] == "review_required"
     assert "UNVERIFIED_ANSWER_KEYS" in t_qp["validation_flags"]
+
+
+# ---------------------------------------------------------------------------
+# Test 13: Reading test boundary validation & negative Test 99 regression
+# ---------------------------------------------------------------------------
+def test_13_reading_test_boundary_validation_negative_test_99():
+    """Negative regression test: requesting Test 99 from a document containing only Tests 5 and 6
+    must fail cleanly with ValueError and reject cross-test fallback to first passage.
+    Also verifies that Test 5 and Test 6 remain strictly independent.
+    """
+    normalizer = DocxReadingNormalizer(normalizer_version="0.2.0-b")
+    raw_doc = {
+        "content": {
+            "paragraphs": [
+                # Test 5 content
+                {"text": "TEST 5"},
+                {"text": "READING PASSAGE 1"},
+                {"text": "You should spend about 20 minutes on Questions 1-3."},
+                {"text": "Passage Title Five"},
+                {"text": (
+                    "A Ocean current turbines generate continuous baseline electrical power from regular tidal streams. "
+                    "Unlike terrestrial wind installations which fluctuate with local weather patterns, lunar gravity cycles "
+                    "ensure perfectly predictable kinetic yields across every seasonal period without requiring large barrage "
+                    "dams or producing detrimental environmental consequences for marine coastal ecosystems across decades."
+                )},
+                {"text": "Questions 1-3"},
+                {"text": "1 Question prompt five one."},
+                {"text": "2 Question prompt five two."},
+                {"text": "3 Question prompt five three."},
+                # Test 6 content
+                {"text": "TEST 6"},
+                {"text": "READING PASSAGE 1"},
+                {"text": "You should spend about 20 minutes on Questions 1-3."},
+                {"text": "Passage Title Six"},
+                {"text": (
+                    "A Deep space telescopes observe distant cosmological phenomena across infrared spectra with extreme fidelity. "
+                    "Cryogenic cooling systems prevent thermal radiation from corrupting delicate sensor arrays during prolonged "
+                    "orbital exposures, enabling astrophysical teams to analyze atmospheric compositions of distant terrestrial "
+                    "exoplanets orbiting stellar hosts millions of light years from Earth with high scientific confidence."
+                )},
+                {"text": "Questions 1-3"},
+                {"text": "1 Question prompt six one."},
+                {"text": "2 Question prompt six two."},
+                {"text": "3 Question prompt six three."},
+            ]
+        }
+    }
+    src_rec = {
+        "file_id": "FILE-5a2cce4d0793",
+        "legacy_id": "SRC-138",
+        "content_sha256": "5" * 64,
+        "relative_path": "synthetic/tests_5_and_6.docx",
+    }
+
+    # 1. Requesting Test 99 MUST be rejected cleanly without falling back to Test 5
+    with pytest.raises(ValueError, match="Requested Test 99 not found in document boundaries"):
+        normalizer.normalize(
+            raw_document=raw_doc,
+            source_record=src_rec,
+            test_number=99,
+            passage_number=1,
+            volume_code="VOL06",
+        )
+
+    # 2. Test 5 and Test 6 normalize independently without mixing
+    res5 = normalizer.normalize(
+        raw_document=raw_doc,
+        source_record=src_rec,
+        test_number=5,
+        passage_number=1,
+        volume_code="VOL06",
+    )
+    assert res5["test"].test_number == 5
+    assert res5["passage"].title == "Passage Title Five"
+    assert "five" in res5["questions"][0].prompt_text.lower()
+    assert "six" not in res5["questions"][0].prompt_text.lower()
+
+    res6 = normalizer.normalize(
+        raw_document=raw_doc,
+        source_record=src_rec,
+        test_number=6,
+        passage_number=1,
+        volume_code="VOL06",
+    )
+    assert res6["test"].test_number == 6
+    assert res6["passage"].title == "Passage Title Six"
+    assert "six" in res6["questions"][0].prompt_text.lower()
+    assert "five" not in res6["questions"][0].prompt_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test 14: OCR pages with passage headings but no identifiable test rejected
+# ---------------------------------------------------------------------------
+def test_14_ocr_pages_with_passage_headings_but_no_identifiable_test_rejected():
+    """Negative regression test: OCR pages containing passage headings (e.g. READING PASSAGE 1)
+    but no source-backed identifiable Test are rejected (return empty dict), preventing
+    arbitrary initialization from requested test_number.
+    Also verifies accurate page-level offsets when source identity is backed.
+    """
+    reconciler = AnswerReconciler()
+
+    # Case A: OCR page with passage heading but unverified test identity
+    unverified_pages = [
+        {
+            "unit_identifier": "page_0001",
+            "provenance": {"relative_path": "unidentified/explanation_guide.pdf"},
+            "content": {
+                "text": "READING PASSAGE 1\n1. Answer: TRUE\n2. Answer: FALSE\n3. Answer: NOT GIVEN",
+                "page_number": 1,
+            },
+        }
+    ]
+    # Requesting Test 5 on unverified test source yields 0 keys (never initializes curr_test=5)
+    keys_unverified = reconciler.parse_pdf_ocr_explanation_keys(
+        unverified_pages, test_number=5, passage_number=1
+    )
+    assert keys_unverified == {}, "OCR pages without source-backed Test identity must yield 0 keys"
+
+    # Case B: Source-backed test identity preserves exact page-level offsets
+    page_text = "TEST 5\nREADING PASSAGE 1\n1. Answer: TRUE\n2. Answer: FALSE"
+    verified_pages = [
+        {
+            "unit_identifier": "page_0001",
+            "provenance": {"relative_path": "verified/TEST 5 Guide.pdf"},
+            "content": {
+                "text": page_text,
+                "page_number": 1,
+            },
+        }
+    ]
+    keys_verified = reconciler.parse_pdf_ocr_explanation_keys(
+        verified_pages, test_number=5, passage_number=1
+    )
+    assert len(keys_verified) >= 2
+    for q_num, ans_info in keys_verified.items():
+        c_start = ans_info["char_start"]
+        c_end = ans_info["char_end"]
+        matched = ans_info["raw_matched_text"]
+        assert page_text[c_start:c_end] == matched, "Page-level character offsets must be strictly accurate"
+
+
+# ---------------------------------------------------------------------------
+# Test 15: Listening source relationship validation & Test 2 source isolation
+# ---------------------------------------------------------------------------
+def test_15_listening_source_relationships_and_test2_isolation(tmp_path: Path):
+    """Verifies that:
+    1. Ambiguous booklet or transcript candidates in inventory are detected and rejected.
+    2. Listening Test 2 does not mix source files across tests.
+    3. Unresolved / candidate relationships are flagged for human review.
+    """
+    from harness.normalizers.listening_orchestrator import ListeningNormalizationOrchestrator
+    from harness.db import init_db, upsert_source
+
+    temp_db_path = tmp_path / "test_iso.db"
+    init_db(temp_db_path)
+    conn = sqlite3.connect(temp_db_path)
+    conn.row_factory = sqlite3.Row
+
+    # 1. Ambiguous inventory test: multiple candidate PDFs in same test directory
+    upsert_source(conn, {
+        "file_id": "FILE-PDF-001",
+        "legacy_id": "SRC-P01",
+        "relative_path": "VOL 1/TEST 4/booklet_a.pdf",
+        "filename": "booklet_a.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1000,
+        "content_sha256": "1" * 64,
+        "collection": "VOL 1",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    upsert_source(conn, {
+        "file_id": "FILE-PDF-002",
+        "legacy_id": "SRC-P02",
+        "relative_path": "VOL 1/TEST 4/booklet_b.pdf",
+        "filename": "booklet_b.pdf",
+        "extension": ".pdf",
+        "detected_type": "pdf",
+        "size_bytes": 1000,
+        "content_sha256": "2" * 64,
+        "collection": "VOL 1",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    upsert_source(conn, {
+        "file_id": "FILE-DOC-001",
+        "legacy_id": "SRC-D01",
+        "relative_path": "VOL 1/TEST 4/transcript.docx",
+        "filename": "transcript.docx",
+        "extension": ".docx",
+        "detected_type": "docx",
+        "size_bytes": 1000,
+        "content_sha256": "3" * 64,
+        "collection": "VOL 1",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+
+    orch = ListeningNormalizationOrchestrator(db_path=temp_db_path)
+    with pytest.raises(ValueError, match="Ambiguous booklet inventory"):
+        orch.resolve_pilot_config(conn, test_number=4)
+    conn.close()
+
+    # 2. Check Test 2 resolution on main database: verify 0 mixing of Test 1 sources
+    main_conn = sqlite3.connect("harness/state/harness.db")
+    main_conn.row_factory = sqlite3.Row
+    main_orch = ListeningNormalizationOrchestrator()
+    cfg2 = main_orch.resolve_pilot_config(main_conn, test_number=2)
+    assert cfg2 is not None
+
+    # Test 2 sources must belong strictly to Test 2
+    assert cfg2["doc_legacy_id"] == "SRC-020"
+    assert cfg2["transcript_legacy_id"] == "SRC-021"
+    assert cfg2["audio_legacy_ids"][1] == "SRC-017"
+    assert cfg2["audio_legacy_ids"][2] == "SRC-018"
+    assert cfg2["audio_legacy_ids"][3] == "SRC-019"
+    assert cfg2["audio_legacy_ids"][4] is None
+
+    # Confirm Test 1 files are NEVER mixed into Test 2
+    test1_files = {"SRC-008", "SRC-009", "SRC-010", "SRC-011", "SRC-012"}
+    assert cfg2["doc_legacy_id"] not in test1_files
+    assert cfg2["transcript_legacy_id"] not in test1_files
+    for a_id in cfg2["audio_legacy_ids"].values():
+        if a_id:
+            assert a_id not in test1_files
+
+    # Confirm candidate relationships trigger human review flagging
+    assert cfg2["has_unresolved_relationships"] is True
+    assert len(cfg2["unresolved_relationship_ids"]) > 0
+    main_conn.close()

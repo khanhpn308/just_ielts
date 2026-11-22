@@ -104,16 +104,12 @@ class AnswerReconciler(BaseNormalizer):
                         start_test = int(m_th.group(1))
                         break
 
-            has_headers = any(
-                re.search(r"\bTEST\s+\d+\b", p.get("content", {}).get("text", ""), re.IGNORECASE)
-                or re.search(r"READING\s+PASSAGE\s+\d+", p.get("content", {}).get("text", ""), re.IGNORECASE)
-                for p in pages
-            )
-            if not has_headers and start_test is None:
-                # No test boundaries or headers can be located; return empty to prevent cross-test contamination
+            # Require source-backed Test identification before accepting OCR answer keys.
+            # Never initialize current Test identity from requested test_number when source identity is unverified.
+            if start_test is None:
                 return {}
 
-            curr_test = start_test if start_test is not None else (test_number or 1)
+            curr_test = start_test
             curr_pass = 1
             selected: List[Tuple[Dict[str, Any], set[int], set[int]]] = []
 
@@ -136,11 +132,7 @@ class AnswerReconciler(BaseNormalizer):
                 tests_on_page = {prev_test, curr_test}
                 passages_on_page = {prev_pass, curr_pass}
 
-                test_match = (
-                    test_number is None
-                    or (start_test is not None and test_number in tests_on_page)
-                    or (start_test is None and curr_test == test_number)
-                )
+                test_match = test_number is None or test_number in tests_on_page
                 pass_match = passage_number is None or passage_number in passages_on_page
 
                 if test_match and pass_match:
@@ -192,6 +184,11 @@ class AnswerReconciler(BaseNormalizer):
                     elif passage_number == p_trans:
                         text = text[m_pass.start():]
                         slice_offset += m_pass.start()
+                    else:
+                        continue
+                else:
+                    # Ambiguous passage boundary: cannot isolate cleanly, skip to avoid contamination
+                    continue
 
             def record_answer(
                 q_num: int,

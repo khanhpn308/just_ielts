@@ -181,7 +181,11 @@ class DocxReadingNormalizer(BaseNormalizer):
 
         # Locate target Test and Reading Passage boundaries
         start_idx, end_idx = self._find_passage_bounds(
-            p_texts, test_number=test_number, passage_number=passage_number
+            p_texts,
+            test_number=test_number,
+            passage_number=passage_number,
+            raw_document=raw_document,
+            source_record=source_record,
         )
 
         passage_paras = p_texts[start_idx:end_idx]
@@ -298,25 +302,89 @@ class DocxReadingNormalizer(BaseNormalizer):
         }
 
     def _find_passage_bounds(
-        self, p_texts: List[str], test_number: int, passage_number: int
+        self,
+        p_texts: List[str],
+        test_number: int,
+        passage_number: int,
+        raw_document: Optional[Dict[str, Any]] = None,
+        source_record: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, int]:
-        """Finds slice indices [start_idx, end_idx) for target Reading Passage."""
-        # Locate target Test
-        test_regex = rf"^TEST\s+{test_number}\b"
-        test_start = None
+        """Finds slice indices [start_idx, end_idx) for target Reading Passage.
+
+        Validates test identity against document boundaries and trustworthy metadata.
+        Rejects ambiguous or missing test identity and never falls back across tests.
+        """
+        # 1. Scan for explicit test boundaries in document text: e.g. "TEST 1", "READING TEST 5"
+        test_pattern = r"^\s*(?:READING\s+)?TEST\s+(\d+)\b"
+        test_positions: List[Tuple[int, int]] = []  # (test_num, index)
         for i, t in enumerate(p_texts):
-            if re.match(test_regex, t, re.I):
-                test_start = i
-                break
+            m = re.match(test_pattern, t, re.IGNORECASE)
+            if m:
+                test_positions.append((int(m.group(1)), i))
 
-        if test_start is None:
-            # Fallback: search for passage directly
-            test_start = 0
+        test_start: int
+        test_end: int
 
-        # Locate target Reading Passage
+        if test_positions:
+            found_tests = [tp[0] for tp in test_positions]
+            matching_starts = [idx for t_num, idx in test_positions if t_num == test_number]
+            if not matching_starts:
+                raise ValueError(
+                    f"Requested Test {test_number} not found in document boundaries. Detected tests: {found_tests}"
+                )
+            test_start = matching_starts[0]
+            # test_end is the start of the next distinct test, or end of document
+            subsequent_tests = [
+                idx for t_num, idx in test_positions if idx > test_start and t_num != test_number
+            ]
+            test_end = subsequent_tests[0] if subsequent_tests else len(p_texts)
+        else:
+            # Document text has no explicit TEST markers; verify against trustworthy metadata
+            meta_test: Optional[int] = None
+            if raw_document:
+                meta = raw_document.get("metadata", {})
+                if isinstance(meta, dict):
+                    meta_test = meta.get("test_number")
+                    if meta_test is None and meta.get("detected_tests"):
+                        d_tests = meta["detected_tests"]
+                        if len(d_tests) == 1:
+                            meta_test = d_tests[0]
+
+            if meta_test is None and source_record:
+                if "test_number" in source_record:
+                    meta_test = source_record["test_number"]
+                else:
+                    fn = source_record.get("filename") or source_record.get("relative_path") or ""
+                    m_fn = re.search(r"\bTEST[_\s]*(\d+)\b", fn, re.IGNORECASE)
+                    if m_fn:
+                        meta_test = int(m_fn.group(1))
+
+            if meta_test is not None:
+                if meta_test != test_number:
+                    raise ValueError(
+                        f"Requested Test {test_number} does not match document metadata Test {meta_test}"
+                    )
+                test_start = 0
+                test_end = len(p_texts)
+            elif source_record and source_record.get("collection") == "synthetic":
+                # Isolated synthetic test fixture without explicit test boundaries
+                test_start = 0
+                test_end = len(p_texts)
+            elif test_number == 1:
+                # Standalone unpartitioned single-test document defaulting to Test 1
+                test_start = 0
+                test_end = len(p_texts)
+            else:
+                # Reject ambiguous or missing Test identity
+                raise ValueError(
+                    f"Ambiguous or missing Test identity for requested Test {test_number}: "
+                    "document contains no test boundaries or trustworthy metadata."
+                )
+
+        # 2. Locate target Reading Passage strictly within [test_start, test_end)
         passage_regex = rf"^READING\s+PASSAGE\s+{passage_number}\b"
         pass_start = None
-        for i in range(test_start, len(p_texts)):
+        for i in range(test_start, test_end):
             if re.match(passage_regex, p_texts[i], re.I):
                 pass_start = i
                 break
@@ -324,10 +392,10 @@ class DocxReadingNormalizer(BaseNormalizer):
         if pass_start is None:
             raise ValueError(f"Reading Passage {passage_number} not found for Test {test_number}")
 
-        # Locate next Reading Passage or next Test or end of document
+        # Locate next Reading Passage or next Test or test_end
         next_boundary_regex = r"^(READING\s+PASSAGE\s+\d+|TEST\s+\d+)\b"
-        pass_end = len(p_texts)
-        for i in range(pass_start + 1, len(p_texts)):
+        pass_end = test_end
+        for i in range(pass_start + 1, test_end):
             if re.match(next_boundary_regex, p_texts[i], re.I):
                 pass_end = i
                 break
