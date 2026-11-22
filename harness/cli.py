@@ -272,10 +272,12 @@ def cmd_normalize(args):
         output_dir = Path(args.output_dir) if getattr(args, "output_dir", None) else None
         reports_dir = Path(args.reports_dir) if getattr(args, "reports_dir", None) else None
         orch = ListeningNormalizationOrchestrator(output_dir=output_dir)
+        test_num = getattr(args, "test_number", 1) or 1
         res = orch.run_pilot(
             force=getattr(args, "force", False),
             dry_run=getattr(args, "dry_run", False),
             reports_dir=reports_dir,
+            test_number=test_num,
         )
         print("\n=== LISTENING NORMALIZATION RESULT ===")
         print(f"Test ID: {res['test_id']}")
@@ -795,6 +797,7 @@ def main():
     # normalize-listening
     parser_norm_lis = subparsers.add_parser("normalize-listening", help="Run V0.3-C Listening normalization pipeline")
     parser_norm_lis.add_argument("--pilot", action="store_true", default=True, help="Run approved Listening Pilot (VOL 1 TEST 1)")
+    parser_norm_lis.add_argument("--test-number", type=int, default=1, help="Test number to normalize (default 1)")
     parser_norm_lis.add_argument("--dry-run", action="store_true", help="Run normalizer without writing to disk")
     parser_norm_lis.add_argument("--force", action="store_true", help="Force reprocessing, bypassing checkpoints")
     parser_norm_lis.add_argument("--output-dir", type=str, help="Custom output directory")
