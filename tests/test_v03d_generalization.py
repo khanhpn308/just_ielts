@@ -787,13 +787,14 @@ def test_14_ocr_pages_with_passage_headings_but_no_identifiable_test_rejected():
 # Test 15: Listening source relationship validation & Test 2 source isolation
 # ---------------------------------------------------------------------------
 def test_15_listening_source_relationships_and_test2_isolation(tmp_path: Path):
-    """Verifies that:
-    1. Ambiguous booklet or transcript candidates in inventory are detected and rejected.
-    2. Listening Test 2 does not mix source files across tests.
-    3. Unresolved / candidate relationships are flagged for human review.
+    """Synthetic regression test verifying listening source relationships and cross-test isolation:
+    1. Ambiguous booklet or transcript candidates in inventory fail clearly.
+    2. Confirmed and candidate relationships resolve without mixing cross-test sources.
+    3. Cross-test relationship attempts trigger strict isolation violation.
+    4. Unresolved / candidate relationships are flagged for human review.
     """
     from harness.normalizers.listening_orchestrator import ListeningNormalizationOrchestrator
-    from harness.db import init_db, upsert_source
+    from harness.db import init_db, upsert_source, upsert_source_relationship
 
     temp_db_path = tmp_path / "test_iso.db"
     init_db(temp_db_path)
@@ -844,10 +845,203 @@ def test_15_listening_source_relationships_and_test2_isolation(tmp_path: Path):
     orch = ListeningNormalizationOrchestrator(db_path=temp_db_path)
     with pytest.raises(ValueError, match="Ambiguous booklet inventory"):
         orch.resolve_pilot_config(conn, test_number=4)
+
+    # 2. Add synthetic Test 1 and Test 2 sources
+    t1_sources = [
+        {"file_id": "FILE-T1-PDF", "legacy_id": "SRC-008", "relative_path": "VOL 1/TEST 1/Test_1.pdf", "detected_type": "pdf"},
+        {"file_id": "FILE-T1-TR", "legacy_id": "SRC-009", "relative_path": "VOL 1/TEST 1/Transcript Test 1.docx", "detected_type": "docx"},
+        {"file_id": "FILE-T1-A1", "legacy_id": "SRC-010", "relative_path": "VOL 1/TEST 1/1.mp3", "detected_type": "audio"},
+        {"file_id": "FILE-T1-A2", "legacy_id": "SRC-011", "relative_path": "VOL 1/TEST 1/2.mp3", "detected_type": "audio"},
+        {"file_id": "FILE-T1-A3", "legacy_id": "SRC-012", "relative_path": "VOL 1/TEST 1/3.mp3", "detected_type": "audio"},
+        {"file_id": "FILE-T1-A4", "legacy_id": "SRC-013", "relative_path": "VOL 1/TEST 1/4.mp3", "detected_type": "audio"},
+    ]
+    for s in t1_sources:
+        upsert_source(conn, {
+            "file_id": s["file_id"],
+            "legacy_id": s["legacy_id"],
+            "relative_path": s["relative_path"],
+            "filename": Path(s["relative_path"]).name,
+            "extension": Path(s["relative_path"]).suffix,
+            "detected_type": s["detected_type"],
+            "size_bytes": 1000,
+            "content_sha256": hashlib.sha256(s["file_id"].encode()).hexdigest(),
+            "collection": "VOL 1",
+            "duplicate_group": "none",
+            "accessibility_status": "accessible",
+        })
+
+    t2_sources = [
+        {"file_id": "FILE-T2-PDF", "legacy_id": "SRC-020", "relative_path": "VOL 1/TEST 2/Test_2.pdf", "detected_type": "pdf"},
+        {"file_id": "FILE-T2-TR", "legacy_id": "SRC-021", "relative_path": "VOL 1/TEST 2/Transcript Test 2.docx", "detected_type": "docx"},
+        {"file_id": "FILE-T2-A1", "legacy_id": "SRC-017", "relative_path": "VOL 1/TEST 2/1.mp3", "detected_type": "audio"},
+        {"file_id": "FILE-T2-A2", "legacy_id": "SRC-018", "relative_path": "VOL 1/TEST 2/2.mp3", "detected_type": "audio"},
+        {"file_id": "FILE-T2-A3", "legacy_id": "SRC-019", "relative_path": "VOL 1/TEST 2/3.mp3", "detected_type": "audio"},
+    ]
+    for s in t2_sources:
+        upsert_source(conn, {
+            "file_id": s["file_id"],
+            "legacy_id": s["legacy_id"],
+            "relative_path": s["relative_path"],
+            "filename": Path(s["relative_path"]).name,
+            "extension": Path(s["relative_path"]).suffix,
+            "detected_type": s["detected_type"],
+            "size_bytes": 1000,
+            "content_sha256": hashlib.sha256(s["file_id"].encode()).hexdigest(),
+            "collection": "VOL 1",
+            "duplicate_group": "none",
+            "accessibility_status": "accessible",
+        })
+
+    # Add confirmed relationships for Test 1
+    upsert_source_relationship(conn, {
+        "relationship_id": "REL-T1-TR",
+        "source_file_id": "FILE-T1-PDF",
+        "target_file_id": "FILE-T1-TR",
+        "relationship_type": "listening_to_transcript",
+        "collection": "VOL 1",
+        "volume": "VOL 1",
+        "test_number": 1,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": "{}",
+        "validation_flags": "[]",
+        "match_confidence": 1.0,
+        "relationship_status": "confirmed",
+        "provenance": "{}",
+        "schema_version": "0.3.0",
+    })
+    for sec_i, a_id in enumerate(["FILE-T1-A1", "FILE-T1-A2", "FILE-T1-A3", "FILE-T1-A4"], start=1):
+        upsert_source_relationship(conn, {
+            "relationship_id": f"REL-T1-A{sec_i}",
+            "source_file_id": "FILE-T1-PDF",
+            "target_file_id": a_id,
+            "relationship_type": "listening_to_audio",
+            "collection": "VOL 1",
+            "volume": "VOL 1",
+            "test_number": 1,
+            "passage_or_section": sec_i,
+            "skill": "listening",
+            "identity_evidence": "{}",
+            "validation_flags": "[]",
+            "match_confidence": 1.0,
+            "relationship_status": "confirmed",
+            "provenance": "{}",
+            "schema_version": "0.3.0",
+        })
+
+    # Add candidate relationships for Test 2 (unresolved)
+    upsert_source_relationship(conn, {
+        "relationship_id": "REL-T2-TR",
+        "source_file_id": "FILE-T2-PDF",
+        "target_file_id": "FILE-T2-TR",
+        "relationship_type": "listening_to_transcript",
+        "collection": "VOL 1",
+        "volume": "VOL 1",
+        "test_number": 2,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": "{}",
+        "validation_flags": "[]",
+        "match_confidence": 0.85,
+        "relationship_status": "candidate",
+        "provenance": "{}",
+        "schema_version": "0.3.0",
+    })
+    for sec_i, a_id in enumerate(["FILE-T2-A1", "FILE-T2-A2", "FILE-T2-A3"], start=1):
+        upsert_source_relationship(conn, {
+            "relationship_id": f"REL-T2-A{sec_i}",
+            "source_file_id": "FILE-T2-PDF",
+            "target_file_id": a_id,
+            "relationship_type": "listening_to_audio",
+            "collection": "VOL 1",
+            "volume": "VOL 1",
+            "test_number": 2,
+            "passage_or_section": sec_i,
+            "skill": "listening",
+            "identity_evidence": "{}",
+            "validation_flags": "[]",
+            "match_confidence": 0.85,
+            "relationship_status": "candidate",
+            "provenance": "{}",
+            "schema_version": "0.3.0",
+        })
+
+    # 3. Verify Test 2 resolution on synthetic DB
+    cfg2 = orch.resolve_pilot_config(conn, test_number=2)
+    assert cfg2 is not None
+
+    # Test 2 sources must belong strictly to Test 2
+    assert cfg2["doc_legacy_id"] == "SRC-020"
+    assert cfg2["transcript_legacy_id"] == "SRC-021"
+    assert cfg2["audio_legacy_ids"][1] == "SRC-017"
+    assert cfg2["audio_legacy_ids"][2] == "SRC-018"
+    assert cfg2["audio_legacy_ids"][3] == "SRC-019"
+    assert cfg2["audio_legacy_ids"][4] is None
+
+    # Verify no cross-test source mixing
+    test1_files = {"SRC-008", "SRC-009", "SRC-010", "SRC-011", "SRC-012", "SRC-013"}
+    assert cfg2["doc_legacy_id"] not in test1_files
+    assert cfg2["transcript_legacy_id"] not in test1_files
+    for a_id in cfg2["audio_legacy_ids"].values():
+        if a_id:
+            assert a_id not in test1_files
+
+    # Verify candidate/unresolved relationships are flagged
+    assert cfg2["has_unresolved_relationships"] is True
+    assert len(cfg2["unresolved_relationship_ids"]) > 0
+    assert "REL-T2-TR" in cfg2["unresolved_relationship_ids"]
+
+    # 4. Verify ambiguous candidate relationship failure
+    upsert_source(conn, {
+        "file_id": "FILE-T2-TR-EXTRA",
+        "legacy_id": "SRC-099",
+        "relative_path": "VOL 1/TEST 2/Transcript Extra.docx",
+        "filename": "Transcript Extra.docx",
+        "extension": ".docx",
+        "detected_type": "docx",
+        "size_bytes": 1000,
+        "content_sha256": "4" * 64,
+        "collection": "VOL 1",
+        "duplicate_group": "none",
+        "accessibility_status": "accessible",
+    })
+    upsert_source_relationship(conn, {
+        "relationship_id": "REL-T2-TR-EXTRA",
+        "source_file_id": "FILE-T2-PDF",
+        "target_file_id": "FILE-T2-TR-EXTRA",
+        "relationship_type": "listening_to_transcript",
+        "collection": "VOL 1",
+        "volume": "VOL 1",
+        "test_number": 2,
+        "passage_or_section": None,
+        "skill": "listening",
+        "identity_evidence": "{}",
+        "validation_flags": "[]",
+        "match_confidence": 0.85,
+        "relationship_status": "candidate",
+        "provenance": "{}",
+        "schema_version": "0.3.0",
+    })
+    with pytest.raises(ValueError, match="Ambiguous candidate booklet/transcript relationships"):
+        orch.resolve_pilot_config(conn, test_number=2)
+
     conn.close()
 
-    # 2. Check Test 2 resolution on main database: verify 0 mixing of Test 1 sources
-    main_conn = sqlite3.connect("harness/state/harness.db")
+
+@pytest.mark.corpus
+def test_15_listening_source_relationships_and_test2_isolation_corpus():
+    """Corpus integration test for Listening Test 2 source isolation on live harness.db:
+    1. Resolves actual SRC-020, SRC-021, and audio SRC-017 through SRC-019.
+    2. Strictly asserts 0 mixing of Test 1 sources (SRC-008..SRC-012).
+    3. Confirms candidate relationships trigger human review flagging.
+    """
+    from harness.normalizers.listening_orchestrator import ListeningNormalizationOrchestrator
+
+    db_path = Path("harness/state/harness.db")
+    if not db_path.exists():
+        pytest.fail(f"Corpus testing is enabled but SQLite database not found at {db_path}")
+
+    main_conn = sqlite3.connect(db_path)
     main_conn.row_factory = sqlite3.Row
     main_orch = ListeningNormalizationOrchestrator()
     cfg2 = main_orch.resolve_pilot_config(main_conn, test_number=2)
@@ -873,3 +1067,182 @@ def test_15_listening_source_relationships_and_test2_isolation(tmp_path: Path):
     assert cfg2["has_unresolved_relationships"] is True
     assert len(cfg2["unresolved_relationship_ids"]) > 0
     main_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 16: Reading PDF normalizer rejects unverified test identities
+# ---------------------------------------------------------------------------
+def test_16_pdf_reading_unverified_test_identities_rejected():
+    """Negative regression test verifying that PdfReadingNormalizer strictly rejects unverified test identities:
+    1. Requested Test 99 not found in PDF page boundaries.
+    2. Ambiguous/missing Test identity on unverified PDF source without test markers.
+    3. Mismatch between requested Test and source metadata Test.
+    4. Isolated synthetic test fixture requests non-Test-1 identity without metadata.
+    """
+    from harness.normalizers.reading_pdf import PdfReadingNormalizer
+
+    normalizer = PdfReadingNormalizer()
+
+    # 1. Multi-test PDF with explicit TEST 1 and TEST 2: requesting Test 99 must fail
+    pages_multi = [
+        {
+            "content": {
+                "page_number": 1,
+                "text": "TEST 1\nREADING PASSAGE 1\nNarrative text for test one.\nQuestions 1-2\n1 Prompt one.\n2 Prompt two.",
+            }
+        },
+        {
+            "content": {
+                "page_number": 2,
+                "text": "TEST 2\nREADING PASSAGE 1\nNarrative text for test two.\nQuestions 1-2\n1 Prompt one.\n2 Prompt two.",
+            }
+        },
+    ]
+    with pytest.raises(ValueError, match="Requested Test 99 not found in PDF page boundaries"):
+        normalizer.normalize(
+            pages=pages_multi,
+            source_record={
+                "file_id": "FILE-000000000001",
+                "legacy_id": "SRC-001",
+                "relative_path": "sample.pdf",
+                "content_sha256": "0" * 64,
+            },
+            test_number=99,
+            passage_number=1,
+            volume_code="VOL01",
+        )
+
+    # 2. Unverified PDF with no test markers in text or metadata: requesting Test 5 must fail
+    pages_unverified = [
+        {
+            "content": {
+                "page_number": 1,
+                "text": (
+                    "READING PASSAGE 1\n"
+                    "Passage narrative text content without any identifiable test header.\n"
+                    "Questions 1-2\n"
+                    "1 Prompt statement A.\n"
+                    "2 Prompt statement B."
+                ),
+            }
+        }
+    ]
+    with pytest.raises(ValueError, match="Ambiguous or unverified Test identity"):
+        normalizer.normalize(
+            pages=pages_unverified,
+            source_record={
+                "file_id": "FILE-000000000091",
+                "legacy_id": "SRC-991",
+                "relative_path": "unidentified/guide.pdf",
+                "content_sha256": "1" * 64,
+            },
+            test_number=5,
+            passage_number=1,
+            volume_code="VOL01",
+        )
+
+    # 3. Source metadata specifies Test 5, caller requests Test 6: must fail cleanly
+    with pytest.raises(ValueError, match="Requested Test 6 does not match source metadata Test 5"):
+        normalizer.normalize(
+            pages=pages_unverified,
+            source_record={
+                "file_id": "FILE-000000000005",
+                "legacy_id": "SRC-005",
+                "relative_path": "VOL 6/TEST 5/reading.pdf",
+                "content_sha256": "2" * 64,
+            },
+            test_number=6,
+            passage_number=1,
+            volume_code="VOL06",
+        )
+
+    # 4. Synthetic fixture without test markers requesting Test 99: must fail cleanly
+    with pytest.raises(ValueError, match="Ambiguous or unverified Test identity"):
+        normalizer.normalize(
+            pages=pages_unverified,
+            source_record={
+                "file_id": "FILE-000000000099",
+                "legacy_id": "SRC-999",
+                "relative_path": "synthetic/sample.pdf",
+                "collection": "synthetic",
+                "content_sha256": "3" * 64,
+            },
+            test_number=99,
+            passage_number=1,
+            volume_code="VOL99",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 17: Reading PDF normalizer never fabricates fallback prompts
+# ---------------------------------------------------------------------------
+def test_17_pdf_reading_no_fabricated_fallback_prompts_and_preserves_review_required():
+    """Verifies that:
+    1. Missing/truncated question prompts in PDF extractions are never fabricated.
+    2. Unresolved questions are captured with review_required status in unresolved_questions.
+    3. Emitted test, passage, and group entities retain lifecycle_status='review_required'.
+    """
+    from harness.normalizers.reading_pdf import PdfReadingNormalizer
+
+    normalizer = PdfReadingNormalizer()
+    pages = [
+        {
+            "content": {
+                "page_number": 1,
+                "text": (
+                    "Marine Tidal Turbine Engineering in Shallow Estuaries\n\n"
+                    "Tidal stream installations offer completely predictable energy generation yields without requiring "
+                    "expensive hydrostatic impoundments. Marine engineers carefully analyze component stress tolerances "
+                    "under intense cyclic hydrodynamic turbulence to ensure structural survivability across decades of operation. "
+                    "Furthermore, extensive field deployments demonstrate that advanced corrosion-resistant composite alloys "
+                    "significantly reduce recurring maintenance requirements while operating continuously in high-salinity oceanic environments.\n\n"
+                    "Questions 1-3\n\n"
+                    "Do the following statements agree with the information given in the passage?\n"
+                    "1 Tidal power generation predictable yields are consistent.\n"
+                    "3 Extreme hydrodynamic turbulence stresses structural components.\n"
+                ),
+                "ocr_applied": False,
+            }
+        }
+    ]
+    source_rec = {
+        "file_id": "FILE-000000000002",
+        "legacy_id": "SRC-998",
+        "relative_path": "synthetic/tidal.pdf",
+        "collection": "synthetic",
+        "content_sha256": "4" * 64,
+    }
+
+    res = normalizer.normalize(
+        pages=pages,
+        source_record=source_rec,
+        test_number=1,
+        passage_number=1,
+        volume_code="VOL99",
+        publication_permission="public_synthetic",
+    )
+
+    questions = res["questions"]
+    unresolved = res["unresolved_questions"]
+
+    # 1. Exactly 2 valid questions extracted; Question 2 is missing from text and MUST NOT be fabricated
+    assert len(questions) == 2
+    assert questions[0].question_number == 1
+    assert questions[0].prompt_text == "Tidal power generation predictable yields are consistent."
+    assert questions[1].question_number == 3
+    assert questions[1].prompt_text == "Extreme hydrodynamic turbulence stresses structural components."
+    for q in questions:
+        assert not q.prompt_text.startswith("Question statement")
+
+    # 2. Missing Question 2 captured in unresolved_questions queue
+    assert len(unresolved) == 1
+    unres = unresolved[0]
+    assert unres["question_number"] == 2
+    assert unres["error"] == "UNRESOLVED_QUESTION_PROMPT"
+    assert unres["lifecycle_status"] == "review_required"
+
+    # 3. Entities preserve review_required lifecycle status due to unresolved content
+    assert res["test"].quality_profile.lifecycle_status == "review_required"
+    assert res["passage"].quality_profile.lifecycle_status == "review_required"
+    assert res["groups"][0].quality_profile.lifecycle_status == "review_required"
+    assert "UNRESOLVED_QUESTIONS" in res["test"].quality_profile.validation_flags

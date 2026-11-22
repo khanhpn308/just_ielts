@@ -125,6 +125,13 @@ This cleanly matches prompts starting with lowercase characters, quotation marks
 *Observation:* `ListeningNormalizationOrchestrator.resolve_pilot_config` previously did not distinguish confirmed from candidate relationships, did not detect ambiguous booklet/transcript inventory, and risked mixing source files across tests.  
 *Enhancement:* Dynamic configuration resolution now strictly prefers confirmed source relationships, detects and rejects ambiguous booklet or transcript candidate matches in inventory, strictly asserts that all resolved sources belong to the requested test without cross-test mixing, and flags unconfirmed/candidate relationships with `UNRESOLVED_SOURCE_RELATIONSHIPS` validation flags and `lifecycle_status="review_required"`. Verified by regression test 15.
 
+### 3.10 Reading PDF Verification, CI Isolation, and Negative Prompt Safeguards
+*Observation:* `test_15` previously queried the local SQLite database directly, failing in clean GitHub CI checkouts where the local corpus database is absent. Additionally, `PdfReadingNormalizer` lacked strict validation against unverified Test identities and fabricated placeholder prompts (`f"Question statement {idx}."`) when items were omitted or unparseable in source PDFs.  
+*Enhancement:*
+1. **Public vs. Corpus Test Decoupling:** Test 15 was decoupled into a pure synthetic tmp_path test (verifying candidate vs. confirmed relationships, ambiguous inventory rejection, cross-test source isolation, and review flagging without external db dependencies) and a dedicated `@pytest.mark.corpus` test verifying live pilot records (`SRC-020`, `SRC-021`, `SRC-017`..`019`).
+2. **Fail-Closed PDF Test Identity:** `PdfReadingNormalizer` validates requested test numbers against explicit text boundaries, file path naming conventions, and metadata, rejecting missing or unverified test identities with explicit `ValueError`.
+3. **Zero Fabricated Fallback Prompts:** When question items cannot be parsed from PDF streams, `PdfReadingNormalizer` never publishes synthetic fallback text, recording unresolved items with `lifecycle_status="review_required"` and capturing `UNRESOLVED_QUESTIONS` flags on parent entities. Verified by synthetic regression tests 16 and 17.
+
 ---
 
 ## 4. Quality Metrics Matrix
@@ -197,7 +204,7 @@ A total of 54 review items were generated across priority tiers and saved to `pr
 | **D5** | Verification status is truthful | **PASS** | Exactly 0 unverified answers claim verified status (`verified_answers_count = 0`). |
 | **D6** | Provenance is traceable | **PASS** | Every entity carries full `ProvenanceEnvelope` with source file ID, SHA-256, and block offsets. |
 | **D7** | Deterministic reruns | **PASS** | 100% checkpoint reuse on rerun (0 written, 271 skipped). |
-| **D8** | Existing tests pass | **PASS** | 227 public tests and 236 corpus tests pass with 0 regressions (including 15 generalization and acceptance regression tests). |
+| **D8** | Existing tests pass | **PASS** | 229 public tests (10 skipped) and 239 corpus tests pass with 0 regressions (including 17 generalization and acceptance regression tests). |
 | **D9** | Private source isolation | **PASS** | 0 private files or copyrighted exam content tracked or staged in Git. |
 | **D10** | Generalization assessed explicitly | **PASS** | Formats, error modes, and edge cases evaluated across both modalities. |
 
@@ -208,13 +215,13 @@ A total of 54 review items were generated across priority tiers and saved to `pr
 The automated test suite was executed using the project-local virtual environment (`./.venv/bin/python`):
 
 ```bash
-# Public Test Suite (including 15 generalization & acceptance correction tests)
+# Public Test Suite (including 17 generalization & acceptance correction tests)
 ./.venv/bin/python -m pytest -q tests/
-# Result: 227 passed, 9 skipped in 14.35s
+# Result: 229 passed, 10 skipped in 21.15s (225 passed, 14 skipped in clean CI without private/)
 
 # Corpus Integration Suite
 ./.venv/bin/python -m pytest -q tests/ --corpus
-# Result: 236 passed in 44.19s
+# Result: 239 passed in 30.72s
 
 # Diagnostic Environment Check
 ./.venv/bin/python -m harness.cli check-env

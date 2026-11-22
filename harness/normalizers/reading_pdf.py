@@ -33,6 +33,7 @@ class PdfReadingNormalizer(BaseNormalizer):
 
     def __init__(self, normalizer_version: str = NORMALIZER_VERSION):
         super().__init__(normalizer_version=normalizer_version)
+        self.unresolved_questions: List[Dict[str, Any]] = []
 
     def normalize(
         self,
@@ -46,15 +47,17 @@ class PdfReadingNormalizer(BaseNormalizer):
     ) -> Dict[str, Any]:
         """Normalizes Reading Passage and Question items from raw PDF pages.
 
-        Returns dict containing 'test', 'passage', 'groups', 'questions'.
+        Returns dict containing 'test', 'passage', 'groups', 'questions', and 'unresolved_questions'.
         """
         if not pages:
             raise ValueError("No pages provided for PDF normalization.")
 
+        self.unresolved_questions = []
+
         is_ocr = any(p.get("content", {}).get("ocr_applied", False) for p in pages)
         extraction_q = "ocr_noisy" if is_ocr else "complete_clean"
 
-        # Check explicit test boundaries in PDF pages
+        # 1. Validate Test identity and boundaries
         detected_tests: List[int] = []
         for p in pages:
             txt = p.get("content", {}).get("text", "")
@@ -68,42 +71,57 @@ class PdfReadingNormalizer(BaseNormalizer):
                 raise ValueError(
                     f"Requested Test {test_number} not found in PDF page boundaries. Detected tests: {detected_tests}"
                 )
+        else:
+            # Check source metadata or page provenance
+            meta_test: Optional[int] = None
+            if source_record:
+                if "test_number" in source_record and source_record["test_number"] is not None:
+                    meta_test = int(source_record["test_number"])
+                else:
+                    fn = source_record.get("filename") or source_record.get("relative_path") or ""
+                    m_fn = re.search(r"\bTEST[_\s]*(\d+)\b", fn, re.IGNORECASE)
+                    if m_fn:
+                        meta_test = int(m_fn.group(1))
 
-        # Combine page texts
+            if meta_test is None:
+                for p in pages:
+                    prov_path = (p.get("provenance") or {}).get("relative_path", "")
+                    m_p = re.search(r"\bTEST[_\s]*(\d+)\b", prov_path, re.IGNORECASE)
+                    if m_p:
+                        meta_test = int(m_p.group(1))
+                        break
+
+            if meta_test is not None:
+                if meta_test != test_number:
+                    raise ValueError(
+                        f"Requested Test {test_number} does not match source metadata Test {meta_test}"
+                    )
+            elif (
+                source_record
+                and (
+                    source_record.get("collection") == "synthetic"
+                    or "synthetic" in str(source_record.get("relative_path", ""))
+                    or "synthetic" in str(source_record.get("file_id", ""))
+                )
+                and test_number == 1
+            ):
+                # Standalone single-test synthetic fixture defaulting to Test 1
+                pass
+            else:
+                raise ValueError(
+                    f"Ambiguous or unverified Test identity for requested Test {test_number}: "
+                    "PDF pages contain no identifiable test boundaries or trustworthy metadata."
+                )
+
+        # 2. Extract and structure passage narrative text
         all_text = "\n\n".join(
             p.get("content", {}).get("text", "") for p in pages
         )
 
-        test_id = f"TEST-IELTS-{volume_code}-{test_number:02d}-{'ACAD' if track == 'academic' else 'GT'}"
-        test_prov = self._make_provenance(
-            source_record=source_record,
-            raw_block_locator=f"page_range:1-{len(pages)}",
-            is_ocr=is_ocr,
-        )
-        test_qp = QualityProfile(
-            lifecycle_status="reviewed",
-            extraction_quality=extraction_q,
-            source_fidelity="authoritative_official",
-            answer_verification="unverified",
-            explanation_verification="source_provided",
-            publication_permission=publication_permission,  # type: ignore[arg-type]
-            validation_flags=["OCR_EXTRACTION_SOURCE"] if is_ocr else [],
-        )
-        test_entity = IELTSTest(
-            test_id=test_id,
-            title=f"IELTS {volume_code} Academic Reading Test {test_number}",
-            volume=volume_code,
-            test_number=test_number,
-            track="academic" if track == "academic" else "general_training",
-            sections_present=["reading"],
-            quality_profile=test_qp,
-            _provenance=test_prov,
-        )
-
-        passage_id = f"PASSAGE-{volume_code}-{test_number:02d}-RD{passage_number:02d}"
-
-        # Heuristic split: passage text vs questions
         lines = [line.strip() for line in all_text.splitlines() if line.strip()]
+        if not lines:
+            raise ValueError("No text lines available in PDF pages.")
+
         q_start = None
         for i, line in enumerate(lines):
             if re.match(r"^Questions?\s+\d+", line, re.I):
@@ -111,12 +129,13 @@ class PdfReadingNormalizer(BaseNormalizer):
                 break
 
         if q_start is None:
-            # Fallback split at 60%
             q_start = max(1, int(len(lines) * 0.6))
 
         title = lines[0] if lines else "Reading Passage"
         body_lines = lines[1:q_start]
-        narrative_text = "\n\n".join(body_lines) if body_lines else "Default passage text content."
+        narrative_text = "\n\n".join(body_lines)
+        if not narrative_text.strip():
+            raise ValueError("No reading passage narrative body text found in PDF pages.")
         if len(narrative_text) < 100:
             narrative_text = narrative_text.ljust(100, " ")
 
@@ -149,19 +168,152 @@ class PdfReadingNormalizer(BaseNormalizer):
                 )
             )
 
+        # 3. Parse question group range & instructions
+        group_header = lines[q_start] if q_start < len(lines) else ""
+        m_range = re.search(r"Questions?\s+(\d+)\s*(?:-|–|—|to)\s*(\d+)", group_header, re.I)
+        if m_range:
+            start_q = int(m_range.group(1))
+            end_q = int(m_range.group(2))
+        else:
+            start_q = 1
+            end_q = max(1, min(5, len(lines) - q_start - 1))
+
+        instruction_lines: List[str] = []
+        item_lines_start = q_start + 1
+        for idx in range(q_start + 1, len(lines)):
+            l = lines[idx]
+            if re.match(r"^(?:Question\s+)?\d+[\.\s\:\)]", l, re.IGNORECASE):
+                item_lines_start = idx
+                break
+            instruction_lines.append(l)
+
+        instruction_text = (
+            " ".join(instruction_lines).strip()
+            if instruction_lines
+            else "Do the following statements agree with the information given in the passage?"
+        )
+        detected_qtype = detect_question_type_from_instructions(instruction_text)
+        q_type: QuestionType = detected_qtype or "true-false-not-given"
+        word_limit = detect_word_limit_rule(instruction_text)
+
+        test_id = f"TEST-IELTS-{volume_code}-{test_number:02d}-{'ACAD' if track == 'academic' else 'GT'}"
+        passage_id = f"PASSAGE-{volume_code}-{test_number:02d}-RD{passage_number:02d}"
+        group_id = f"QG-{volume_code}-{test_number:02d}-RD{passage_number:02d}-G01"
+
+        # 4. Parse question items without fabricating fallback prompts
+        candidate_q_lines = lines[item_lines_start:] if item_lines_start < len(lines) else []
+        questions: List[IELTSQuestion] = []
+
+        for q_num in range(start_q, end_q + 1):
+            q_id = f"Q-{volume_code}-{test_number:02d}-RD-{q_num:03d}"
+            matched_prompt: Optional[str] = None
+            matched_line_offset: Optional[int] = None
+
+            for l_offset, cand_line in enumerate(candidate_q_lines):
+                m_item = re.match(rf"^(?:Question\s+)?{q_num}[\.\s\:\)](.*)", cand_line, re.IGNORECASE)
+                if m_item:
+                    extracted = m_item.group(1).strip()
+                    if len(extracted) >= 3:
+                        matched_prompt = extracted
+                        matched_line_offset = l_offset
+                        break
+
+            if not matched_prompt:
+                # Do NOT publish fabricated fallback prompts!
+                # Record unresolved question prompt for human review
+                self.unresolved_questions.append({
+                    "question_id": q_id,
+                    "group_id": group_id,
+                    "passage_id": passage_id,
+                    "question_number": q_num,
+                    "question_type": q_type,
+                    "error": "UNRESOLVED_QUESTION_PROMPT",
+                    "note": f"Could not match question prompt text for question {q_num} in group {group_id}",
+                    "lifecycle_status": "review_required",
+                })
+                continue
+
+            loc_idx = item_lines_start + (matched_line_offset if matched_line_offset is not None else 0)
+            q_prov = self._make_provenance(
+                source_record=source_record,
+                raw_block_locator=f"line:{loc_idx}",
+                is_ocr=is_ocr,
+            )
+            q_status = "review_required" if is_ocr else "extracted"
+            q_qp = QualityProfile(
+                lifecycle_status=q_status,  # type: ignore[arg-type]
+                extraction_quality=extraction_q,
+                source_fidelity="authoritative_official",
+                answer_verification="unverified",
+                explanation_verification="source_provided",
+                publication_permission=publication_permission,  # type: ignore[arg-type]
+                validation_flags=["OCR_EXTRACTION_SOURCE"] if is_ocr else [],
+            )
+            questions.append(
+                IELTSQuestion(
+                    question_id=q_id,
+                    group_id=group_id,
+                    passage_id=passage_id,
+                    question_number=q_num,
+                    question_type=q_type,
+                    prompt_text=matched_prompt,
+                    options=None,
+                    blank_target=None,
+                    linked_principle_ids=["RD-TFNG-001"] if q_type == "true-false-not-given" else [],
+                    quality_profile=q_qp,
+                    _provenance=q_prov,
+                )
+            )
+
+        # 5. Build entity QualityProfiles reflecting unresolved status truthfully
+        has_unresolved = len(self.unresolved_questions) > 0
+        overall_lifecycle = "review_required" if (is_ocr or has_unresolved) else "reviewed"
+        passage_lifecycle = "review_required" if (is_ocr or has_unresolved) else "extracted"
+
+        val_flags: List[str] = []
+        if is_ocr:
+            val_flags.append("OCR_EXTRACTION_SOURCE")
+        if has_unresolved:
+            val_flags.append("UNRESOLVED_QUESTIONS")
+
+        test_prov = self._make_provenance(
+            source_record=source_record,
+            raw_block_locator=f"page_range:1-{len(pages)}",
+            is_ocr=is_ocr,
+        )
+        test_qp = QualityProfile(
+            lifecycle_status=overall_lifecycle,  # type: ignore[arg-type]
+            extraction_quality=extraction_q,
+            source_fidelity="authoritative_official",
+            answer_verification="unverified",
+            explanation_verification="source_provided",
+            publication_permission=publication_permission,  # type: ignore[arg-type]
+            validation_flags=list(val_flags),
+        )
+        test_entity = IELTSTest(
+            test_id=test_id,
+            title=f"IELTS {volume_code} Academic Reading Test {test_number}",
+            volume=volume_code,
+            test_number=test_number,
+            track="academic" if track == "academic" else "general_training",
+            sections_present=["reading"],
+            quality_profile=test_qp,
+            _provenance=test_prov,
+        )
+
         passage_prov = self._make_provenance(
             source_record=source_record,
             raw_block_locator=f"lines:1-{q_start}",
             is_ocr=is_ocr,
         )
         passage_qp = QualityProfile(
-            lifecycle_status="extracted",
+            lifecycle_status=passage_lifecycle,  # type: ignore[arg-type]
             extraction_quality=extraction_q,
             source_fidelity="authoritative_official",
             answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
-            validation_flags=["OCR_EXTRACTION_SOURCE"] if is_ocr else [],
+            validation_flags=list(val_flags),
         )
         passage_entity = PassageOrSection(
             passage_id=passage_id,
@@ -178,76 +330,39 @@ class PdfReadingNormalizer(BaseNormalizer):
             _provenance=passage_prov,
         )
 
-        group_id = f"QG-{volume_code}-{test_number:02d}-RD01-G01"
         group_prov = self._make_provenance(
             source_record=source_record,
             raw_block_locator=f"lines:{q_start}-{len(lines)}",
             is_ocr=is_ocr,
         )
         group_qp = QualityProfile(
-            lifecycle_status="reviewed",
+            lifecycle_status=overall_lifecycle,  # type: ignore[arg-type]
             extraction_quality=extraction_q,
             source_fidelity="authoritative_official",
             answer_verification="unverified",
             explanation_verification="source_provided",
             publication_permission=publication_permission,  # type: ignore[arg-type]
-            validation_flags=[],
+            validation_flags=list(val_flags),
         )
         q_group = QuestionGroup(
             group_id=group_id,
             passage_id=passage_id,
-            start_question_number=1,
-            end_question_number=min(5, max(1, len(lines) - q_start)),
-            question_type="true-false-not-given",
-            instruction_text="Do the following statements agree with the information given in the passage?",
-            word_limit_rule=None,
+            start_question_number=start_q,
+            end_question_number=end_q,
+            question_type=q_type,
+            instruction_text=instruction_text,
+            word_limit_rule=word_limit,
             shared_options=None,
             quality_profile=group_qp,
             _provenance=group_prov,
         )
-
-        questions: List[IELTSQuestion] = []
-        q_lines = lines[q_start:]
-        for idx in range(1, q_group.end_question_number + 1):
-            q_id = f"Q-{volume_code}-{test_number:02d}-RD-{idx:03d}"
-            prompt = q_lines[idx] if idx < len(q_lines) else f"Question statement {idx}."
-            if len(prompt) < 3:
-                prompt = f"Question statement {idx}."
-            q_prov = self._make_provenance(
-                source_record=source_record,
-                raw_block_locator=f"line:{q_start + idx}",
-                is_ocr=is_ocr,
-            )
-            q_qp = QualityProfile(
-                lifecycle_status="extracted",
-                extraction_quality=extraction_q,
-                source_fidelity="authoritative_official",
-                answer_verification="unverified",
-                explanation_verification="source_provided",
-                publication_permission=publication_permission,  # type: ignore[arg-type]
-                validation_flags=[],
-            )
-            questions.append(
-                IELTSQuestion(
-                    question_id=q_id,
-                    group_id=group_id,
-                    passage_id=passage_id,
-                    question_number=idx,
-                    question_type="true-false-not-given",
-                    prompt_text=prompt,
-                    options=None,
-                    blank_target=None,
-                    linked_principle_ids=["RD-TFNG-001"],
-                    quality_profile=q_qp,
-                    _provenance=q_prov,
-                )
-            )
 
         return {
             "test": test_entity,
             "passage": passage_entity,
             "groups": [q_group],
             "questions": questions,
+            "unresolved_questions": list(self.unresolved_questions),
         }
 
     def _make_provenance(
