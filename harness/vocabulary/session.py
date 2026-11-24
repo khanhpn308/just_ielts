@@ -1,7 +1,12 @@
 """Vocabulary Session, Curriculum Progression and Spaced Review Manager.
 
-Handles natural learning commands, progress tracking, and session resumption
-with full privacy isolation (synthetic or user-isolated progress files).
+Implements the PR #10 Vocabulary Progress Contract:
+- Level 0–3 (unknown/failed, recognized, recalled, productive).
+- Stage 0–5 spaced repetition review schedule (Gaps: 1, 2, 3, 7, 16, 30 days).
+- Sense-based journal identity (expression + POS + sense_key).
+- One current record per identity in private/progress/vocabulary.jsonl.
+- Prevention of duplicate records and repeated same-day advancement.
+- Explicit user consent required before persisting progress or curriculum state.
 """
 
 from __future__ import annotations
@@ -10,10 +15,12 @@ import datetime
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from harness.vocabulary.kb import (
     VOCAB_KB_DIR,
+    build_entry_key,
+    normalize_expression,
     get_unit_details,
     query_vocabulary_by_topic,
     query_collocations_by_topic,
@@ -26,26 +33,37 @@ DEFAULT_CURRICULUM_FILE = Path("private/progress/curriculum.json")
 # Primary curriculum backbone order
 CURRICULUM_BACKBONE = [f"IVU-60-U{i:03d}" for i in range(1, 26)] + [f"IVU-65-U{i:03d}" for i in range(1, 26)]
 
+# Baseline schedule gaps for Review Stage 0..5 (in days)
+STAGE_GAPS = [1, 2, 3, 7, 16, 30]
+
 
 def parse_learning_intent(prompt: str) -> Dict[str, Any]:
     """Deterministically identifies the vocabulary learning intent from user input."""
     p_lower = prompt.lower().strip()
 
-    # 1. Review due vocabulary: "ôn từ vựng hôm nay", "ôn từ vựng đến hạn", "review due vocabulary"
+    # 1. User consent to save: "lưu kết quả buổi học", "lưu tiến độ", "save progress"
+    if any(k in p_lower for k in ["lưu kết quả buổi học", "lưu kết quả", "lưu tiến độ", "save progress"]):
+        return {
+            "intent": "SAVE_PROGRESS",
+            "user_consented": True,
+            "raw_prompt": prompt,
+        }
+
+    # 2. Review due vocabulary: "ôn từ vựng hôm nay", "ôn từ vựng đến hạn", "review due vocabulary"
     if any(k in p_lower for k in ["ôn từ vựng hôm nay", "ôn từ vựng", "review vocabulary", "ôn tập từ vựng"]):
         return {
             "intent": "REVIEW_DUE_VOCABULARY",
             "raw_prompt": prompt,
         }
 
-    # 2. Next unit in curriculum: "học unit tiếp theo", "bài tiếp theo", "next unit"
+    # 3. Next unit in curriculum: "học unit tiếp theo", "bài tiếp theo", "next unit"
     if any(k in p_lower for k in ["học unit tiếp theo", "unit tiếp theo", "bài tiếp theo", "next unit"]):
         return {
             "intent": "LEARN_NEXT_UNIT",
             "raw_prompt": prompt,
         }
 
-    # 3. Specific unit: e.g. "Học IVU-60 Unit 1", "Học EVU-B2 Unit 14", "Học AVU Unit 37"
+    # 4. Specific unit: e.g. "Học IVU-60 Unit 1", "Học EVU-B2 Unit 14", "Học AVU Unit 37"
     unit_match = re.search(r"(?:học|luyện|xem)\s+([A-Z0-9\-]+)\s+(?:unit|bài)\s+(\d+)", prompt, re.IGNORECASE)
     if unit_match:
         source_prefix = unit_match.group(1).upper()
@@ -59,7 +77,7 @@ def parse_learning_intent(prompt: str) -> Dict[str, Any]:
             "raw_prompt": prompt,
         }
 
-    # 4. Topic-based: "Học từ vựng chủ đề Education", "Luyện từ vựng Environment"
+    # 5. Topic-based: "Học từ vựng chủ đề Education", "Luyện từ vựng Environment"
     topic_map = {
         "education": "education_and_learning",
         "giáo dục": "education_and_learning",
@@ -93,7 +111,7 @@ def parse_learning_intent(prompt: str) -> Dict[str, Any]:
 
 
 def load_curriculum_state(curriculum_file: Optional[Path] = None) -> Dict[str, Any]:
-    """Loads current curriculum position, completed units and bookmarks."""
+    """Loads current curriculum position and completed units."""
     c_file = curriculum_file or DEFAULT_CURRICULUM_FILE
     if not c_file.exists():
         return {
@@ -105,83 +123,233 @@ def load_curriculum_state(curriculum_file: Optional[Path] = None) -> Dict[str, A
         return json.load(f)
 
 
-def save_curriculum_state(state: Dict[str, Any], curriculum_file: Optional[Path] = None) -> None:
-    """Saves updated curriculum position."""
+def save_curriculum_state(
+    state: Dict[str, Any],
+    curriculum_file: Optional[Path] = None,
+    user_consented: bool = False,
+) -> bool:
+    """Saves updated curriculum position only if user consented."""
+    if not user_consented:
+        return False
+
     c_file = curriculum_file or DEFAULT_CURRICULUM_FILE
     c_file.parent.mkdir(parents=True, exist_ok=True)
     state["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    with open(c_file, "w", encoding="utf-8") as f:
+
+    tmp_file = c_file.with_suffix(".tmp")
+    with open(tmp_file, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
+    tmp_file.replace(c_file)
+    return True
 
 
-def get_due_vocabulary(
-    target_date: Optional[str] = None,
-    progress_file: Optional[Path] = None
-) -> List[Dict[str, Any]]:
-    """Retrieves items whose next_review_date <= target_date (default today)."""
+def load_vocabulary_journal(progress_file: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    """Loads private vocabulary journal indexed by unique entry_key."""
     p_file = progress_file or DEFAULT_PROGRESS_FILE
     if not p_file.exists():
-        return []
+        return {}
 
-    today_str = target_date or datetime.date.today().isoformat()
-    due_items = []
-
+    records = {}
     with open(p_file, "r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
             entry = json.loads(line)
-            nrd = entry.get("next_review_date")
-            if nrd and nrd <= today_str:
-                due_items.append(entry)
+            k = entry.get("entry_key")
+            if not k:
+                k = build_entry_key(entry["expression"], entry["pos"], entry.get("sense_key", ""))
+                entry["entry_key"] = k
+            records[k] = entry
+    return records
 
-    return due_items
 
-
-def record_vocabulary_review(
-    item_id: str,
+def assess_and_schedule_item(
+    existing_record: Optional[Dict[str, Any]],
     expression: str,
-    success: bool,
-    progress_file: Optional[Path] = None,
-    interval_days: int = 3,
+    pos: str,
+    sense_key: str,
+    meaning_vi: str,
+    level: int = 0,
+    outcome: Optional[str] = None,
+    session_date: Optional[datetime.date] = None,
+    sources: Optional[List[Dict[str, Any]]] = None,
+    error_event: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Appends an updated spaced repetition record for a vocabulary item."""
+    """Calculates updated journal record following Level 0-3 and Stage 0-5 spaced repetition rules.
+
+    - outcome: 'not_assessed', 'failed', 'assisted', 'recalled', or 'productive'.
+    - If outcome is 'not_assessed' (new item taught), last_review_date remains null, review_count=0.
+    - Level 0 ('failed'): resets stage to 0, schedules tomorrow.
+    - Level 1 ('assisted' / recognized): stage unchanged, schedules tomorrow.
+    - Level 2 ('recalled') or Level 3 ('productive'): advances stage by 1 (capped at 5).
+    - Prevents repeated same-day advancement.
+    """
+    today = session_date or datetime.date.today()
+    today_str = today.isoformat()
+    entry_key = build_entry_key(expression, pos, sense_key)
+
+    record = dict(existing_record) if existing_record else {
+        "entry_key": entry_key,
+        "expression": expression,
+        "pos": pos,
+        "sense_key": sense_key,
+        "meaning_vi": meaning_vi,
+        "sources": sources or [{"kind": "tutor_created", "ref": None, "locator": None}],
+        "level": 0,
+        "review_stage": 0,
+        "first_studied_date": today_str,
+        "last_review_date": None,
+        "next_review_date": (today + datetime.timedelta(days=1)).isoformat(),
+        "last_outcome": "not_assessed",
+        "review_count": 0,
+        "lapse_count": 0,
+        "errors": [],
+    }
+
+    # Determine explicit outcome
+    if outcome is None:
+        if existing_record is None and level == 0:
+            outcome = "not_assessed"
+        else:
+            outcome_names = {0: "failed", 1: "assisted", 2: "recalled", 3: "productive"}
+            outcome = outcome_names.get(level, "not_assessed")
+
+    if outcome == "not_assessed":
+        record["last_outcome"] = "not_assessed"
+        record["level"] = 0
+        record["review_stage"] = 0
+        record["last_review_date"] = None
+        record["next_review_date"] = (today + datetime.timedelta(days=1)).isoformat()
+        if error_event:
+            record.setdefault("errors", []).append(error_event)
+        return record
+
+    already_reviewed_today = (record.get("last_review_date") == today_str)
+    curr_stage = record.get("review_stage", 0)
+
+    if already_reviewed_today:
+        # Same-day retry: cannot advance stage again.
+        # But an observed failure can reset stage and shorten schedule.
+        if outcome == "failed":
+            record["review_stage"] = 0
+            record["next_review_date"] = (today + datetime.timedelta(days=1)).isoformat()
+            record["last_outcome"] = "failed"
+            record["level"] = 0
+            record["lapse_count"] = record.get("lapse_count", 0) + 1
+    else:
+        # First assessment today
+        record["review_count"] = record.get("review_count", 0) + 1
+        record["last_review_date"] = today_str
+        record["level"] = level
+        record["last_outcome"] = outcome
+
+        if outcome in ["recalled", "productive"] or level >= 2:
+            new_stage = min(5, curr_stage + 1)
+            gap = STAGE_GAPS[new_stage]
+            record["review_stage"] = new_stage
+            record["next_review_date"] = (today + datetime.timedelta(days=gap)).isoformat()
+        elif outcome == "assisted" or level == 1:
+            record["review_stage"] = curr_stage
+            record["next_review_date"] = (today + datetime.timedelta(days=1)).isoformat()
+        else:
+            # Failed
+            record["review_stage"] = 0
+            record["next_review_date"] = (today + datetime.timedelta(days=1)).isoformat()
+            record["lapse_count"] = record.get("lapse_count", 0) + 1
+
+    if error_event:
+        record.setdefault("errors", []).append(error_event)
+
+    return record
+
+    if error_event:
+        record.setdefault("errors", []).append(error_event)
+
+    return record
+
+
+def save_vocabulary_batch(
+    updates: List[Dict[str, Any]],
+    user_consented: bool = False,
+    progress_file: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Persists a batch of vocabulary records only if user consented.
+
+    Uses atomic replacement and prevents duplicate records.
+    """
+    if not user_consented:
+        return {
+            "saved": False,
+            "reason": "user_consent_required",
+            "message": "Không thể lưu tiến độ khi người học chưa đồng ý (User consent required).",
+        }
+
     p_file = progress_file or DEFAULT_PROGRESS_FILE
     p_file.parent.mkdir(parents=True, exist_ok=True)
 
-    today = datetime.date.today()
-    if interval_days == 0:
-        next_date = today
-    elif success:
-        next_date = today + datetime.timedelta(days=interval_days)
-    else:
-        next_date = today + datetime.timedelta(days=1)
+    # 1. Read existing records
+    journal = load_vocabulary_journal(p_file)
 
-    record = {
-        "item_id": item_id,
-        "expression": expression,
-        "reviewed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "success": success,
-        "repetitions": 1 if success else 0,
-        "next_review_date": next_date.isoformat(),
+    # 2. Upsert updates by unique entry_key
+    for upd in updates:
+        k = upd.get("entry_key")
+        if not k:
+            k = build_entry_key(upd["expression"], upd["pos"], upd.get("sense_key", ""))
+            upd["entry_key"] = k
+        journal[k] = upd
+
+    # 3. Atomically write to temp file then replace
+    tmp_file = p_file.with_suffix(".tmp")
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        for rec in journal.values():
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    tmp_file.replace(p_file)
+
+    return {
+        "saved": True,
+        "total_records": len(journal),
+        "updated_batch_count": len(updates),
     }
 
-    with open(p_file, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    return record
+def get_due_vocabulary(
+    target_date: Optional[str] = None,
+    progress_file: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieves items whose next_review_date <= target_date (default today)."""
+    journal = load_vocabulary_journal(progress_file)
+    today_str = target_date or datetime.date.today().isoformat()
+
+    due_items = []
+    for rec in journal.values():
+        nrd = rec.get("next_review_date")
+        if nrd and nrd <= today_str:
+            due_items.append(rec)
+
+    # Sort oldest due first
+    due_items.sort(key=lambda x: x.get("next_review_date", ""))
+    return due_items
 
 
 def execute_tutor_command(
     prompt: str,
     progress_file: Optional[Path] = None,
     curriculum_file: Optional[Path] = None,
+    user_consented: bool = False,
 ) -> Dict[str, Any]:
-    """Simulates the tutor routing and knowledge retrieval for learning commands."""
+    """Routes learning commands to appropriate workflows respecting consent and progress rules."""
     parsed = parse_learning_intent(prompt)
     intent = parsed["intent"]
 
-    if intent == "LEARN_UNIT":
+    if intent == "SAVE_PROGRESS":
+        return {
+            "status": "ready",
+            "workflow": "Workflow C: Track Progress",
+            "user_consented": True,
+            "message": "Sẵn sàng lưu kết quả buổi học khi có danh sách mục từ vựng hoàn thành.",
+        }
+
+    elif intent == "LEARN_UNIT":
         unit_key = parsed["unit_key"]
         unit_data = get_unit_details(unit_key)
         if not unit_data:
@@ -191,10 +359,11 @@ def execute_tutor_command(
                 "parsed_intent": parsed,
             }
 
-        # Update curriculum position to this unit
+        # Curriculum state is only persisted if user explicitly consented
         curr_state = load_curriculum_state(curriculum_file)
         curr_state["current_unit_key"] = unit_key
-        save_curriculum_state(curr_state, curriculum_file)
+        if user_consented:
+            save_curriculum_state(curr_state, curriculum_file, user_consented=True)
 
         return {
             "status": "ready",
@@ -246,7 +415,8 @@ def execute_tutor_command(
 
         unit_data = get_unit_details(next_unit_key)
         curr_state["current_unit_key"] = next_unit_key
-        save_curriculum_state(curr_state, curriculum_file)
+        if user_consented:
+            save_curriculum_state(curr_state, curriculum_file, user_consented=True)
 
         return {
             "status": "ready",

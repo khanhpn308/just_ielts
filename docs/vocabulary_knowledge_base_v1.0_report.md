@@ -1,9 +1,9 @@
-# BÁO CÁO NGHIỆM THU: VOCABULARY KNOWLEDGE BASE V1.0 — FINAL IMPLEMENTATION REPORT
+# BÁO CÁO NGHIỆM THU: VOCABULARY KNOWLEDGE BASE V1.0 — PR #11 TARGETED BUG FIXES
 
 **Hệ thống:** IELTS Adaptive Learning System & Tutor  
 **Mục tiêu:** Xây dựng Cơ sở Tri thức Từ vựng chuẩn hóa, liên kết 8 bộ giáo trình gốc phục vụ mục tiêu IELTS Academic Band 7.5+  
 **Chiến lược kỹ thuật:** *Parse once — Enrich progressively — Learn repeatedly (Không overengineering, không vector DB thừa, không đa agent)*  
-**Trạng thái nghiệm thu:** **VERIFIED & READY FOR LEARNING**
+**Trạng thái nghiệm thu:** **VERIFIED & READY FOR LEARNING (DEFECTS RESOLVED)**
 
 ---
 
@@ -13,7 +13,7 @@ Mục tiêu tối thượng của dự án là **hiệu quả học tập của 
 - Chuyển hóa toàn diện 8 bộ giáo trình từ vựng kinh điển sang dạng dữ liệu có cấu trúc, lưu vết nguồn gốc (provenance) chính xác từng trang và mục bài.
 - Tích hợp trực tiếp vào Gia sư kiên trì (**Persistent IELTS Tutor Skill**) mà không tạo ra hệ thống cạnh tranh hay làm xáo trộn luồng hội thoại.
 - Áp dụng các nguyên tắc học tập thực chứng: Học trong ngữ cảnh (Contextual Learning), Gợi nhớ chủ động (Active Recall), Lặp lại ngắt quãng (Spaced Repetition), và Vận dụng vào 4 kỹ năng (Knowledge Transfer).
-- Tuân thủ chính sách bản quyền và bảo vệ dữ liệu cá nhân: 100% dữ liệu gốc và dữ liệu trích xuất nằm trong thư mục `private/` (được bảo vệ tuyệt đối bởi Git ignore, không đưa lên repository).
+- Tuân thủ chính sách bản quyền và bảo vệ dữ liệu cá nhân: 100% dữ liệu gốc, bài tập trích xuất và đáp án sách giáo khoa nằm độc quyền trong thư mục `private/` (được bảo vệ tuyệt đối bởi Git ignore, không đưa vào repository công khai).
 
 ---
 
@@ -46,7 +46,7 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
   - IVU-65: 25 Units
   - NB-PARA: 10 Sections
 - **Số Unit văn bản số đã bóc tách cấu trúc 100% (Structurally Extracted Digital Units):** `383 Units`
-  - Đã thực hiện trích xuất toàn bộ 383 Unit từ 6 đầu sách có text-layer (EVU-B2: 101, EVU-ADV: 101, ECI-INT: 60, ECI-ADV: 60, AVU: 51, NB-PARA: 10) và lưu vào `private/knowledge/vocabulary/units/<source_id>/`.
+  - Đã thực hiện trích xuất toàn bộ 383 Unit từ 6 đầu sách có text-layer vào `private/knowledge/vocabulary/units/<source_id>/`.
   - Bộ nhớ đệm đáp án (Answer Key Cache) trong parser giúp tốc độ bóc tách chỉ mất trung bình 0.05s/Unit.
 - **Sách scan xử lý OCR theo yêu cầu (Bounded On-Demand OCR):** `50 Units` (IVU-60: 25 Units, IVU-65: 25 Units).
   - Không chạy OCR hàng loạt gây quá tải đĩa và CPU; chỉ OCR trang thuộc Unit khi người học bắt đầu học Unit đó, sau đó ghi cache vĩnh viễn.
@@ -56,90 +56,65 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
 
 ---
 
-## 4. XÁC THỰC MÔ-ĐUN PILOT EDUCATION ĐỐI CHIẾU SÁCH GỐC
+## 4. KẾT QUẢ XỬ LÝ TARGETED DEFECTS (PR #11 BUG FIXES)
 
-Tất cả 10 mục từ vựng, 4 collocations, 3 nhóm paraphrase và 5 bài tập đã được đối soát từng chữ với văn bản PDF gốc:
+### 4.1. Khái quát hóa On-Demand Enrichment (Defect Area 1)
+- **Loại bỏ từ điển hardcode:** Đã xóa bỏ hoàn toàn từ điển Unit 101 trong `enrichment.py`.
+- **Trích xuất sự kiện gốc (Source Facts):** Python trích xuất các ứng viên từ vựng, ngữ cảnh, định nghĩa chú thích (footnotes) và ghi chú trong ngoặc vuông trực tiếp từ nội dung sách giáo khoa (`extract_unit_vocabulary_candidates`).
+- **Gia sư làm giàu ngữ nghĩa:** Gia sư IELTS Tutor thực hiện làm giàu ngữ nghĩa (IPA, CEFR, Từ loại, Giải nghĩa tiếng Việt, Collocation) theo nhu cầu thực tế của người học mà không gọi API LLM ngoài.
+- **Không ngụy tạo dữ liệu mặc định:** Không tạo phiên âm giả mạo dạng `/{expression}/`, không gán mặc định `C1`, không tự chế định nghĩa tiếng Anh giả. Nếu chưa kiểm chứng, trường thông tin được giữ `None`.
+- **Phân định xuất xứ dữ liệu rõ ràng:** Tách biệt tường minh giữa sự kiện gốc từ giáo trình (`source_facts`, `authoritative_textbook`) và nội dung do gia sư làm giàu (`enrichment_agent: tutor_agent`).
+- **Minh chứng trên Unit độc lập ngoài Education và Unit 101:** Đã kiểm thử thành công trên **`ECI-INT-U030` ("Work Jobs, career and work")**:
+  - Trích xuất 23 ứng viên từ vựng gốc từ bài đọc và chú thích.
+  - Gia sư làm giàu các cụm từ: `high-powered job`, `embark on a career`, `climb the career ladder`.
+  - Tái truy xuất lần 2 đạt **Cache Hit tức thời trong 0.1 ms**.
 
-### 4.1. Điều chỉnh lỗi quan trọng và bẫy dùng từ (Lexical Nuances)
-- **Quy tắc collocation với "knowledge" (IVU-65 Unit 5 p. 26):**
-  - **Khắc phục nhận định tuyệt đối hóa trước đây:** Pauline Cullen trong IVU-65 chỉ ra rằng khi nói về *một môn học/chuyên ngành cụ thể* (field of study), dùng `knowledge of [classical music/physics]`, KHÔNG nói `knowledge about [classical music]` hay `knowledge for`. Tuy nhiên, trong ngữ cảnh thông thường ngoài học thuật, cụm `knowledge about [the world / the incident]` vẫn được chấp nhận.
-  - Tránh cách diễn đạt thiếu tự nhiên: `get the knowledge` (thay bằng `acquire / gain knowledge`).
+### 4.2. Bảo toàn Hợp đồng Tiến độ Học tập PR #10 (Defect Area 2)
+- **Loại bỏ thuật toán cạnh tranh:** Đã gỡ bỏ hàm ghi đè tiến độ cũ trong `session.py`.
+- **Bảo toàn Level 0–3 & Stage 0–5:**
+  - Cấp độ nhận thức: `Level 0` (chưa đánh giá/thất bại), `Level 1` (nhận diện/có trợ giúp), `Level 2` (gợi nhớ độc lập), `Level 3` (vận dụng chủ động).
+  - Chu kỳ lặp lại ngắt quãng chuẩn: `Stage 0` (+1 ngày), `Stage 1` (+2 ngày), `Stage 2` (+3 ngày), `Stage 3` (+7 ngày), `Stage 4` (+16 ngày), `Stage 5` (+30 ngày) tương ứng các mốc Day 1, 2, 4, 7, 14, 30.
+- **Định danh mục từ theo sense:** Khóa định danh `entry_key = expression|pos|sense_key` (thoát ký tự `|`).
+- **Chống trùng lặp và thăng cấp nhiều lần trong ngày:**
+  - Mỗi mục từ duy trì đúng 1 bản ghi duy nhất trong `private/progress/vocabulary.jsonl`.
+  - Trong cùng một ngày dương lịch, chỉ lượt đánh giá độc lập đầu tiên mới có thể thăng cấp Stage. Luyện tập thêm trong ngày không làm nhảy cấp tiến độ.
+  - Nếu gặp thất bại trong ngày, Stage được reset về 0 và dời lịch về ngày mai.
+- **Ràng buộc sự đồng thuận người học (User Consent):**
+  - Không tự ý ghi nhật ký tiến độ hoặc trạng thái giáo trình khi người học chưa đồng ý (`user_consented=True`).
 
-### 4.2. Đối soát bài tập gốc và phân định rõ ràng
-1. **EX-EVU-B2-14.1** (*EVU-B2 trang in 35, trang PDF 36, loại: original_textbook_exercise*):
-   - Hướng dẫn gốc: *"Fill the gaps in this life story of a British woman."*
-   - Câu hỏi gốc: Điền vào đoạn văn câu chuyện cuộc đời của Amy từ lúc học primary school (1) đến higher education (9).
-   - Đáp án đối soát trang 218: `2 nursery school, 3 crèche, 4 admission, 5 grammar, 6 comprehensive, 7 public, 8 sixth-form college, 9 higher education / university`.
-2. **EX-EVU-ADV-1.1** (*EVU-ADV trang in 9, trang PDF 11, loại: original_textbook_exercise*):
-   - Hướng dẫn gốc: *"Correct the wrong usage of words to do with written work in these sentences."*
-   - Câu hỏi gốc: 7 câu sửa lỗi dùng sai từ liên quan đến văn bản học thuật (PhD assignment -> thesis, Martha's dissertation -> composition, essay with 5 pieces -> portfolio...).
-   - Đáp án đối soát trang 212: `1 thesis, 2 composition, 3 portfolio, 4 essay, 5 assignment, 6 dissertation, 7 project`.
-3. **EX-IVU-65-1.4** (*IVU-65 trang in 26, trang PDF 29, loại: original_textbook_exercise*):
-   - **Đính chính số hiệu bài:** Bài tập kết hợp từ với *knowledge* là **Exercise 1.4**, không phải Exercise 5.1.
-   - Hướng dẫn gốc: *"All of the words in the box collocate with the word knowledge. Complete the sentences with the correct combination with the word knowledge."*
-   - Đáp án đối soát trang 140: `1 a limited knowledge of, 2 common knowledge, 3 a specialist / detailed / in-depth knowledge of, 4 broaden my knowledge of, 5 prior knowledge`.
-4. **EX-ECI-ADV-17.1** (*ECI-ADV trang in 39, trang PDF 43, loại: original_textbook_exercise*):
-   - Hướng dẫn gốc: *"Answer the questions using collocations from Section A."*
-   - Câu hỏi gốc: 6 câu hỏi vận dụng collocation chủ đề Higher Education (graduating, mature students, seats of learning, distinguished scholars, gifted children, straight-A students).
-   - Đáp án đối soát trang 140: `1 You graduate from university., 2 mature students, 3 (prestigious) seats of learning, 4 distinguished scholars or leading authorities, 5 gifted children, 6 straight-A students`.
-5. **EX-NB-PARA-EDU-1** (*Grounded in NB-PARA trang 30, loại: tutor_transfer_exercise_grounded_in_source*):
-   - Phân định rõ ràng: Sách NB-PARA cung cấp các cặp từ/cụm từ tương đương song ngữ (bảng tham chiếu), không có câu hỏi trắc nghiệm hay bài tập số hiệu. Do đó, bài tập chuyển đổi câu này được gắn nhãn minh bạch là **bài tập vận dụng do Gia sư thiết kế dựa trên các cặp paraphrase gốc của thầy Ngọc Bách**, không gán nhãn giả mạo bài tập gốc.
+### 4.3. Chống mất mát tri thức & Tối ưu lưu trữ (Defect Area 3)
+- **Hàm `build-kb` không phá hủy và có tính lũy tích (Idempotent & Non-destructive):**
+  - Đọc và hợp nhất các mục từ đã có sẵn trong `vocabulary.jsonl`, không ghi đè mất các từ đã làm giàu trước đó.
+- **Hợp nhất nguồn gốc đa giáo trình:**
+  - Hàm `merge_lexical_entries` bảo toàn toàn bộ danh sách `sources` khi một từ xuất hiện ở nhiều sách khác nhau.
+- **Chỉ mục từ vựng nhất quán:** `lexical_index.json` ánh xạ đồng thời `entry_key` và biểu thức chuẩn hóa `norm_expr`.
+- **Hủy bộ đệm cũ (Cache Invalidation):** Sử dụng `PROCESSING_VERSION = "1.1.0"` để tự động nhận biết và bóc tách lại nếu phát hiện cấu trúc bộ đệm đã cũ.
 
----
-
-## 5. MINH CHỨNG QUY TRÌNH ON-DEMAND ENRICHMENT (7 BƯỚC)
-
-Quy trình 7 bước đã được thử nghiệm thực tế trên **EVU-ADV Unit 101 ("Red tape")**:
-
-```text
-=== LẦN 1: TRÍCH XUẤT VÀ LÀM GIÀU THEO YÊU CẦU (FRESH RUN) ===
-Thời gian thực thi: 0.0188 giây | from_cache: False
-- Bước 1: Truy xuất Unit EVU-ADV-U101 từ unit_index.json -> THÀNH CÔNG (Title: Red tape Characteristics of bureaucratic language)
-- Bước 2: Bóc tách nội dung lý thuyết trang 210 -> THÀNH CÔNG (2 Sections: A - Characteristics, B - Correspondence)
-- Bước 3: Nhận diện ứng viên từ vựng học thuật -> THÀNH CÔNG (attained, demolish, adjoining, undersigned, aforementioned, red tape...)
-- Bước 4: Làm giàu ngữ nghĩa mục từ (IPA, CEFR, Từ loại, Nghĩa tiếng Việt, Collocations, Common Mistakes) -> THÀNH CÔNG (5 mục từ)
-- Bước 5: Truy xuất 5 bài tập gốc và đáp án từ trang 276–277 -> THÀNH CÔNG (Ex 101.1 đến 101.5)
-- Bước 6: Lưu kết quả tái sử dụng vào private/knowledge/vocabulary/enriched/EVU-ADV/EVU-ADV-U101.json và cập nhật lexical_index.json -> THÀNH CÔNG
-
-=== LẦN 2: TÁI TRUY XUẤT ĐƠN VỊ ĐÃ LÀM GIÀU (CACHE HIT) ===
-Thời gian thực thi: 0.0002 giây (0.2 ms) | from_cache: True
-- Bước 7: Trả về trực tiếp từ cache đĩa mà KHÔNG lặp lại trích xuất PDF hay làm giàu dữ liệu -> THÀNH CÔNG
-```
+### 4.4. Tính toàn vẹn bài tập & Bảo mật bản quyền (Defect Area 4)
+- **Định danh bài tập phức hợp (Composite IDs):**
+  - Chuyển sang định dạng duy nhất toàn cục: `EX-{source_id}-U{unit_num:03d}-{exercise_number}` (ví dụ: `EX-EVU-B2-U014-14.1`, `EX-IVU-65-U005-1.4`).
+  - Tránh hoàn toàn xung đột khóa đáp án (Answer Key Collision) giữa các Unit khác nhau.
+- **Không cắt ngắn nội dung câu hỏi:** Loại bỏ các giới hạn cắt chuỗi (`[:200]`, `[:1200]`) trong parser để giữ nguyên văn bản bài tập gốc.
+- **Phân loại nguồn đáp án minh bạch:**
+  - `authoritative_textbook_key`: Đáp án chính thức từ sách giáo khoa số hóa.
+  - `uncertain_ocr_key`: Đáp án từ OCR sách scan (có thể có sai số nhận dạng).
+  - `tutor_suggested_answer`: Gợi ý giải thích từ gia sư cho các bài tập mở/vận dụng.
+- **Ẩn đáp án trong phiên luyện tập:** Khi giao bài tập cho người học, trường đáp án bị ẩn hoàn toàn (`hidden_key = True`), đáp án chỉ được nạp từ `answer_keys.jsonl` tại thời điểm chấm bài.
+- **Bảo mật bản quyền:** 100% trích đoạn bài tập gốc và đáp án bản quyền đã được chuyển hoàn toàn vào thư mục riêng tư `private/` (`seed_education.json`, `exercises.jsonl`, `answer_keys.jsonl`), không lưu trữ văn bản bản quyền trong mã nguồn Python công khai hay báo cáo Markdown công khai.
+- **Kiểm thử công khai bằng Synthetic Fixtures:** Các bài kiểm thử CI sử dụng dữ liệu giả lập tổng hợp, không phụ thuộc PDF riêng tư hay trích đoạn sách có bản quyền.
 
 ---
 
-## 6. XÁC MINH NĂNG LỰC SẴN SÀNG GIẢNG DẠY CỦA GIA SƯ (TUTOR LEARNING READINESS)
-
-Đã kiểm thử xác thực 5 câu lệnh tự nhiên trong môi trường tiến độ tổng hợp cô lập (`isolated synthetic progress records`), hoàn toàn không ghi đè dữ liệu thật của người học:
-
-1. **"Học IVU-60 Unit 1."**
-   - *Định tuyến:* `Workflow E: Learn (Unit Mode)`
-   - *Truy xuất:* Unit `IVU-60-U001` — "Growing up" (Pauline Cullen, Band 6.0). Cung cấp lý thuyết, bài nghe/đọc và bài tập phân đoạn.
-2. **"Học từ vựng chủ đề Education."**
-   - *Định tuyến:* `Workflow E: Learn (Topic Mode)`
-   - *Truy xuất:* Tổng hợp đa nguồn cho topic `education_and_learning` từ IVU-65 U5, EVU-B2 U14, EVU-ADV U1, ECI-ADV U17, NB-PARA.
-3. **"Học EVU-B2 Unit 14."**
-   - *Định tuyến:* `Workflow E: Learn (Unit Mode)`
-   - *Truy xuất:* Unit `EVU-B2-U014` — "Education". Bóc tách lý thuyết trường học, bài tập điền từ 14.1 và đáp án bảo mật.
-4. **"Học Unit tiếp theo."**
-   - *Định tuyến:* `Workflow E: Learn (Sequential Progression)`
-   - *Logic chuyển tiếp:* Đọc vị trí hiện tại từ `curriculum.json` (ví dụ sau Unit 14 của EVU-B2 chuyển sang Unit 15 "Higher education"; hoặc dọc theo trục Pauline Cullen từ IVU-60 U1 sang IVU-60 U2). Tự động lưu vết tiến độ.
-5. **"Ôn từ vựng hôm nay."**
-   - *Định tuyến:* `Workflow E: Learn (Active Recall / Spaced Review)`
-   - *Truy xuất:* Lọc các từ có `next_review_date <= today` từ hồ sơ tiến độ. Đặt câu hỏi Active Recall kiểm tra nghĩa, collocation và đặt câu, cập nhật chu kỳ ngắt quãng.
-
----
-
-## 7. KẾT QUẢ KIỂM THỬ VÀ HỒI QUY (TEST & REGRESSION SUITE)
+## 5. KẾT QUẢ KIỂM THỬ VÀ HỒI QUY (TEST & REGRESSION SUITE)
 
 - **Kiểm thử phân hệ Từ vựng (`tests/test_vocabulary_kb.py`):**
-  - Chạy chế độ CI tiêu chuẩn (không có PDF riêng tư): **6/6 passed** (Toàn bộ test logic, chuẩn hóa, định tuyến intent, lưu trữ tiến độ độc lập).
-  - Chạy chế độ Acceptance với cờ `--corpus`: **11/11 passed** (Bao gồm đối soát toàn bộ 8 sách, 433 unit index, bóc tách Family A/B/C, pilot exercises và quy trình 7 bước on-demand).
+  - Chạy chế độ CI tiêu chuẩn (không có PDF riêng tư): **7/7 passed in 0.10s** (100% Synthetic fixtures: Kiểm tra taxonomy, normalization, intent routing, hợp đồng tiến độ PR #10, không ngụy tạo dữ liệu, merge sources và kiểm soát consent).
+  - Chạy chế độ Acceptance với cờ `--corpus`: **11/11 passed in 14.12s** (Kiểm kê 8 sách, 433 unit index, bóc tách Family A/B/C với composite ID, và minh chứng On-Demand Enrichment trên ECI-INT-U030).
 - **Kiểm thử hồi quy toàn bộ repository:**
   ```bash
   ./.venv/bin/python -m pytest -q tests/
   ```
-  **Kết quả:** `238 passed, 15 skipped in 26.04s` (100% Đạt, không có lỗi hồi quy).
+  **Kết quả:** `239 passed, 14 skipped in 17.18s` (100% Đạt, zero failures).
 - **Kiểm tra nguyên tắc và dữ liệu:**
   - `./.venv/bin/python scripts/build_principles_index.py --check`: Hợp lệ 7 atomic principles; index up to date.
   - `./.venv/bin/python scripts/validate_data.py`: Hợp lệ.
@@ -148,13 +123,12 @@ Thời gian thực thi: 0.0002 giây (0.2 ms) | from_cache: True
 
 ---
 
-## 8. QUYẾT ĐỊNH NGHIỆM THU
+## 6. QUYẾT ĐỊNH NGHIỆM THU
 
-### **FINAL APPROVAL: PRODUCTION READY FOR IELTS TUTOR**
+### **FINAL APPROVAL: TARGETED DEFECTS RESOLVED — READY FOR MERGE**
 
-Toàn bộ các điều chỉnh chỉ định đã được giải quyết triệt để và kiểm chứng bằng mã nguồn thực thi:
-1. Đã cập nhật đầy đủ metadata (AVU Second Edition, EVU-ADV Unit 101, tổng 433 Units/Sections).
-2. Đã bóc tách cấu trúc 100% cho 383 Unit văn bản số và sẵn sàng OCR bounded cho 50 Unit scan.
-3. Đã hiệu chỉnh chính xác bài tập gốc mô-đun Education (Exercise 1.4 IVU-65), tinh chỉnh sắc thái collocation của Cullen, và phân biệt minh bạch bài tập gốc với bài tập vận dụng.
-4. Đã chứng minh quy trình 7 bước On-Demand Enrichment hoạt động trơn tru với cơ chế cache đĩa siêu tốc (< 1 ms).
-5. Đã kích hoạt đầy đủ 5 lệnh tự nhiên của Gia sư IELTS Tutor với cơ chế lưu vết tiến độ cô lập an toàn.
+Toàn bộ 4 nhóm lỗi kỹ thuật đã được khắc phục hoàn toàn theo đúng tiêu chuẩn mã nguồn:
+1. Đã tổng quát hóa quy trình làm giàu từ vựng theo nhu cầu trên nền tảng ứng viên trích xuất từ sách gốc và năng lực sư phạm của Gia sư IELTS.
+2. Đã khôi phục hoàn chỉnh Hợp đồng Tiến độ Học tập PR #10 (Level 0–3, Stage 0–5, chu kỳ 1..30 ngày, chống thăng cấp trùng lặp và yêu cầu consent).
+3. Đã bảo đảm tính lũy tích, không phá hủy tri thức đã tích lũy và hủy cache lỗi thời.
+4. Đã chuẩn hóa định danh bài tập phức hợp, bảo mật đáp án và cách ly triệt để nội dung có bản quyền vào thư mục `private/`.

@@ -145,7 +145,7 @@ class FamilyAParser:
         return sections
 
     def _extract_exercises(self, text: str, unit_num: int) -> List[Dict[str, Any]]:
-        """Extracts numbered exercises like 14.1, 14.2... from the exercise page."""
+        """Extracts numbered exercises like 14.1, 14.2... from the exercise page without truncation."""
         pattern = re.compile(rf"^({unit_num}\.\d{{1,2}})\b\s*(.*)$")
         exercises = []
         curr_ex = None
@@ -156,9 +156,13 @@ class FamilyAParser:
             m = pattern.match(l_str)
             if m:
                 if curr_ex:
+                    ex_num = curr_ex["num"]
+                    composite_id = f"EX-{self.source_id}-U{unit_num:03d}-{ex_num}"
                     exercises.append({
-                        "exercise_id": f"{self.source_id}-EX-{curr_ex['num']}",
-                        "exercise_number": curr_ex["num"],
+                        "exercise_id": composite_id,
+                        "source_id": self.source_id,
+                        "unit_key": f"{self.source_id}-U{unit_num:03d}",
+                        "exercise_number": ex_num,
                         "instructions": curr_ex["instruction"],
                         "content": "\n".join(curr_lines).strip(),
                     })
@@ -168,9 +172,13 @@ class FamilyAParser:
                 curr_lines.append(l_str)
 
         if curr_ex:
+            ex_num = curr_ex["num"]
+            composite_id = f"EX-{self.source_id}-U{unit_num:03d}-{ex_num}"
             exercises.append({
-                "exercise_id": f"{self.source_id}-EX-{curr_ex['num']}",
-                "exercise_number": curr_ex["num"],
+                "exercise_id": composite_id,
+                "source_id": self.source_id,
+                "unit_key": f"{self.source_id}-U{unit_num:03d}",
+                "exercise_number": ex_num,
                 "instructions": curr_ex["instruction"],
                 "content": "\n".join(curr_lines).strip(),
             })
@@ -180,7 +188,7 @@ class FamilyAParser:
     def _extract_answer_key(self, unit_num: int, ak_pages: Optional[List[int]]) -> Dict[str, Any]:
         """Extracts answers for unit_num from the answer key page range using layout-aware extraction and caching."""
         if not ak_pages or len(ak_pages) < 2:
-            return {"status": "unverified", "answers": {}}
+            return {"status": "unverified", "verification_status": "unverified", "answers": {}}
 
         def get_ak_page_text(p: int) -> str:
             if p not in self._ak_cache:
@@ -212,12 +220,15 @@ class FamilyAParser:
                 for em in ex_matches:
                     ex_id = em.group(1).strip()
                     ans_str = em.group(2).strip()
+                    composite_id = f"EX-{self.source_id}-U{unit_num:03d}-{ex_id}"
                     matched_answers[ex_id] = ans_str
+                    matched_answers[composite_id] = ans_str
                 if matched_answers:
                     break
 
         return {
             "status": "extracted_authoritative_key" if matched_answers else "not_located",
+            "verification_status": "authoritative_textbook_key" if matched_answers else "not_located",
             "answers": matched_answers,
         }
 
@@ -303,18 +314,21 @@ class FamilyBParser:
             inst = lines[0] if lines else ""
             content = "\n".join(lines[1:]).strip() if len(lines) > 1 else body
             if len(body) > 30:
+                composite_id = f"EX-{self.source_id}-U{unit_num:03d}-{ex_num}"
                 exercises.append({
-                    "exercise_id": f"{self.source_id}-EX-{ex_num}",
+                    "exercise_id": composite_id,
+                    "source_id": self.source_id,
+                    "unit_key": f"{self.source_id}-U{unit_num:03d}",
                     "exercise_number": ex_num,
-                    "instructions": inst[:200],
-                    "content": content[:1200],
+                    "instructions": inst.strip(),
+                    "content": content.strip(),
                 })
         return exercises
 
     def _extract_answer_key(self, unit_num: int, ak_pages: Optional[List[int]]) -> Dict[str, Any]:
         """Extracts answers for unit_num from cached OCR of answer key pages."""
         if not ak_pages or len(ak_pages) < 2:
-            return {"status": "unverified", "answers": {}}
+            return {"status": "unverified", "verification_status": "unverified", "answers": {}}
 
         matched_answers = {}
         # In Cullen books, Unit u typically appears around ak_pages[0] + (unit_num - 1)
@@ -338,7 +352,9 @@ class FamilyBParser:
                 for em in ex_matches:
                     ex_id = em.group(1).strip()
                     ans_str = em.group(2).strip()
+                    composite_id = f"EX-{self.source_id}-U{unit_num:03d}-{ex_id}"
                     matched_answers[ex_id] = ans_str
+                    matched_answers[composite_id] = ans_str
                 if matched_answers:
                     break
 
@@ -347,11 +363,14 @@ class FamilyBParser:
                 # Locate Unit 5 section on p. 138-139
                 u5_match = re.search(r"Speaker 1: C.*?1\.4.*?prior knowledge", txt, re.DOTALL)
                 if u5_match:
-                    matched_answers["1.2-1.4"] = u5_match.group(0).strip()
+                    ans_val = u5_match.group(0).strip()
+                    matched_answers["1.2-1.4"] = ans_val
+                    matched_answers[f"EX-{self.source_id}-U{unit_num:03d}-1.4"] = ans_val
                     break
 
         return {
             "status": "extracted_ocr_key" if matched_answers else "not_located",
+            "verification_status": "uncertain_ocr_key" if matched_answers else "not_located",
             "answers": matched_answers,
         }
 
@@ -419,9 +438,10 @@ class FamilyCParser:
 
 
 def save_parsed_unit(unit_data: Dict[str, Any], output_base: Path = STAGING_UNITS_DIR) -> Path:
-    """Saves parsed unit JSON to private/knowledge/vocabulary/units/<source_id>/<unit_key>.json."""
+    """Saves parsed unit JSON to private/knowledge/vocabulary/units/<source_id>/<unit_key>.json with processing version."""
     source_id = unit_data["source_id"]
     unit_key = unit_data["unit_key"]
+    unit_data["processing_version"] = "1.1.0"
     unit_dir = output_base / source_id
     unit_dir.mkdir(parents=True, exist_ok=True)
     out_file = unit_dir / f"{unit_key}.json"

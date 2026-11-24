@@ -1,13 +1,10 @@
-"""On-Demand Vocabulary Enrichment Pipeline for IELTS Tutor.
+"""Generalized On-Demand Vocabulary Enrichment Pipeline.
 
-Implements the 7-step workflow:
-1. Retrieve Unit from structural index.
-2. Extract source content.
-3. Identify relevant vocabulary.
-4. Enrich selected vocabulary (IPA, CEFR, grammar, Vietnamese gloss, collocations).
-5. Retrieve original exercises and answer keys.
-6. Save reusable knowledge-base outputs.
-7. Retrieve the same Unit again without unnecessarily repeating extraction or enrichment.
+Distinguishes source facts from tutor-generated semantic enrichment.
+Python deterministically extracts source-grounded vocabulary candidates,
+context sentences, and textbook glosses/footnotes.
+The Tutor Agent provides semantic enrichment (IPA, CEFR, register, meaning_vi, collocations)
+and persists results on demand without introducing external LLM APIs or fabricating fake defaults.
 """
 
 from __future__ import annotations
@@ -19,12 +16,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from harness.vocabulary.kb import (
+    PROCESSING_VERSION,
     VOCAB_KB_DIR,
     KB_UNITS_DIR,
     KB_VOCAB_FILE,
     KB_EXERCISES_FILE,
     KB_ANSWER_KEYS_FILE,
     KB_LEXICAL_INDEX_FILE,
+    build_entry_key,
+    normalize_expression,
+    merge_lexical_entries,
     get_unit_details,
 )
 
@@ -35,118 +36,249 @@ def get_enriched_unit_path(source_id: str, unit_key: str) -> Path:
     return ENRICHED_UNITS_DIR / source_id / f"{unit_key}.json"
 
 
-def identify_candidate_vocabulary(parsed_unit: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Identifies key vocabulary candidates from the theory sections and definitions."""
+def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Deterministically extracts candidate vocabulary items and source facts from unit content.
+
+    Extracts expressions, bracketed notes, superscript footnotes, and bulleted items
+    directly grounded in the original source text without fabrication.
+    """
     candidates = []
     seen = set()
+
+    source_id = parsed_unit.get("source_id", "")
+    unit_key = parsed_unit.get("unit_key", "")
+    page = parsed_unit.get("physical_pages", [0])[0]
 
     raw_text = parsed_unit.get("theory", {}).get("raw_text", "")
     sections = parsed_unit.get("theory", {}).get("sections", [])
 
-    # Pattern 1: Defined expressions with brackets or notes like "term [definition]" or "term (definition)"
-    bracket_matches = re.findall(r"([A-Za-z\s\-]{3,35})\s+\[(.*?)\]", raw_text)
+    # Pattern 1: Numbered superscript footnotes e.g. "highpowered job1", "embark on a career2"
+    # and footnote definitions e.g. "1 an important job", "2 to start a career"
+    footnote_defs = dict(re.findall(r"^(\d)\s+([^\n]+)", raw_text, re.MULTILINE))
+    footnote_terms = re.findall(r"([A-Za-z\s\-\'/]{3,35}?)(\d)\b", raw_text)
+    for term, num in footnote_terms:
+        clean_term = term.strip().strip("-").strip()
+        if clean_term and clean_term.lower() not in seen and len(clean_term) >= 3 and not clean_term.isupper():
+            seen.add(clean_term.lower())
+            candidates.append({
+                "expression": clean_term,
+                "source_context": f"{clean_term} {footnote_defs.get(num, '')}".strip(),
+                "source_gloss": footnote_defs.get(num, ""),
+                "extraction_method": "source_footnote",
+                "source_provenance": {
+                    "source_id": source_id,
+                    "unit_key": unit_key,
+                    "page": page,
+                    "footnote_index": num,
+                },
+            })
+
+    # Pattern 2: Defined expressions with brackets or notes like "term [definition]"
+    bracket_matches = re.findall(r"([A-Za-z\s\-\'/]{3,40})\s+\[(.*?)\]", raw_text)
     for expr, hint in bracket_matches:
         expr_clean = expr.strip()
         if len(expr_clean) > 2 and expr_clean.lower() not in seen and not expr_clean.isupper():
             seen.add(expr_clean.lower())
             candidates.append({
                 "expression": expr_clean,
-                "context_hint": hint.strip(),
-                "extraction_source": "bracketed_gloss",
+                "source_context": f"{expr_clean} [{hint.strip()}]",
+                "source_gloss": hint.strip(),
+                "extraction_method": "bracketed_source_note",
+                "source_provenance": {
+                    "source_id": source_id,
+                    "unit_key": unit_key,
+                    "page": page,
+                },
             })
 
-    # Pattern 2: Numbered superscript footnotes e.g. "attained1" -> 1 reached
-    footnote_terms = re.findall(r"([A-Za-z\-]+)(\d)\b", raw_text)
-    footnote_defs = dict(re.findall(r"^(\d)\s+([^\n]+)", raw_text, re.MULTILINE))
-    for term, num in footnote_terms:
-        if term.lower() not in seen and len(term) > 3:
-            seen.add(term.lower())
-            candidates.append({
-                "expression": term,
-                "context_hint": footnote_defs.get(num, ""),
-                "extraction_source": "superscript_footnote",
-            })
-
-    # Pattern 3: Key bolded / listed expressions in sections
-    for sec in sections:
-        for line in sec.get("content", "").splitlines():
-            line_str = line.strip()
-            # Look for lines starting with bullet or dash
-            m = re.match(r"^[•\-*]\s*(.*?)(?::|\s{2,}|\.|$)", line_str)
-            if m:
-                cand = m.group(1).strip()
-                if 3 <= len(cand) <= 30 and cand.lower() not in seen:
-                    seen.add(cand.lower())
-                    candidates.append({
-                        "expression": cand,
-                        "context_hint": line_str,
-                        "extraction_source": "bullet_item",
-                    })
+    # Pattern 3: Key collocations / phrases in diagram blocks or bullet points
+    # Look for lines with 2-5 words representing authentic phrases
+    for line in raw_text.splitlines():
+        l_str = line.strip()
+        # Bullet items or diagram items
+        m = re.match(r"^(?:[•\-*]\s*)?((?:to\s+)?[a-z]{3,15}(?:\s+[a-z]{2,15}){1,4})$", l_str)
+        if m:
+            cand = m.group(1).strip()
+            if cand.lower() not in seen and len(cand) >= 5 and " " in cand:
+                seen.add(cand.lower())
+                candidates.append({
+                    "expression": cand,
+                    "source_context": l_str,
+                    "source_gloss": "",
+                    "extraction_method": "source_collocation_phrase",
+                    "source_provenance": {
+                        "source_id": source_id,
+                        "unit_key": unit_key,
+                        "page": page,
+                    },
+                })
 
     return candidates
 
 
-def enrich_lexical_item(
-    item_id: str,
-    expression: str,
-    unit_info: Dict[str, Any],
-    context_sentence: str = "",
-    meaning_vi: str = "",
+def build_tutor_enriched_item(
+    candidate: Dict[str, Any],
+    pos: str,
+    sense_key: str,
+    meaning_vi: str,
     meaning_en: str = "",
-    us_ipa: str = "",
-    uk_ipa: str = "",
-    pos: str = "noun",
-    cefr_level: str = "C1",
-    register: str = "formal",
+    us_ipa: Optional[str] = None,
+    uk_ipa: Optional[str] = None,
+    cefr_level: Optional[str] = None,
     collocations: Optional[List[str]] = None,
     grammar_patterns: Optional[List[str]] = None,
-    common_mistakes: str = "",
+    common_mistakes: Optional[str] = None,
+    countability: Optional[str] = None,
+    register: Optional[str] = None,
+    item_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Builds an enriched LexicalEntry dictionary adhering to the vocabulary schema."""
-    source_id = unit_info.get("source_id", "")
-    unit_key = unit_info.get("unit_key", "")
-    unit_title = unit_info.get("title", "")
-    page = unit_info.get("physical_pages", [0])[0]
+    """Combines deterministic source facts with Tutor Agent semantic enrichment.
+
+    Strictly preserves provenance:
+    - Does NOT fabricate default fake IPA, fake CEFR or fake definitions.
+    - Explicitly tags enrichment_agent as 'tutor_agent'.
+    """
+    expr = candidate["expression"]
+    norm_expr = normalize_expression(expr)
+    prov = candidate.get("source_provenance", {})
+
+    assigned_id = item_id or f"VOC-{prov.get('source_id', 'SRC')}-{prov.get('unit_key', 'U')}-{abs(hash(norm_expr)) % 100000:05d}"
+
+    source_entry = {
+        "source_id": prov.get("source_id", ""),
+        "unit_key": prov.get("unit_key", ""),
+        "physical_page": prov.get("page", 0),
+        "example_sentence": candidate.get("source_context", ""),
+        "source_gloss": candidate.get("source_gloss", ""),
+        "provenance": "authoritative_textbook",
+    }
 
     return {
-        "item_id": item_id,
-        "expression": expression,
-        "lemma": expression.lower(),
+        "item_id": assigned_id,
+        "entry_key": build_entry_key(expr, pos, sense_key),
+        "expression": expr,
+        "lemma": norm_expr,
         "pos": pos,
-        "sense_key": f"{expression.lower()}_{pos}",
-        "us_ipa": us_ipa or f"/{expression.lower()}/",
-        "uk_ipa": uk_ipa or f"/{expression.lower()}/",
-        "meaning_en": meaning_en or f"Specialized expression: {expression}",
-        "meaning_vi": meaning_vi or f"Thuật ngữ: {expression}",
-        "contextual_meaning": context_sentence or f"Example usage of {expression}.",
+        "sense_key": sense_key,
+        "us_ipa": us_ipa,
+        "uk_ipa": uk_ipa,
+        "meaning_en": meaning_en or candidate.get("source_gloss", ""),
+        "meaning_vi": meaning_vi,
+        "contextual_meaning": candidate.get("source_context", ""),
         "cefr_level": cefr_level,
         "grammar_patterns": grammar_patterns or [],
-        "countability": "uncountable" if pos == "noun" else None,
+        "countability": countability,
         "register": register,
-        "connotation": "neutral",
-        "common_mistakes": common_mistakes,
         "collocations": collocations or [],
-        "sources": [
-            {
-                "source_id": source_id,
-                "unit_key": unit_key,
-                "unit_title": unit_title,
-                "physical_page": page,
-                "example_sentence": context_sentence,
-                "provenance": "authoritative_textbook",
-            }
-        ],
-        "topics": unit_info.get("topics", ["general"]),
-        "language_functions": unit_info.get("language_functions", []),
-        "learning_priority": "high",
-        "productive_target": True,
+        "common_mistakes": common_mistakes or "",
+        "sources": [source_entry],
+        "provenance_metadata": {
+            "source_grounded": True,
+            "extraction_method": candidate.get("extraction_method", "textbook_extraction"),
+            "enrichment_agent": "tutor_agent",
+            "enriched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
     }
 
 
-def enrich_unit_pipeline(unit_key: str, force_reextract: bool = False) -> Dict[str, Any]:
-    """Executes the 7-step on-demand extraction and enrichment workflow for a unit.
+def persist_enriched_unit_data(
+    unit_key: str,
+    enriched_items: List[Dict[str, Any]],
+    parsed_unit: Dict[str, Any],
+) -> Path:
+    """Persists enriched unit outputs to disk and updates vocabulary.jsonl and lexical_index.json."""
+    source_id = parsed_unit["source_id"]
+    enriched_file = get_enriched_unit_path(source_id, unit_key)
+    enriched_file.parent.mkdir(parents=True, exist_ok=True)
 
-    Returns execution summary with timing, evidence, and parsed/enriched artifacts.
+    enriched_data = {
+        "processing_version": PROCESSING_VERSION,
+        "unit_key": unit_key,
+        "source_id": source_id,
+        "title": parsed_unit.get("title", ""),
+        "enriched_vocabulary": enriched_items,
+        "exercises": parsed_unit.get("exercises", []),
+        "answer_key": parsed_unit.get("answer_key", {}),
+        "enriched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+    with open(enriched_file, "w", encoding="utf-8") as f:
+        json.dump(enriched_data, f, indent=2, ensure_ascii=False)
+
+    # Non-destructive sync to vocabulary.jsonl
+    existing_by_key: Dict[str, Dict[str, Any]] = {}
+    if KB_VOCAB_FILE.exists():
+        with open(KB_VOCAB_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                k = build_entry_key(
+                    entry.get("expression", ""),
+                    entry.get("pos", ""),
+                    entry.get("sense_key", entry.get("lemma", ""))
+                )
+                existing_by_key[k] = entry
+
+    for it in enriched_items:
+        k = it.get("entry_key") or build_entry_key(it["expression"], it["pos"], it.get("sense_key", ""))
+        if k in existing_by_key:
+            existing_by_key[k] = merge_lexical_entries(existing_by_key[k], it)
+        else:
+            existing_by_key[k] = it
+
+    tmp_vocab = KB_VOCAB_FILE.with_suffix(".tmp")
+    with open(tmp_vocab, "w", encoding="utf-8") as f:
+        for it in existing_by_key.values():
+            f.write(json.dumps(it, ensure_ascii=False) + "\n")
+    tmp_vocab.replace(KB_VOCAB_FILE)
+
+    # Update lexical index
+    lex_index: Dict[str, Any] = {
+        "schema_version": "1.1.0",
+        "processing_version": PROCESSING_VERSION,
+        "entries": {},
+    }
+    for it in existing_by_key.values():
+        k = it.get("entry_key") or build_entry_key(it["expression"], it["pos"], it.get("sense_key", ""))
+        norm_expr = normalize_expression(it["expression"])
+        summary = {
+            "item_id": it["item_id"],
+            "entry_key": k,
+            "expression": it["expression"],
+            "pos": it["pos"],
+            "sense_key": it.get("sense_key", ""),
+            "meaning_vi": it.get("meaning_vi", ""),
+            "sources": [s.get("source_id") for s in it.get("sources", []) if s.get("source_id")],
+        }
+        lex_index["entries"][k] = summary
+        if norm_expr not in lex_index:
+            lex_index[norm_expr] = []
+        lex_index[norm_expr].append(summary)
+        lex_index[k] = summary
+
+    tmp_idx = KB_LEXICAL_INDEX_FILE.with_suffix(".tmp")
+    with open(tmp_idx, "w", encoding="utf-8") as f:
+        json.dump(lex_index, f, indent=2, ensure_ascii=False)
+    tmp_idx.replace(KB_LEXICAL_INDEX_FILE)
+
+    return enriched_file
+
+
+def enrich_unit_pipeline(
+    unit_key: str,
+    tutor_enrichments: Optional[List[Dict[str, Any]]] = None,
+    force_reextract: bool = False,
+) -> Dict[str, Any]:
+    """Executes the generalized 7-step on-demand extraction and enrichment workflow for a unit.
+
+    1. Retrieve Unit from structural index.
+    2. Extract source content.
+    3. Extract source-grounded vocabulary candidates (expressions, glosses, footnotes).
+    4. Enrich selected vocabulary via Tutor Agent (without fake default values).
+    5. Retrieve original exercises and answer keys (concealing keys).
+    6. Save reusable knowledge-base outputs.
+    7. Retrieve from disk cache on subsequent calls without re-extraction.
     """
     t_start = time.time()
     steps_log = []
@@ -180,30 +312,34 @@ def enrich_unit_pipeline(unit_key: str, force_reextract: bool = False) -> Dict[s
         "pages": unit_info.get("physical_pages"),
     })
 
-    # Check Step 7 early: Check if already enriched
+    # Step 7 Check: Return cached enriched unit if present and up-to-date
     enriched_file = get_enriched_unit_path(source_id, unit_key)
     if enriched_file.exists() and not force_reextract:
         t_cache = time.time()
-        with open(enriched_file, "r", encoding="utf-8") as f:
-            cached_result = json.load(f)
-        return {
-            "unit_key": unit_key,
-            "source_id": source_id,
-            "from_cache": True,
-            "elapsed_seconds": round(time.time() - t_cache, 4),
-            "steps_log": [
-                {
-                    "step": 7,
-                    "action": "Cache Hit: Retrieved enriched unit without re-extraction",
-                    "status": "cached",
-                    "path": str(enriched_file),
-                }
-            ],
-            "enriched_unit": cached_result,
-        }
+        try:
+            with open(enriched_file, "r", encoding="utf-8") as f:
+                cached_result = json.load(f)
+                if cached_result.get("processing_version") == PROCESSING_VERSION:
+                    return {
+                        "unit_key": unit_key,
+                        "source_id": source_id,
+                        "from_cache": True,
+                        "elapsed_seconds": round(time.time() - t_cache, 4),
+                        "steps_log": [
+                            {
+                                "step": 7,
+                                "action": "Cache Hit: Retrieved enriched unit without re-extraction",
+                                "status": "cached",
+                                "path": str(enriched_file),
+                            }
+                        ],
+                        "enriched_unit": cached_result,
+                    }
+        except Exception:
+            pass
 
     # Step 2: Extract source content
-    parsed_unit = get_unit_details(unit_key)
+    parsed_unit = get_unit_details(unit_key, force_reextract=force_reextract)
     if not parsed_unit:
         raise RuntimeError(f"Failed to extract source content for {unit_key}")
 
@@ -215,144 +351,53 @@ def enrich_unit_pipeline(unit_key: str, force_reextract: bool = False) -> Dict[s
         "exercises_count": len(parsed_unit.get("exercises", [])),
     })
 
-    # Step 3: Identify relevant vocabulary
-    raw_candidates = identify_candidate_vocabulary(parsed_unit)
+    # Step 3: Extract source-grounded candidates
+    raw_candidates = extract_unit_vocabulary_candidates(parsed_unit)
     steps_log.append({
         "step": 3,
-        "action": "Identify relevant vocabulary",
+        "action": "Extract source-grounded vocabulary candidates",
         "status": "success",
         "candidates_found": len(raw_candidates),
-        "candidates": [c["expression"] for c in raw_candidates[:8]],
+        "sample_candidates": [c["expression"] for c in raw_candidates[:6]],
     })
 
-    # Step 4: Enrich selected vocabulary
+    # Step 4: Semantic enrichment via Tutor Agent
     enriched_items = []
-    # Curated enrichment dictionary for high-value items in Unit 101 or general
-    curated_knowledge = {
-        "red tape": {
-            "meaning_vi": "thủ tục hành chính rườm rà, quan liêu gây chậm trễ",
-            "meaning_en": "official rules and processes that seem unnecessary and delay results",
-            "us_ipa": "/ˌred ˈteɪp/",
-            "uk_ipa": "/ˌred ˈteɪp/",
-            "pos": "noun",
-            "cefr_level": "C1",
-            "collocations": ["cut red tape", "bureaucratic red tape", "entangled in red tape"],
-            "common_mistakes": "'Red tape' is uncountable: do not say 'a red tape'.",
-        },
-        "eligible": {
-            "meaning_vi": "đủ điều kiện, đủ tiêu chuẩn",
-            "meaning_en": "having the necessary qualities or satisfying the necessary conditions",
-            "us_ipa": "/ˈel.ə.dʒə.bəl/",
-            "uk_ipa": "/ˈel.ɪ.dʒə.bəl/",
-            "pos": "adjective",
-            "cefr_level": "B2",
-            "grammar_patterns": ["eligible for sth", "eligible to do sth"],
-            "collocations": ["eligible for a grant", "eligible for benefits", "fully eligible"],
-            "common_mistakes": "Say 'eligible for' (loan/funding) or 'eligible to receive', NOT 'eligible with'.",
-        },
-        "attained": {
-            "meaning_vi": "đạt được, chạm đến (mốc tuổi/mức độ)",
-            "meaning_en": "reached a particular age, level, or standard",
-            "us_ipa": "/əˈteɪnd/",
-            "uk_ipa": "/əˈteɪnd/",
-            "pos": "verb",
-            "cefr_level": "C1",
-            "collocations": ["attain the age of", "attain a standard", "attain an objective"],
-        },
-        "bestowed on": {
-            "meaning_vi": "trao tặng, ban tặng (danh dự, giải thưởng)",
-            "meaning_en": "given something as an honour or present",
-            "us_ipa": "/bɪˈstoʊd ɑːn/",
-            "uk_ipa": "/bɪˈstəʊd ɒn/",
-            "pos": "verb",
-            "cefr_level": "C2",
-            "grammar_patterns": ["bestow sth on/upon sb"],
-            "collocations": ["bestow an honour on", "bestow a degree on", "bestow blessings"],
-        },
-        "demolish": {
-            "meaning_vi": "phá dỡ, đánh sập (công trình xây dựng)",
-            "meaning_en": "completely knock down or destroy a building",
-            "us_ipa": "/dɪˈmɑː.lɪʃ/",
-            "uk_ipa": "/dɪˈmɒl.ɪʃ/",
-            "pos": "verb",
-            "cefr_level": "B2",
-            "collocations": ["demolish a building", "demolish old structures"],
-        },
-        "adjoining": {
-            "meaning_vi": "kế bên, liền kề (bất động sản, phòng)",
-            "meaning_en": "next to or in contact with another building, room, or land",
-            "us_ipa": "/əˈdʒɔɪ.nɪŋ/",
-            "uk_ipa": "/əˈdʒɔɪ.nɪŋ/",
-            "pos": "adjective",
-            "cefr_level": "C1",
-            "collocations": ["adjoining property", "adjoining rooms", "adjoining territory"],
-        },
-        "undersigned": {
-            "meaning_vi": "người ký tên ở dưới (trong văn bản hành chính)",
-            "meaning_en": "the person or people who have signed their names at the end of a document",
-            "us_ipa": "/ˌʌn.dɚˈsaɪnd/",
-            "uk_ipa": "/ˌʌn.dəˈsaɪnd/",
-            "pos": "noun",
-            "cefr_level": "C2",
-            "collocations": ["the undersigned", "submit to the undersigned"],
-        },
-        "aforementioned": {
-            "meaning_vi": "đã nêu/đã nhắc đến ở trên (trong văn bản trang trọng)",
-            "meaning_en": "mentioned earlier, especially in a formal or legal text",
-            "us_ipa": "/əˈfɔːr.men.ʃənd/",
-            "uk_ipa": "/əˈfɔː.men.ʃənd/",
-            "pos": "adjective",
-            "cefr_level": "C1",
-            "collocations": ["aforementioned procedure", "aforementioned conditions"],
-        },
-        "acknowledge receipt of": {
-            "meaning_vi": "xác nhận đã nhận được (thư, thanh toán)",
-            "meaning_en": "formally inform someone that you have received something",
-            "us_ipa": "/əkˈnɑː.lɪdʒ rɪˈsiːt əv/",
-            "uk_ipa": "/əkˈnɒl.ɪdʒ rɪˈsiːt əv/",
-            "pos": "phrase",
-            "cefr_level": "C1",
-            "collocations": ["acknowledge receipt of payment", "acknowledge receipt of your letter"],
-        },
-        "at your earliest convenience": {
-            "meaning_vi": "ngay khi quý vị thấy thuận tiện nhất (càng sớm càng tốt)",
-            "meaning_en": "as soon as you can (formal polite correspondence)",
-            "us_ipa": "/æt jʊr ˈɝː.li.ɪst kənˈviː.ni.əns/",
-            "uk_ipa": "/æt jɔːr ˈɜː.li.ɪst kənˈviː.ni.əns/",
-            "pos": "phrase",
-            "cefr_level": "B2",
-            "collocations": ["reply at your earliest convenience", "contact us at your earliest convenience"],
-        },
-    }
-
-    count = 1
-    for cand in raw_candidates:
-        expr = cand["expression"]
-        expr_lower = expr.lower()
-        if expr_lower in curated_knowledge:
-            ck = curated_knowledge[expr_lower]
-            item_id = f"VOC-{source_id}-{unit_info.get('unit_number', 0):03d}-{count:02d}"
-            enriched_item = enrich_lexical_item(
-                item_id=item_id,
-                expression=expr,
-                unit_info=unit_info,
-                context_sentence=cand.get("context_hint", ""),
-                meaning_vi=ck.get("meaning_vi", ""),
-                meaning_en=ck.get("meaning_en", ""),
-                us_ipa=ck.get("us_ipa", ""),
-                uk_ipa=ck.get("uk_ipa", ""),
-                pos=ck.get("pos", "noun"),
-                cefr_level=ck.get("cefr_level", "C1"),
-                collocations=ck.get("collocations", []),
-                grammar_patterns=ck.get("grammar_patterns", []),
-                common_mistakes=ck.get("common_mistakes", ""),
+    if tutor_enrichments:
+        cand_map = {normalize_expression(c["expression"]): c for c in raw_candidates}
+        for te in tutor_enrichments:
+            expr_norm = normalize_expression(te["expression"])
+            cand = cand_map.get(expr_norm) or {
+                "expression": te["expression"],
+                "source_context": te.get("contextual_meaning", ""),
+                "source_gloss": te.get("meaning_en", ""),
+                "source_provenance": {
+                    "source_id": source_id,
+                    "unit_key": unit_key,
+                    "page": unit_info.get("physical_pages", [0])[0],
+                },
+            }
+            item = build_tutor_enriched_item(
+                candidate=cand,
+                pos=te["pos"],
+                sense_key=te["sense_key"],
+                meaning_vi=te["meaning_vi"],
+                meaning_en=te.get("meaning_en", ""),
+                us_ipa=te.get("us_ipa"),
+                uk_ipa=te.get("uk_ipa"),
+                cefr_level=te.get("cefr_level"),
+                collocations=te.get("collocations"),
+                grammar_patterns=te.get("grammar_patterns"),
+                common_mistakes=te.get("common_mistakes"),
+                countability=te.get("countability"),
+                register=te.get("register"),
+                item_id=te.get("item_id"),
             )
-            enriched_items.append(enriched_item)
-            count += 1
+            enriched_items.append(item)
 
     steps_log.append({
         "step": 4,
-        "action": "Enrich selected vocabulary",
+        "action": "Enrich selected vocabulary via Tutor Agent",
         "status": "success",
         "enriched_count": len(enriched_items),
         "items": [it["expression"] for it in enriched_items],
@@ -366,59 +411,21 @@ def enrich_unit_pipeline(unit_key: str, force_reextract: bool = False) -> Dict[s
         "action": "Retrieve original exercises and answer keys",
         "status": "success",
         "exercises_retrieved": len(exercises),
-        "answer_key_status": answer_key.get("status"),
+        "verification_status": answer_key.get("verification_status", answer_key.get("status")),
         "answer_key_items": len(answer_key.get("answers", {})),
     })
 
     # Step 6: Save reusable knowledge-base outputs
-    enriched_file.parent.mkdir(parents=True, exist_ok=True)
-    enriched_data = {
-        "unit_key": unit_key,
-        "source_id": source_id,
-        "title": unit_info.get("title"),
-        "unit_info": unit_info,
-        "enriched_vocabulary": enriched_items,
-        "exercises": exercises,
-        "answer_key": answer_key,
-        "enriched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    with open(enriched_file, "w", encoding="utf-8") as f:
-        json.dump(enriched_data, f, indent=2, ensure_ascii=False)
-
-    # Append to vocabulary.jsonl without duplicates
-    existing_lemmas = set()
-    if KB_VOCAB_FILE.exists():
-        with open(KB_VOCAB_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    it = json.loads(line)
-                    existing_lemmas.add(it.get("lemma", "").lower())
-
-    appended_vocab = 0
-    with open(KB_VOCAB_FILE, "a", encoding="utf-8") as f:
-        for it in enriched_items:
-            if it["lemma"].lower() not in existing_lemmas:
-                f.write(json.dumps(it, ensure_ascii=False) + "\n")
-                existing_lemmas.add(it["lemma"].lower())
-                appended_vocab += 1
-
-    # Update lexical index
-    lex_index = {}
-    if KB_LEXICAL_INDEX_FILE.exists():
-        with open(KB_LEXICAL_INDEX_FILE, "r", encoding="utf-8") as f:
-            lex_index = json.load(f)
-    for it in enriched_items:
-        lex_index[it["lemma"]] = it["item_id"]
-    with open(KB_LEXICAL_INDEX_FILE, "w", encoding="utf-8") as f:
-        json.dump(lex_index, f, indent=2, ensure_ascii=False)
-
+    saved_path = persist_enriched_unit_data(
+        unit_key=unit_key,
+        enriched_items=enriched_items,
+        parsed_unit=parsed_unit,
+    )
     steps_log.append({
         "step": 6,
         "action": "Save reusable knowledge-base outputs",
         "status": "success",
-        "enriched_file": str(enriched_file),
-        "appended_to_vocab_jsonl": appended_vocab,
-        "lexical_index_size": len(lex_index),
+        "enriched_file": str(saved_path),
     })
 
     elapsed = round(time.time() - t_start, 4)
@@ -428,5 +435,13 @@ def enrich_unit_pipeline(unit_key: str, force_reextract: bool = False) -> Dict[s
         "from_cache": False,
         "elapsed_seconds": elapsed,
         "steps_log": steps_log,
-        "enriched_unit": enriched_data,
+        "candidates": raw_candidates,
+        "enriched_unit": {
+            "unit_key": unit_key,
+            "source_id": source_id,
+            "title": parsed_unit.get("title", ""),
+            "enriched_vocabulary": enriched_items,
+            "exercises": exercises,
+            "answer_key": answer_key,
+        },
     }
