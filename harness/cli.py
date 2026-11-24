@@ -738,6 +738,75 @@ def cmd_relationship_review(args):
         sys.exit(1)
 
 
+def cmd_vocab(args):
+    """Vocabulary Knowledge Base operations."""
+    from harness.vocabulary.inventory import save_source_inventory, build_source_inventory
+    from harness.vocabulary.unit_indexer import save_indexes
+    from harness.vocabulary.kb import (
+        build_knowledge_base,
+        get_unit_details,
+        query_vocabulary_by_topic,
+        query_collocations_by_topic,
+        query_paraphrases_by_topic,
+    )
+
+    action = getattr(args, "vocab_action", None)
+    if action == "inventory":
+        print(">>> Scanning 8 vocabulary textbooks and generating sources.json...")
+        inv_file = save_source_inventory()
+        inv = build_source_inventory()
+        print(f"Inventory saved: {inv_file}")
+        print(f"Total Sources : {inv['summary']['total_sources']}")
+        print(f"Total Pages   : {inv['summary']['total_pages']}")
+        print(f"Total Size    : {inv['summary']['total_size_mb']} MB")
+        for sid, s in inv["sources"].items():
+            scanned_str = "SCANNED (OCR)" if s["scanned"] else "TEXT LAYER"
+            print(f"  - {sid:<8} : {s['title'][:40]:<40} | {s['pdf_page_count']} p. | {scanned_str}")
+    elif action == "index":
+        print(">>> Building Unit Index and Topic Index across all 8 books...")
+        save_indexes()
+    elif action == "build-kb":
+        print(">>> Building core Knowledge Base files and Education pilot...")
+        build_knowledge_base()
+    elif action == "parse":
+        source = args.source.upper()
+        unit_num = args.unit
+        unit_key = f"{source}-U{unit_num:03d}"
+        print(f">>> Parsing {source} Unit {unit_num} ({unit_key})...")
+        details = get_unit_details(unit_key)
+        if details:
+            print(f"Parsed Successfully: {details.get('title')}")
+            print(f"Topics: {details.get('topics')}")
+            print(f"Exercises: {len(details.get('exercises', []))}")
+        else:
+            print(f"Error: Unit {unit_key} not found in index.")
+    elif action == "query":
+        if args.unit:
+            details = get_unit_details(args.unit)
+            if details:
+                print(json.dumps(details, indent=2, ensure_ascii=False))
+            else:
+                print(f"Unit '{args.unit}' not found.")
+        elif args.topic:
+            limit = args.limit
+            voc = query_vocabulary_by_topic(args.topic, limit=limit)
+            col = query_collocations_by_topic(args.topic, limit=limit)
+            para = query_paraphrases_by_topic(args.topic, limit=limit)
+            print(f"=== Topic: {args.topic} ===")
+            print(f"Vocabulary Items ({len(voc)}):")
+            for v in voc:
+                print(f"  - {v['expression']} ({v['pos']}) {v['us_ipa']} : {v['meaning_vi']}")
+            print(f"Collocations ({len(col)}):")
+            for c in col:
+                print(f"  - {c['expression']} : {c['meaning_vi']}")
+            print(f"Paraphrases ({len(para)}):")
+            for p in para:
+                print(f"  - {p['original_expression']} -> {' / '.join(p['paraphrase_variants'])} ({p['meaning_vi']})")
+    else:
+        print("Please specify a vocab action: inventory, index, build-kb, parse, query.")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="harness",
@@ -873,6 +942,23 @@ def main():
     p_rev_hist.add_argument("--id", type=str, required=True, help="Relationship ID")
     p_rev_hist.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
 
+    # vocab subcommand
+    parser_vocab = subparsers.add_parser("vocab", help="Manage IELTS Vocabulary Knowledge Base (V1.0)")
+    vocab_subparsers = parser_vocab.add_subparsers(dest="vocab_action", help="Vocabulary action")
+
+    vocab_subparsers.add_parser("inventory", help="Scan and catalog the 8 vocabulary textbooks")
+    vocab_subparsers.add_parser("index", help="Build structural Unit Index and Topic Index")
+    vocab_subparsers.add_parser("build-kb", help="Build core Knowledge Base files and Education pilot")
+
+    p_vocab_parse = vocab_subparsers.add_parser("parse", help="Parse unit from source")
+    p_vocab_parse.add_argument("--source", type=str, required=True, help="Source ID (e.g. EVU-B2, IVU-60)")
+    p_vocab_parse.add_argument("--unit", type=int, required=True, help="Unit number")
+
+    p_vocab_query = vocab_subparsers.add_parser("query", help="Query knowledge base by unit or topic")
+    p_vocab_query.add_argument("--unit", type=str, help="Unit key (e.g. EVU-B2-U014, IVU-60-U001)")
+    p_vocab_query.add_argument("--topic", type=str, help="Topic ID (e.g. education_and_learning)")
+    p_vocab_query.add_argument("--limit", type=int, default=5, help="Maximum items to return")
+
     args = parser.parse_args()
 
     if args.subcommand == "inventory":
@@ -905,6 +991,8 @@ def main():
         cmd_relationship_status(args)
     elif args.subcommand == "relationship-review":
         cmd_relationship_review(args)
+    elif args.subcommand == "vocab":
+        cmd_vocab(args)
     else:
         parser.print_help()
 

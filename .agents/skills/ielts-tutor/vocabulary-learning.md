@@ -5,7 +5,7 @@ This is a selective reference for the existing IELTS Tutor Skill, not a separate
 ## 1. Select useful vocabulary
 
 - Prefer words/expressions from the current or most recently identified Reading/Listening task, observed vocabulary gaps, and useful Writing/Speaking collocations. Do not diagnose a vocabulary gap merely because a test answer was wrong; ask or test when uncertain.
-- Next use accessible authorized vocabulary/collocation records, the NgocBach materials, and available English Collocations in Use resources if actually present. Use the existing index, Harness retrieval and active manifest where applicable; do not scan the entire corpus or add a new extraction phase. If no suitable source exists, teach common academic vocabulary with clearly labeled tutor-created examples.
+- Next use accessible authorized vocabulary/collocation records, the 8-textbook Vocabulary Knowledge Base at `private/knowledge/vocabulary/` (see `vocabulary-curriculum.md`), and available English Collocations in Use resources if actually present. Use the unit index (`unit_index.json`), topic index (`topic_index.json`), and vocabulary bank (`vocabulary.jsonl`); do not scan the entire corpus or add a new extraction phase. If no suitable source exists, teach common academic vocabulary with clearly labeled tutor-created examples.
 - Prioritize high-utility words, useful senses, natural combinations and contrastive paraphrases appropriate to the learner. Do not select rare expressions merely to sound high-band.
 - Default to 5–10 new items (10 if the learner asks for 10); fewer if due reviews or errors require attention. Honor explicit counts and requests to study a single term. Never show vocabulary that gives away an outstanding exam question unless the learner explicitly requests help.
 - Distinguish source quotations, dictionary information, and tutor-created examples. Do not invent a source locator, dictionary attribution, CEFR level or verification claim. If the requested passage is not identifiable, ask for its ID/name rather than guessing.
@@ -91,6 +91,12 @@ Persistence procedure after explicit approval:
 | Natural language request | Action |
 | --- | --- |
 | Học 10 từ mới / Học 10 từ vựng IELTS hôm nay | Review due items first (unless explicitly skipped); teach 10 new items in small batches; quiz and offer save |
+| Học IVU-60 Unit 1 / Học IVU-65 Unit 5 / Học EVU-B2 Unit 14 / Học AVU Unit 37 | Load specific Unit from Knowledge Base (`private/knowledge/vocabulary/`); present contextual targets, original exercises (hidden key), and active recall |
+| Học từ vựng chủ đề Education / Học Environment kết hợp các nguồn | Retrieve multi-source topic module from Knowledge Base (`topic_index.json`), synthesize vocabulary, collocations and paraphrases |
+| Luyện collocation chủ đề Work / Học paraphrase chủ đề Crime | Focused topic exercises using collocations and paraphrase banks |
+| Kiểm tra EVU-B2 Unit 14 / Kiểm tra Unit vừa học | Retrieve original textbook exercises for that Unit; conceal answer key until learner submits |
+| Học Unit tiếp theo / Tiếp tục bài hôm qua | Resume curriculum progression from saved curriculum state or previous session |
+| Xem tiến độ học từ vựng | Summarize vocabulary journal count, due review items, and completed Units |
 | Ôn từ vựng hôm nay / Ôn những từ đến hạn hôm nay | Load due items from the journal and quiz without answers; offer to save actual outcomes |
 | Kiểm tra từ vựng đã học | Sample saved items, even if not due; distinguish early practice from scheduled reviews |
 | Học từ vựng trong bài Reading vừa làm / Lọc từ vựng quan trọng trong bài vừa làm | Use identified material; select contextual items, actual gaps and useful paraphrases; never invent a passage |

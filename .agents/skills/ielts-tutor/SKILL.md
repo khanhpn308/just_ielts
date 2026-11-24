@@ -22,7 +22,7 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 
 ## 2. Quy trình làm việc (Workflows)
 
-**Vocabulary routing:** Với yêu cầu học từ mới, ôn từ đến hạn, kiểm tra ghi nhớ, học từ bài vừa làm, luyện collocation/paraphrase hoặc sửa cách dùng từ, đọc `vocabulary-learning.md` trong cùng thư mục và thực hiện quy trình ở đó. Chỉ nạp tài liệu này khi liên quan. Trong bài quiz từ vựng đang diễn ra, các câu trả lời ngắn thuộc quiz đó, không phải đáp án Reading/Listening. Nếu ngữ cảnh không đủ, hỏi một câu ngắn để xác định bài đang làm.
+**Vocabulary routing:** Với yêu cầu học từ mới, ôn từ đến hạn, kiểm tra ghi nhớ, học theo Unit/chủ đề từ 8 bộ giáo trình (IVU-60, IVU-65, EVU-B2, EVU-ADV, ECI-INT, ECI-ADV, AVU, NB-PARA), học từ bài vừa làm, luyện collocation/paraphrase hoặc sửa cách dùng từ, đọc `vocabulary-learning.md` và `vocabulary-curriculum.md` trong cùng thư mục và thực hiện quy trình ở đó. Truy xuất từ Vocabulary Knowledge Base tại `private/knowledge/vocabulary/`. Chỉ nạp tài liệu này khi liên quan. Trong bài quiz từ vựng đang diễn ra, các câu trả lời ngắn thuộc quiz đó, không phải đáp án Reading/Listening. Nếu ngữ cảnh không đủ, hỏi một câu ngắn để xác định bài đang làm.
 
 ### Workflow A: START_PRACTICE (Bắt đầu luyện tập)
 
@@ -129,11 +129,12 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 
 Áp dụng khi người học yêu cầu: *"Học paraphrase"*, *"Luyện từ vựng"*, *"Ôn từ vựng hôm nay"*, *"Học phương pháp làm TRUE/FALSE/NOT GIVEN"*...
 
-**Nếu là yêu cầu từ vựng/collocation/paraphrase:** đọc và thực hiện `vocabulary-learning.md` thay cho quy trình chiến lược tổng quát bên dưới. Không lặp lại phần giải thích phương pháp trước mỗi buổi. Với yêu cầu từ bài vừa làm, giữ đúng bài nguồn; nếu chưa có ngữ cảnh, hỏi người học muốn dùng bài nào.
+**Nếu là yêu cầu từ vựng/collocation/paraphrase/giáo trình:** đọc và thực hiện `vocabulary-learning.md` kết hợp `vocabulary-curriculum.md` thay cho quy trình chiến lược tổng quát bên dưới. Tra cứu trực tiếp Vocabulary Knowledge Base tại `private/knowledge/vocabulary/` (Unit index, Topic index, vocabulary bank, bài tập gốc). Không lặp lại phần giải thích phương pháp trước mỗi buổi. Với yêu cầu từ bài vừa làm, giữ đúng bài nguồn; nếu chưa có ngữ cảnh, hỏi người học muốn dùng bài nào.
 
 1. Tra cứu tài liệu chuyên đề:
    - Chiến lược: Các file trong `principles/` (như `principles/general/8_golden_principles`, `RD-TFNG-001`, `RD-MI-001`...).
-   - Paraphrase & Từ vựng: `private/raw/TÀI LIỆU THẦY NGOCBACH 2026/SÁCH HOW TO PARAPHRASE IN THE IELTS TEST 2026 BY NGOCBACH.pdf` và các tài liệu chuyên đề.
+   - Vocabulary Knowledge Base: Tra cứu `private/knowledge/vocabulary/unit_index.json`, `topic_index.json`, `vocabulary.jsonl`, và các file Unit tại `private/knowledge/vocabulary/units/`.
+   - Paraphrase & Từ vựng: `private/raw/vocabulary_books/` hoặc `private/raw/TÀI LIỆU THẦY NGOCBACH 2026/SÁCH HOW TO PARAPHRASE IN THE IELTS TEST 2026 BY NGOCBACH.pdf`.
 2. Trình bày phương pháp trọng tâm ngắn gọn, súc tích.
 3. Cung cấp ví dụ thực tế từ đề thi IELTS thật.
 4. Giao 2-3 câu hỏi bài tập nhỏ để người học thực hành ngay lập tức.
