@@ -91,19 +91,22 @@ Persistence procedure after explicit approval:
 | Natural language request | Action |
 | --- | --- |
 | Học 10 từ mới / Học 10 từ vựng IELTS hôm nay | Review due items first (unless explicitly skipped); teach 10 new items in small batches; quiz and offer save |
+| Học từ vựng | Adaptive automatic lesson selection: review due items first, resume unfinished lesson if any, or pick next uncompleted unit on the active track |
+| Học collocation / Luyện collocation | Adaptive collocation study: select next uncompleted unit from `ECI-INT` / `ECI-ADV` (or topic collocations if specified) |
+| Học paraphrase / Luyện paraphrase | Adaptive paraphrase study: select next uncompleted section from `NB-PARA` (or topic paraphrases if specified) |
+| Học theo chủ đề / Học từ vựng chủ đề Education | Retrieve multi-source topic module from `topic_index.json` (auto-selecting priority/gap topic if unnamed) |
 | Học IVU-60 Unit 1 / Học IVU-65 Unit 5 / Học EVU-B2 Unit 14 / Học AVU Unit 37 | Load specific Unit from Knowledge Base (`private/knowledge/vocabulary/`); present contextual targets, original exercises (hidden key), and active recall |
-| Học từ vựng chủ đề Education / Học Environment kết hợp các nguồn | Retrieve multi-source topic module from Knowledge Base (`topic_index.json`), synthesize vocabulary, collocations and paraphrases |
-| Luyện collocation chủ đề Work / Học paraphrase chủ đề Crime | Focused topic exercises using collocations and paraphrase banks |
+| Chuyển sang EVU-B2 / Chuyển sang lộ trình chính | Switch active learning track while preserving independent progress in all other textbooks |
 | Kiểm tra EVU-B2 Unit 14 / Kiểm tra Unit vừa học | Retrieve original textbook exercises for that Unit; conceal answer key until learner submits |
-| Học Unit tiếp theo / Tiếp tục bài hôm qua | Resume curriculum progression from saved curriculum state or previous session |
-| Xem tiến độ học từ vựng | Summarize vocabulary journal count, due review items, and completed Units |
+| Học Unit tiếp theo / Tiếp tục bài hôm qua | Resume unfinished lesson from `private/progress/curriculum.json` or advance to next unit on active track |
+| Xem tiến độ / Xem tiến độ học từ vựng | Summarize vocabulary journal counts (Level 0–3, Stage 0–5), due items, and independent progress per textbook |
+| Xem lộ trình | Display personalized Adaptive Vocabulary Roadmap across Primary Core (`IVU-60` -> `IVU-65`) and Supporting Tracks with next recommended action |
 | Ôn từ vựng hôm nay / Ôn những từ đến hạn hôm nay | Load due items from the journal and quiz without answers; offer to save actual outcomes |
 | Kiểm tra từ vựng đã học | Sample saved items, even if not due; distinguish early practice from scheduled reviews |
 | Học từ vựng trong bài Reading vừa làm / Lọc từ vựng quan trọng trong bài vừa làm | Use identified material; select contextual items, actual gaps and useful paraphrases; never invent a passage |
-| Luyện collocation / Luyện paraphrase | Focused contextual exercises; use existing material when available |
 | Kiểm tra những từ tôi thường dùng sai | Prioritize recorded usage errors and lapses; if no evidence, state limitation and offer a diagnostic |
 | Cho bài tập Writing sử dụng các collocation đã học | Reuse journal items in a new writing task, correct productive use |
-| Lưu kết quả buổi học | Persist the actual approved vocabulary batch, if there is one |
+| Lưu kết quả buổi học | Persist the actual approved vocabulary batch and curriculum state, if consented |
 
 Short answers while an exercise is active are assessed as part of that exercise. Do not require the learner to repeat a setup prompt. If the previous vocabulary quiz was never saved and the conversation is new, do not invent its contents.
 

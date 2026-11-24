@@ -8,7 +8,12 @@ import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 from harness.config import REPO_ROOT
-from harness.vocabulary.inventory import VOCAB_RAW_DIR, VOCAB_KB_DIR
+from harness.vocabulary.inventory import (
+    VOCAB_RAW_DIR,
+    VOCAB_KB_DIR,
+    PROCESSING_VERSION,
+    get_source_sha256,
+)
 
 STAGING_OCR_CACHE = REPO_ROOT / "private" / "staging" / "raw_extracted" / "ocr_cache"
 STAGING_UNITS_DIR = VOCAB_KB_DIR / "units"
@@ -19,8 +24,18 @@ def ensure_ocr_cache_dir() -> Path:
     return STAGING_OCR_CACHE
 
 
-def get_page_text_with_cache(source_id: str, pdf_path: Path, page_num: int, is_scanned: bool = False) -> str:
-    """Retrieves page text using pdftotext or cached tesseract OCR for scanned pages."""
+def get_page_text_with_cache(
+    source_id: str,
+    pdf_path: Path,
+    page_num: int,
+    is_scanned: bool = False,
+    source_sha256: Optional[str] = None,
+    cache_dir: Optional[Path] = None,
+) -> str:
+    """Retrieves page text using pdftotext or cached tesseract OCR for scanned pages.
+
+    Invalidates scanned OCR cache if source SHA-256 or processing version changes.
+    """
     if not is_scanned:
         # Digital text layer
         res = subprocess.run(
@@ -29,11 +44,23 @@ def get_page_text_with_cache(source_id: str, pdf_path: Path, page_num: int, is_s
         )
         return res.stdout
 
-    # Scanned page - check disk cache first
-    cache_dir = ensure_ocr_cache_dir()
-    cache_file = cache_dir / f"{source_id}_p{page_num:03d}.txt"
-    if cache_file.exists():
-        return cache_file.read_text(encoding="utf-8")
+    # Scanned page - check disk cache and metadata sidecar first
+    target_cache_dir = cache_dir or ensure_ocr_cache_dir()
+    target_cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = target_cache_dir / f"{source_id}_p{page_num:03d}.txt"
+    meta_file = target_cache_dir / f"{source_id}_p{page_num:03d}.meta.json"
+    expected_sha = source_sha256 or get_source_sha256(source_id, pdf_path=pdf_path)
+
+    if cache_file.exists() and meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            if (
+                meta.get("processing_version") == PROCESSING_VERSION
+                and (expected_sha is None or meta.get("source_sha256") == expected_sha)
+            ):
+                return cache_file.read_text(encoding="utf-8")
+        except Exception:
+            pass
 
     # Render image with pdftoppm (150 DPI is fast and high quality)
     prefix = f"/tmp/ocr_{source_id}_p{page_num:03d}"
@@ -54,6 +81,15 @@ def get_page_text_with_cache(source_id: str, pdf_path: Path, page_num: int, is_s
         )
         text = res.stdout
         cache_file.write_text(text, encoding="utf-8")
+        meta_file.write_text(
+            json.dumps({
+                "source_id": source_id,
+                "page_num": page_num,
+                "source_sha256": expected_sha,
+                "processing_version": PROCESSING_VERSION,
+            }, indent=2),
+            encoding="utf-8",
+        )
         return text
     finally:
         img_file.unlink(missing_ok=True)
@@ -75,6 +111,7 @@ class FamilyAParser:
         p_end = unit_info["physical_pages"][1]
         unit_num = unit_info["unit_number"]
         unit_key = unit_info["unit_key"]
+        source_sha256 = unit_info.get("source_sha256") or get_source_sha256(self.source_id, pdf_path=self.pdf_path)
 
         theory_text = get_page_text_with_cache(self.source_id, self.pdf_path, p_start, is_scanned=False)
         exercise_text = get_page_text_with_cache(self.source_id, self.pdf_path, p_end, is_scanned=False)
@@ -84,6 +121,8 @@ class FamilyAParser:
         answer_key = self._extract_answer_key(unit_num, unit_info.get("answer_key_pdf_pages"))
 
         return {
+            "processing_version": PROCESSING_VERSION,
+            "source_sha256": source_sha256,
             "unit_key": unit_key,
             "source_id": self.source_id,
             "unit_number": unit_num,
@@ -247,11 +286,14 @@ class FamilyBParser:
         p_pages = unit_info["physical_pages"]
         unit_num = unit_info["unit_number"]
         unit_key = unit_info["unit_key"]
+        source_sha256 = unit_info.get("source_sha256") or get_source_sha256(self.source_id, pdf_path=self.pdf_path)
 
         pages_text = {}
         full_text_list = []
         for p in p_pages:
-            t = get_page_text_with_cache(self.source_id, self.pdf_path, p, is_scanned=True)
+            t = get_page_text_with_cache(
+                self.source_id, self.pdf_path, p, is_scanned=True, source_sha256=source_sha256
+            )
             pages_text[p] = t
             full_text_list.append(t)
 
@@ -262,9 +304,13 @@ class FamilyBParser:
         error_warnings = self._extract_feature_boxes(combined_text, r"Error\s+warning\b")
         test_tips = self._extract_feature_boxes(combined_text, r"Test\s+tip\b")
         exercises = self._extract_exercises(combined_text, unit_num)
-        answer_key = self._extract_answer_key(unit_num, unit_info.get("answer_key_pdf_pages"))
+        answer_key = self._extract_answer_key(
+            unit_num, unit_info.get("answer_key_pdf_pages"), source_sha256=source_sha256
+        )
 
         return {
+            "processing_version": PROCESSING_VERSION,
+            "source_sha256": source_sha256,
             "unit_key": unit_key,
             "source_id": self.source_id,
             "unit_number": unit_num,
@@ -325,7 +371,12 @@ class FamilyBParser:
                 })
         return exercises
 
-    def _extract_answer_key(self, unit_num: int, ak_pages: Optional[List[int]]) -> Dict[str, Any]:
+    def _extract_answer_key(
+        self,
+        unit_num: int,
+        ak_pages: Optional[List[int]],
+        source_sha256: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Extracts answers for unit_num from cached OCR of answer key pages."""
         if not ak_pages or len(ak_pages) < 2:
             return {"status": "unverified", "verification_status": "unverified", "answers": {}}
@@ -342,7 +393,9 @@ class FamilyBParser:
         ])))
 
         for p in candidate_pages:
-            txt = get_page_text_with_cache(self.source_id, self.pdf_path, p, is_scanned=True)
+            txt = get_page_text_with_cache(
+                self.source_id, self.pdf_path, p, is_scanned=True, source_sha256=source_sha256
+            )
             # Check for Unit {unit_num} or check if sub-exercises 1.2, 1.4, 2 exist
             pattern = re.compile(rf"(?:Unit\s+{unit_num}\b|Wunit\s*{unit_num}\b)(.*?)(?=Unit\s+\d+\b|Wunit\s*\d+\b|\Z)", re.DOTALL | re.IGNORECASE)
             m = pattern.search(txt)
@@ -387,6 +440,7 @@ class FamilyCParser:
     def parse_section(self, section_info: Dict[str, Any]) -> Dict[str, Any]:
         """Parses a paraphrase section, cleaning advertising footers and extracting bilingual paraphrase entries."""
         pages = section_info["physical_pages"]
+        source_sha256 = section_info.get("source_sha256") or get_source_sha256(self.source_id, pdf_path=self.pdf_path)
         raw_texts = []
         for p in pages:
             raw_texts.append(get_page_text_with_cache(self.source_id, self.pdf_path, p, is_scanned=False))
@@ -395,6 +449,8 @@ class FamilyCParser:
         paraphrase_items = self._extract_paraphrase_groups(cleaned_text)
 
         return {
+            "processing_version": PROCESSING_VERSION,
+            "source_sha256": source_sha256,
             "unit_key": section_info["unit_key"],
             "source_id": self.source_id,
             "title": section_info["title"],
@@ -438,10 +494,12 @@ class FamilyCParser:
 
 
 def save_parsed_unit(unit_data: Dict[str, Any], output_base: Path = STAGING_UNITS_DIR) -> Path:
-    """Saves parsed unit JSON to private/knowledge/vocabulary/units/<source_id>/<unit_key>.json with processing version."""
+    """Saves parsed unit JSON to private/knowledge/vocabulary/units/<source_id>/<unit_key>.json with sha256 and processing version."""
     source_id = unit_data["source_id"]
     unit_key = unit_data["unit_key"]
-    unit_data["processing_version"] = "1.1.0"
+    unit_data["processing_version"] = PROCESSING_VERSION
+    if not unit_data.get("source_sha256"):
+        unit_data["source_sha256"] = get_source_sha256(source_id)
     unit_dir = output_base / source_id
     unit_dir.mkdir(parents=True, exist_ok=True)
     out_file = unit_dir / f"{unit_key}.json"

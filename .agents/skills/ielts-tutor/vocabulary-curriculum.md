@@ -76,8 +76,11 @@ Dựa trên 2 bộ giáo trình của Pauline Cullen làm khung sườn tiến �
 
 ## 4. Quy trình Học Từ vựng Tích hợp (Tutor Workflow)
 
-1. **Nhận diện yêu cầu tự nhiên:**
-   - Theo Unit: *"Học IVU-65 Unit 5"*, *"Học EVU-B2 Unit 14"*, *"Học AVU Unit 37"*.
+1. **Nhận diện yêu cầu tự nhiên & Điều hướng lộ trình:**
+   - Lộ trình thích ứng tự động: *"Học từ vựng"*, *"Học collocation"*, *"Học paraphrase"*, *"Học theo chủ đề"*.
+   - Xem tiến độ & Lộ trình: *"Xem tiến độ"*, *"Xem lộ trình"*.
+   - Theo Unit cụ thể: *"Học IVU-65 Unit 5"*, *"Học EVU-B2 Unit 14"*, *"Học AVU Unit 37"*, *"Học Unit tiếp theo"*.
+   - Chuyển đổi luồng sách & Tiếp tục bài dở: *"Chuyển sang ECI-INT"*, *"Chuyển sang lộ trình chính"*, *"Tiếp tục bài hôm qua"*.
    - Theo Chủ đề đa nguồn: *"Học từ vựng chủ đề Education"*, *"Học Environment kết hợp các nguồn"*.
    - Luyện chuyên sâu: *"Luyện collocation chủ đề Work"*, *"Học paraphrase chủ đề Crime"*.
    - Kiểm tra / Ôn tập: *"Kiểm tra EVU-B2 Unit 14"*, *"Ôn từ vựng hôm nay"*, *"Kiểm tra Unit vừa học"*.

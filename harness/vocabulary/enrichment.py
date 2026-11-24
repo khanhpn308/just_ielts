@@ -4,7 +4,8 @@ Distinguishes source facts from tutor-generated semantic enrichment.
 Python deterministically extracts source-grounded vocabulary candidates,
 context sentences, and textbook glosses/footnotes.
 The Tutor Agent provides semantic enrichment (IPA, CEFR, register, meaning_vi, collocations)
-and persists results on demand without introducing external LLM APIs or fabricating fake defaults.
+and persists results on demand without introducing external LLM APIs, fabricating fake defaults,
+or attributing unmatched Tutor-generated items to an authoritative textbook.
 """
 
 from __future__ import annotations
@@ -15,31 +16,92 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from harness.vocabulary.inventory import PROCESSING_VERSION, get_source_sha256
 from harness.vocabulary.kb import (
-    PROCESSING_VERSION,
     VOCAB_KB_DIR,
     KB_UNITS_DIR,
     KB_VOCAB_FILE,
-    KB_EXERCISES_FILE,
-    KB_ANSWER_KEYS_FILE,
     KB_LEXICAL_INDEX_FILE,
     build_entry_key,
     normalize_expression,
     merge_lexical_entries,
     get_unit_details,
+    is_cache_valid,
 )
 
 ENRICHED_UNITS_DIR = VOCAB_KB_DIR / "enriched"
 
 
-def get_enriched_unit_path(source_id: str, unit_key: str) -> Path:
-    return ENRICHED_UNITS_DIR / source_id / f"{unit_key}.json"
+def get_enriched_unit_path(
+    source_id: str,
+    unit_key: str,
+    enriched_dir: Optional[Path] = None,
+) -> Path:
+    base = enriched_dir or ENRICHED_UNITS_DIR
+    return base / source_id / f"{unit_key}.json"
+
+
+def _get_unit_searchable_text(parsed_unit: Dict[str, Any]) -> str:
+    """Collects all extracted text from a parsed unit for evidence verification."""
+    parts: List[str] = []
+    theory = parsed_unit.get("theory", {})
+    if isinstance(theory, dict):
+        if theory.get("raw_text"):
+            parts.append(theory["raw_text"])
+        for sec in theory.get("sections", []):
+            if sec.get("title"):
+                parts.append(sec["title"])
+            if sec.get("content"):
+                parts.append(sec["content"])
+        for box_key in ("vocabulary_notes", "error_warnings", "test_tips"):
+            for b in theory.get(box_key, []):
+                parts.append(str(b))
+    if parsed_unit.get("raw_text"):
+        parts.append(parsed_unit["raw_text"])
+    for ex in parsed_unit.get("exercises", []):
+        if ex.get("instructions"):
+            parts.append(ex["instructions"])
+        if ex.get("content"):
+            parts.append(ex["content"])
+    return "\n".join(parts)
+
+
+def find_source_evidence_in_unit(expression: str, parsed_unit: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Checks if expression actually appears in the parsed unit's extracted text.
+
+    Returns a source-grounded candidate dict if verified, or None if unmatched.
+    """
+    norm_expr = normalize_expression(expression)
+    if not norm_expr:
+        return None
+    searchable = _get_unit_searchable_text(parsed_unit)
+    if not searchable:
+        return None
+
+    # Allow flexible whitespace between words in expression
+    words = [re.escape(w) for w in norm_expr.split()]
+    pat = re.compile(r"\b" + r"\s+".join(words) + r"\b", re.IGNORECASE)
+    for line in searchable.splitlines():
+        if pat.search(line):
+            return {
+                "expression": expression,
+                "source_context": line.strip(),
+                "source_gloss": "",
+                "extraction_method": "source_text_match",
+                "source_grounded": True,
+                "source_provenance": {
+                    "source_id": parsed_unit.get("source_id", ""),
+                    "unit_key": parsed_unit.get("unit_key", ""),
+                    "page": parsed_unit.get("physical_pages", [0])[0],
+                },
+            }
+    return None
 
 
 def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Deterministically extracts candidate vocabulary items and source facts from unit content.
 
-    Extracts expressions, bracketed notes, superscript footnotes, and bulleted items
+    Extracts expressions, bracketed notes, superscript footnotes, and bulleted/diagram items
     directly grounded in the original source text without fabrication.
     """
     candidates = []
@@ -49,11 +111,9 @@ def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict
     unit_key = parsed_unit.get("unit_key", "")
     page = parsed_unit.get("physical_pages", [0])[0]
 
-    raw_text = parsed_unit.get("theory", {}).get("raw_text", "")
-    sections = parsed_unit.get("theory", {}).get("sections", [])
+    raw_text = parsed_unit.get("theory", {}).get("raw_text", "") or parsed_unit.get("raw_text", "")
 
-    # Pattern 1: Numbered superscript footnotes e.g. "highpowered job1", "embark on a career2"
-    # and footnote definitions e.g. "1 an important job", "2 to start a career"
+    # Pattern 1: Numbered superscript footnotes
     footnote_defs = dict(re.findall(r"^(\d)\s+([^\n]+)", raw_text, re.MULTILINE))
     footnote_terms = re.findall(r"([A-Za-z\s\-\'/]{3,35}?)(\d)\b", raw_text)
     for term, num in footnote_terms:
@@ -65,6 +125,7 @@ def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict
                 "source_context": f"{clean_term} {footnote_defs.get(num, '')}".strip(),
                 "source_gloss": footnote_defs.get(num, ""),
                 "extraction_method": "source_footnote",
+                "source_grounded": True,
                 "source_provenance": {
                     "source_id": source_id,
                     "unit_key": unit_key,
@@ -73,7 +134,7 @@ def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict
                 },
             })
 
-    # Pattern 2: Defined expressions with brackets or notes like "term [definition]"
+    # Pattern 2: Defined expressions with brackets like "term [definition]"
     bracket_matches = re.findall(r"([A-Za-z\s\-\'/]{3,40})\s+\[(.*?)\]", raw_text)
     for expr, hint in bracket_matches:
         expr_clean = expr.strip()
@@ -84,6 +145,7 @@ def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict
                 "source_context": f"{expr_clean} [{hint.strip()}]",
                 "source_gloss": hint.strip(),
                 "extraction_method": "bracketed_source_note",
+                "source_grounded": True,
                 "source_provenance": {
                     "source_id": source_id,
                     "unit_key": unit_key,
@@ -92,10 +154,8 @@ def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict
             })
 
     # Pattern 3: Key collocations / phrases in diagram blocks or bullet points
-    # Look for lines with 2-5 words representing authentic phrases
     for line in raw_text.splitlines():
         l_str = line.strip()
-        # Bullet items or diagram items
         m = re.match(r"^(?:[•\-*]\s*)?((?:to\s+)?[a-z]{3,15}(?:\s+[a-z]{2,15}){1,4})$", l_str)
         if m:
             cand = m.group(1).strip()
@@ -106,6 +166,7 @@ def extract_unit_vocabulary_candidates(parsed_unit: Dict[str, Any]) -> List[Dict
                     "source_context": l_str,
                     "source_gloss": "",
                     "extraction_method": "source_collocation_phrase",
+                    "source_grounded": True,
                     "source_provenance": {
                         "source_id": source_id,
                         "unit_key": unit_key,
@@ -132,26 +193,43 @@ def build_tutor_enriched_item(
     register: Optional[str] = None,
     item_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Combines deterministic source facts with Tutor Agent semantic enrichment.
+    """Combines source facts (when grounded) with Tutor Agent semantic enrichment.
 
     Strictly preserves provenance:
     - Does NOT fabricate default fake IPA, fake CEFR or fake definitions.
-    - Explicitly tags enrichment_agent as 'tutor_agent'.
+    - Only attributes to an authoritative textbook when source_grounded is True and provenance exists.
+    - Unmatched Tutor-generated items are labeled provenance='tutor_created' with source_grounded=False.
     """
     expr = candidate["expression"]
     norm_expr = normalize_expression(expr)
-    prov = candidate.get("source_provenance", {})
+    is_grounded = bool(candidate.get("source_grounded", False))
+    prov = candidate.get("source_provenance") or {}
 
-    assigned_id = item_id or f"VOC-{prov.get('source_id', 'SRC')}-{prov.get('unit_key', 'U')}-{abs(hash(norm_expr)) % 100000:05d}"
+    if is_grounded and prov.get("source_id"):
+        prefix = f"VOC-{prov['source_id']}-{prov.get('unit_key', 'U')}"
+        source_entry = {
+            "kind": "material",
+            "source_id": prov.get("source_id", ""),
+            "unit_key": prov.get("unit_key", ""),
+            "physical_page": prov.get("page", 0),
+            "example_sentence": candidate.get("source_context", ""),
+            "source_gloss": candidate.get("source_gloss", ""),
+            "provenance": "authoritative_textbook",
+        }
+        extraction_method = candidate.get("extraction_method", "textbook_extraction")
+    else:
+        is_grounded = False
+        prefix = "VOC-TUTOR"
+        source_entry = {
+            "kind": "tutor_created",
+            "ref": None,
+            "locator": None,
+            "example_sentence": candidate.get("source_context", ""),
+            "provenance": "tutor_created",
+        }
+        extraction_method = "unmatched_tutor_enrichment"
 
-    source_entry = {
-        "source_id": prov.get("source_id", ""),
-        "unit_key": prov.get("unit_key", ""),
-        "physical_page": prov.get("page", 0),
-        "example_sentence": candidate.get("source_context", ""),
-        "source_gloss": candidate.get("source_gloss", ""),
-        "provenance": "authoritative_textbook",
-    }
+    assigned_id = item_id or f"{prefix}-{abs(hash((norm_expr, pos, sense_key))) % 100000:05d}"
 
     return {
         "item_id": assigned_id,
@@ -173,8 +251,8 @@ def build_tutor_enriched_item(
         "common_mistakes": common_mistakes or "",
         "sources": [source_entry],
         "provenance_metadata": {
-            "source_grounded": True,
-            "extraction_method": candidate.get("extraction_method", "textbook_extraction"),
+            "source_grounded": is_grounded,
+            "extraction_method": extraction_method,
             "enrichment_agent": "tutor_agent",
             "enriched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
@@ -185,30 +263,67 @@ def persist_enriched_unit_data(
     unit_key: str,
     enriched_items: List[Dict[str, Any]],
     parsed_unit: Dict[str, Any],
+    candidates: Optional[List[Dict[str, Any]]] = None,
+    enriched_dir: Optional[Path] = None,
+    vocab_file: Optional[Path] = None,
+    lexical_index_file: Optional[Path] = None,
+    source_sha256: Optional[str] = None,
 ) -> Path:
     """Persists enriched unit outputs to disk and updates vocabulary.jsonl and lexical_index.json."""
     source_id = parsed_unit["source_id"]
-    enriched_file = get_enriched_unit_path(source_id, unit_key)
+    enriched_file = get_enriched_unit_path(source_id, unit_key, enriched_dir=enriched_dir)
     enriched_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Merge with any existing completed enriched items in this file (if updating)
+    existing_enriched_by_key: Dict[str, Dict[str, Any]] = {}
+    if enriched_file.exists():
+        try:
+            old = json.loads(enriched_file.read_text(encoding="utf-8"))
+            if is_cache_valid(old, source_id, source_sha256, PROCESSING_VERSION):
+                for it in old.get("enriched_vocabulary", []):
+                    k = it.get("entry_key") or build_entry_key(it["expression"], it["pos"], it.get("sense_key", ""))
+                    existing_enriched_by_key[k] = it
+        except Exception:
+            pass
+
+    for it in enriched_items:
+        k = it.get("entry_key") or build_entry_key(it["expression"], it["pos"], it.get("sense_key", ""))
+        if k in existing_enriched_by_key:
+            existing_enriched_by_key[k] = merge_lexical_entries(existing_enriched_by_key[k], it)
+        else:
+            existing_enriched_by_key[k] = it
+
+    final_enriched = list(existing_enriched_by_key.values())
+    enrichment_status = "completed" if len(final_enriched) > 0 else "candidates_only"
 
     enriched_data = {
         "processing_version": PROCESSING_VERSION,
+        "source_sha256": source_sha256 or parsed_unit.get("source_sha256"),
+        "enrichment_status": enrichment_status,
         "unit_key": unit_key,
         "source_id": source_id,
         "title": parsed_unit.get("title", ""),
-        "enriched_vocabulary": enriched_items,
+        "candidates": candidates or [],
+        "enriched_vocabulary": final_enriched,
         "exercises": parsed_unit.get("exercises", []),
         "answer_key": parsed_unit.get("answer_key", {}),
         "enriched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
-    with open(enriched_file, "w", encoding="utf-8") as f:
+    tmp_enriched = enriched_file.with_suffix(".tmp")
+    with open(tmp_enriched, "w", encoding="utf-8") as f:
         json.dump(enriched_data, f, indent=2, ensure_ascii=False)
+    tmp_enriched.replace(enriched_file)
+
+    if not final_enriched:
+        return enriched_file
 
     # Non-destructive sync to vocabulary.jsonl
+    target_vocab = vocab_file or KB_VOCAB_FILE
+    target_vocab.parent.mkdir(parents=True, exist_ok=True)
     existing_by_key: Dict[str, Dict[str, Any]] = {}
-    if KB_VOCAB_FILE.exists():
-        with open(KB_VOCAB_FILE, "r", encoding="utf-8") as f:
+    if target_vocab.exists():
+        with open(target_vocab, "r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -216,24 +331,25 @@ def persist_enriched_unit_data(
                 k = build_entry_key(
                     entry.get("expression", ""),
                     entry.get("pos", ""),
-                    entry.get("sense_key", entry.get("lemma", ""))
+                    entry.get("sense_key", entry.get("lemma", "")),
                 )
                 existing_by_key[k] = entry
 
-    for it in enriched_items:
+    for it in final_enriched:
         k = it.get("entry_key") or build_entry_key(it["expression"], it["pos"], it.get("sense_key", ""))
         if k in existing_by_key:
             existing_by_key[k] = merge_lexical_entries(existing_by_key[k], it)
         else:
             existing_by_key[k] = it
 
-    tmp_vocab = KB_VOCAB_FILE.with_suffix(".tmp")
+    tmp_vocab = target_vocab.with_suffix(".tmp")
     with open(tmp_vocab, "w", encoding="utf-8") as f:
         for it in existing_by_key.values():
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp_vocab.replace(KB_VOCAB_FILE)
+    tmp_vocab.replace(target_vocab)
 
     # Update lexical index
+    target_idx = lexical_index_file or KB_LEXICAL_INDEX_FILE
     lex_index: Dict[str, Any] = {
         "schema_version": "1.1.0",
         "processing_version": PROCESSING_VERSION,
@@ -257,10 +373,10 @@ def persist_enriched_unit_data(
         lex_index[norm_expr].append(summary)
         lex_index[k] = summary
 
-    tmp_idx = KB_LEXICAL_INDEX_FILE.with_suffix(".tmp")
+    tmp_idx = target_idx.with_suffix(".tmp")
     with open(tmp_idx, "w", encoding="utf-8") as f:
         json.dump(lex_index, f, indent=2, ensure_ascii=False)
-    tmp_idx.replace(KB_LEXICAL_INDEX_FILE)
+    tmp_idx.replace(target_idx)
 
     return enriched_file
 
@@ -269,26 +385,29 @@ def enrich_unit_pipeline(
     unit_key: str,
     tutor_enrichments: Optional[List[Dict[str, Any]]] = None,
     force_reextract: bool = False,
+    index_file: Optional[Path] = None,
+    units_dir: Optional[Path] = None,
+    enriched_dir: Optional[Path] = None,
+    vocab_file: Optional[Path] = None,
+    lexical_index_file: Optional[Path] = None,
+    sources_file: Optional[Path] = None,
+    source_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Executes the generalized 7-step on-demand extraction and enrichment workflow for a unit.
 
-    1. Retrieve Unit from structural index.
-    2. Extract source content.
-    3. Extract source-grounded vocabulary candidates (expressions, glosses, footnotes).
-    4. Enrich selected vocabulary via Tutor Agent (without fake default values).
-    5. Retrieve original exercises and answer keys (concealing keys).
-    6. Save reusable knowledge-base outputs.
-    7. Retrieve from disk cache on subsequent calls without re-extraction.
+    - Invalidates extraction & enrichment caches when source SHA-256 or processing_version changes.
+    - Never treats empty or candidate-only enrichment caches as completed enrichment.
+    - Never attributes unmatched Tutor-generated items to an authoritative textbook.
     """
     t_start = time.time()
     steps_log = []
 
     # Step 1: Retrieve Unit from structural index
-    index_file = VOCAB_KB_DIR / "unit_index.json"
-    if not index_file.exists():
-        raise FileNotFoundError(f"Unit index not found at {index_file}")
+    idx_path = index_file or (VOCAB_KB_DIR / "unit_index.json")
+    if not idx_path.exists():
+        raise FileNotFoundError(f"Unit index not found at {idx_path}")
 
-    with open(index_file, "r", encoding="utf-8") as f:
+    with open(idx_path, "r", encoding="utf-8") as f:
         unit_idx = json.load(f)
 
     unit_info = unit_idx.get(unit_key)
@@ -302,6 +421,8 @@ def enrich_unit_pipeline(
         raise ValueError(f"Unit key {unit_key} not found in unit index.")
 
     source_id = unit_info["source_id"]
+    expected_sha = source_sha256 or unit_info.get("source_sha256") or get_source_sha256(source_id, sources_file=sources_file)
+
     steps_log.append({
         "step": 1,
         "action": "Retrieve Unit from structural index",
@@ -312,34 +433,50 @@ def enrich_unit_pipeline(
         "pages": unit_info.get("physical_pages"),
     })
 
-    # Step 7 Check: Return cached enriched unit if present and up-to-date
-    enriched_file = get_enriched_unit_path(source_id, unit_key)
-    if enriched_file.exists() and not force_reextract:
+    # Step 7 Check: Return cached enriched unit ONLY if:
+    # - file exists & not forcing reextract & no new tutor_enrichments are supplied
+    # - source_sha256 and processing_version match
+    # - enrichment_status == "completed" and enriched_vocabulary is non-empty!
+    enriched_file = get_enriched_unit_path(source_id, unit_key, enriched_dir=enriched_dir)
+    if enriched_file.exists() and not force_reextract and not tutor_enrichments:
         t_cache = time.time()
         try:
             with open(enriched_file, "r", encoding="utf-8") as f:
                 cached_result = json.load(f)
-                if cached_result.get("processing_version") == PROCESSING_VERSION:
-                    return {
-                        "unit_key": unit_key,
-                        "source_id": source_id,
-                        "from_cache": True,
-                        "elapsed_seconds": round(time.time() - t_cache, 4),
-                        "steps_log": [
-                            {
-                                "step": 7,
-                                "action": "Cache Hit: Retrieved enriched unit without re-extraction",
-                                "status": "cached",
-                                "path": str(enriched_file),
-                            }
-                        ],
-                        "enriched_unit": cached_result,
-                    }
+            is_valid = is_cache_valid(cached_result, source_id, expected_sha, PROCESSING_VERSION)
+            is_populated = (
+                cached_result.get("enrichment_status") == "completed"
+                and len(cached_result.get("enriched_vocabulary", [])) > 0
+            )
+            if is_valid and is_populated:
+                return {
+                    "unit_key": unit_key,
+                    "source_id": source_id,
+                    "from_cache": True,
+                    "enrichment_status": "completed",
+                    "elapsed_seconds": round(time.time() - t_cache, 4),
+                    "steps_log": [
+                        {
+                            "step": 7,
+                            "action": "Cache Hit: Retrieved completed enriched unit without re-extraction",
+                            "status": "cached",
+                            "path": str(enriched_file),
+                        }
+                    ],
+                    "enriched_unit": cached_result,
+                }
         except Exception:
             pass
 
-    # Step 2: Extract source content
-    parsed_unit = get_unit_details(unit_key, force_reextract=force_reextract)
+    # Step 2: Extract source content (checks source SHA-256 and processing_version)
+    parsed_unit = get_unit_details(
+        unit_key,
+        force_reextract=force_reextract,
+        units_dir=units_dir,
+        index_file=idx_path,
+        sources_file=sources_file,
+        source_sha256=expected_sha,
+    )
     if not parsed_unit:
         raise RuntimeError(f"Failed to extract source content for {unit_key}")
 
@@ -367,16 +504,22 @@ def enrich_unit_pipeline(
         cand_map = {normalize_expression(c["expression"]): c for c in raw_candidates}
         for te in tutor_enrichments:
             expr_norm = normalize_expression(te["expression"])
-            cand = cand_map.get(expr_norm) or {
-                "expression": te["expression"],
-                "source_context": te.get("contextual_meaning", ""),
-                "source_gloss": te.get("meaning_en", ""),
-                "source_provenance": {
-                    "source_id": source_id,
-                    "unit_key": unit_key,
-                    "page": unit_info.get("physical_pages", [0])[0],
-                },
-            }
+            # 1. Check extracted candidates
+            cand = cand_map.get(expr_norm)
+            # 2. Check full parsed unit text for actual source evidence
+            if cand is None:
+                cand = find_source_evidence_in_unit(te["expression"], parsed_unit)
+            # 3. Unmatched Tutor-generated lexical item: DO NOT attribute to textbook!
+            if cand is None:
+                cand = {
+                    "expression": te["expression"],
+                    "source_context": te.get("contextual_meaning", ""),
+                    "source_gloss": "",
+                    "extraction_method": "unmatched_tutor_enrichment",
+                    "source_grounded": False,
+                    "source_provenance": None,
+                }
+
             item = build_tutor_enriched_item(
                 candidate=cand,
                 pos=te["pos"],
@@ -398,7 +541,7 @@ def enrich_unit_pipeline(
     steps_log.append({
         "step": 4,
         "action": "Enrich selected vocabulary via Tutor Agent",
-        "status": "success",
+        "status": "success" if enriched_items else "awaiting_tutor_enrichment",
         "enriched_count": len(enriched_items),
         "items": [it["expression"] for it in enriched_items],
     })
@@ -420,11 +563,20 @@ def enrich_unit_pipeline(
         unit_key=unit_key,
         enriched_items=enriched_items,
         parsed_unit=parsed_unit,
+        candidates=raw_candidates,
+        enriched_dir=enriched_dir,
+        vocab_file=vocab_file,
+        lexical_index_file=lexical_index_file,
+        source_sha256=expected_sha,
     )
+    saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
+    enrichment_status = saved_payload.get("enrichment_status", "candidates_only")
+
     steps_log.append({
         "step": 6,
         "action": "Save reusable knowledge-base outputs",
         "status": "success",
+        "enrichment_status": enrichment_status,
         "enriched_file": str(saved_path),
     })
 
@@ -433,15 +585,9 @@ def enrich_unit_pipeline(
         "unit_key": unit_key,
         "source_id": source_id,
         "from_cache": False,
+        "enrichment_status": enrichment_status,
         "elapsed_seconds": elapsed,
         "steps_log": steps_log,
         "candidates": raw_candidates,
-        "enriched_unit": {
-            "unit_key": unit_key,
-            "source_id": source_id,
-            "title": parsed_unit.get("title", ""),
-            "enriched_vocabulary": enriched_items,
-            "exercises": exercises,
-            "answer_key": answer_key,
-        },
+        "enriched_unit": saved_payload,
     }

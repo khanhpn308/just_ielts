@@ -63,7 +63,8 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
 - **Trích xuất sự kiện gốc (Source Facts):** Python trích xuất các ứng viên từ vựng, ngữ cảnh, định nghĩa chú thích (footnotes) và ghi chú trong ngoặc vuông trực tiếp từ nội dung sách giáo khoa (`extract_unit_vocabulary_candidates`).
 - **Gia sư làm giàu ngữ nghĩa:** Gia sư IELTS Tutor thực hiện làm giàu ngữ nghĩa (IPA, CEFR, Từ loại, Giải nghĩa tiếng Việt, Collocation) theo nhu cầu thực tế của người học mà không gọi API LLM ngoài.
 - **Không ngụy tạo dữ liệu mặc định:** Không tạo phiên âm giả mạo dạng `/{expression}/`, không gán mặc định `C1`, không tự chế định nghĩa tiếng Anh giả. Nếu chưa kiểm chứng, trường thông tin được giữ `None`.
-- **Phân định xuất xứ dữ liệu rõ ràng:** Tách biệt tường minh giữa sự kiện gốc từ giáo trình (`source_facts`, `authoritative_textbook`) và nội dung do gia sư làm giàu (`enrichment_agent: tutor_agent`).
+- **Phân định xuất xứ dữ liệu rõ ràng:** Tách biệt tường minh giữa sự kiện gốc từ giáo trình (`source_facts`, `authoritative_textbook`) và nội dung do gia sư làm giàu (`enrichment_agent: tutor_agent`). Các mục từ do gia sư bổ sung ngoài nội dung đối soát được từ sách gốc (`unmatched`) được gắn nhãn `source_grounded: false` và `provenance: tutor_created`, **tuyệt đối không gán nhầm xuất xứ cho sách giáo khoa**.
+- **Không coi bộ đệm chỉ có ứng viên là đã hoàn tất làm giàu:** Khi chưa có dữ liệu làm giàu từ gia sư (`enrichment_status: candidates_only` hoặc `enriched_vocabulary: []`), lần truy xuất sau sẽ không trả về cache rỗng mà cho phép gia sư bổ sung dữ liệu và hoàn tất trạng thái `completed`.
 - **Minh chứng trên Unit độc lập ngoài Education và Unit 101:** Đã kiểm thử thành công trên **`ECI-INT-U030` ("Work Jobs, career and work")**:
   - Trích xuất 23 ứng viên từ vựng gốc từ bài đọc và chú thích.
   - Gia sư làm giàu các cụm từ: `high-powered job`, `embark on a career`, `climb the career ladder`.
@@ -74,11 +75,11 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
 - **Bảo toàn Level 0–3 & Stage 0–5:**
   - Cấp độ nhận thức: `Level 0` (chưa đánh giá/thất bại), `Level 1` (nhận diện/có trợ giúp), `Level 2` (gợi nhớ độc lập), `Level 3` (vận dụng chủ động).
   - Chu kỳ lặp lại ngắt quãng chuẩn: `Stage 0` (+1 ngày), `Stage 1` (+2 ngày), `Stage 2` (+3 ngày), `Stage 3` (+7 ngày), `Stage 4` (+16 ngày), `Stage 5` (+30 ngày) tương ứng các mốc Day 1, 2, 4, 7, 14, 30.
+- **Ôn tập sớm (Early Review) không làm nhảy Stage hoặc dời lịch:** Nếu người học tự ôn tập thành công trước `next_review_date`, hệ thống giữ nguyên `review_stage` và `next_review_date` hiện tại. Chỉ khi ôn tập đúng hạn hoặc quá hạn (`today >= next_review_date`) với `Level >= 2` mới thăng cấp Stage; nếu ôn tập thất bại/cần trợ giúp sớm có thể rút ngắn lịch về ngày mai.
 - **Định danh mục từ theo sense:** Khóa định danh `entry_key = expression|pos|sense_key` (thoát ký tự `|`).
 - **Chống trùng lặp và thăng cấp nhiều lần trong ngày:**
   - Mỗi mục từ duy trì đúng 1 bản ghi duy nhất trong `private/progress/vocabulary.jsonl`.
-  - Trong cùng một ngày dương lịch, chỉ lượt đánh giá độc lập đầu tiên mới có thể thăng cấp Stage. Luyện tập thêm trong ngày không làm nhảy cấp tiến độ.
-  - Nếu gặp thất bại trong ngày, Stage được reset về 0 và dời lịch về ngày mai.
+  - Trong cùng một ngày dương lịch, chỉ lượt đánh giá độc lập đầu tiên mới có thể thăng cấp Stage. Luyện tập thêm trong ngày không làm nhảy cấp tiến độ hay tăng trùng lặp `review_count`/`lapse_count`.
 - **Ràng buộc sự đồng thuận người học (User Consent):**
   - Không tự ý ghi nhật ký tiến độ hoặc trạng thái giáo trình khi người học chưa đồng ý (`user_consented=True`).
 
@@ -88,7 +89,7 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
 - **Hợp nhất nguồn gốc đa giáo trình:**
   - Hàm `merge_lexical_entries` bảo toàn toàn bộ danh sách `sources` khi một từ xuất hiện ở nhiều sách khác nhau.
 - **Chỉ mục từ vựng nhất quán:** `lexical_index.json` ánh xạ đồng thời `entry_key` và biểu thức chuẩn hóa `norm_expr`.
-- **Hủy bộ đệm cũ (Cache Invalidation):** Sử dụng `PROCESSING_VERSION = "1.1.0"` để tự động nhận biết và bóc tách lại nếu phát hiện cấu trúc bộ đệm đã cũ.
+- **Hủy bộ đệm cũ theo SHA-256 và Processing Version (Cache Invalidation):** Sử dụng đồng thời `source_sha256` và `PROCESSING_VERSION = "1.1.0"` trên cả cache trích xuất (`units/`), cache OCR (`.meta.json`), và cache làm giàu (`enriched/`) để tự động vô hiệu hóa và bóc tách lại khi tệp nguồn hoặc phiên bản xử lý thay đổi.
 
 ### 4.4. Tính toàn vẹn bài tập & Bảo mật bản quyền (Defect Area 4)
 - **Định danh bài tập phức hợp (Composite IDs):**
@@ -103,18 +104,29 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
 - **Bảo mật bản quyền:** 100% trích đoạn bài tập gốc và đáp án bản quyền đã được chuyển hoàn toàn vào thư mục riêng tư `private/` (`seed_education.json`, `exercises.jsonl`, `answer_keys.jsonl`), không lưu trữ văn bản bản quyền trong mã nguồn Python công khai hay báo cáo Markdown công khai.
 - **Kiểm thử công khai bằng Synthetic Fixtures:** Các bài kiểm thử CI sử dụng dữ liệu giả lập tổng hợp, không phụ thuộc PDF riêng tư hay trích đoạn sách có bản quyền.
 
+### 4.5. Điều hướng Lộ trình Thích ứng & Tiến độ Đa giáo trình (Adaptive Vocabulary Roadmap & Navigation)
+- **Tiến độ độc lập theo từng giáo trình (`track_positions` & `unit_progress`):** Theo dõi riêng vị trí hiện tại, số Unit hoàn thành và đang học dở cho từng cuốn trong 8 bộ giáo trình (`IVU-60`, `IVU-65`, `EVU-B2`, `EVU-ADV`, `ECI-INT`, `ECI-ADV`, `AVU`, `NB-PARA`) và trục chính `PRIMARY_CORE`.
+- **Chuyển đổi luồng học & Tiếp tục bài học dở trong hội thoại mới:** Hỗ trợ chuyển giữa các bộ giáo trình (như `"Chuyển sang EVU-B2"`, `"Chuyển sang lộ trình chính"`) mà không ghi đè tiến độ của nhau; lệnh `"Tiếp tục bài hôm qua"` tự động khôi phục bài học đang dở (`unfinished_lesson`) cùng danh sách bài tập còn chờ.
+- **Định tuyến 6 nhóm lệnh tự nhiên cốt lõi:**
+  - `"Học từ vựng"`: Tự động ưu tiên ôn từ đến hạn (`due_reviews`), khôi phục bài dở hoặc chọn Unit tiếp theo trên lộ trình đang hoạt động.
+  - `"Học collocation"`: Tự động chọn bài học tiếp theo trong `ECI-INT` / `ECI-ADV` (hoặc theo chủ đề).
+  - `"Học paraphrase"`: Tự động chọn chuyên đề tiếp theo trong `NB-PARA` (hoặc theo chủ đề).
+  - `"Học theo chủ đề"`: Truy xuất cụm chủ đề đa nguồn (tự động chọn chủ đề có lỗ hổng hoặc chưa học nếu người học không chỉ định tên).
+  - `"Xem tiến độ"`: Thống kê nhật ký từ vựng (Level 0–3, Stage 0–5, số từ đến hạn) và tiến độ từng đầu sách.
+  - `"Xem lộ trình"`: Hiển thị trục chính (`IVU-60` -> `IVU-65`), các luồng bổ trợ và bước học gợi ý kế tiếp.
+
 ---
 
 ## 5. KẾT QUẢ KIỂM THỬ VÀ HỒI QUY (TEST & REGRESSION SUITE)
 
 - **Kiểm thử phân hệ Từ vựng (`tests/test_vocabulary_kb.py`):**
-  - Chạy chế độ CI tiêu chuẩn (không có PDF riêng tư): **7/7 passed in 0.10s** (100% Synthetic fixtures: Kiểm tra taxonomy, normalization, intent routing, hợp đồng tiến độ PR #10, không ngụy tạo dữ liệu, merge sources và kiểm soát consent).
-  - Chạy chế độ Acceptance với cờ `--corpus`: **11/11 passed in 14.12s** (Kiểm kê 8 sách, 433 unit index, bóc tách Family A/B/C với composite ID, và minh chứng On-Demand Enrichment trên ECI-INT-U030).
+  - Chạy chế độ CI tiêu chuẩn (không có PDF riêng tư): **9/9 passed in 0.23s** (100% Synthetic fixtures: bao gồm toàn bộ hồi quy cho 4 defects mới, Adaptive Roadmap, chuyển luồng sách và khôi phục bài dở trong hội thoại mới).
+  - Chạy chế độ Acceptance với cờ `--corpus`: **13 passed in 25.34s** (Kiểm kê 8 sách, 433 unit index, bóc tách Family A/B/C với composite ID, SHA-256 verification và On-Demand Enrichment trên `ECI-INT-U030`).
 - **Kiểm thử hồi quy toàn bộ repository:**
   ```bash
   ./.venv/bin/python -m pytest -q tests/
   ```
-  **Kết quả:** `239 passed, 14 skipped in 17.18s` (100% Đạt, zero failures).
+  **Kết quả:** `241 passed, 14 skipped in 23.23s` (100% Đạt, zero failures).
 - **Kiểm tra nguyên tắc và dữ liệu:**
   - `./.venv/bin/python scripts/build_principles_index.py --check`: Hợp lệ 7 atomic principles; index up to date.
   - `./.venv/bin/python scripts/validate_data.py`: Hợp lệ.
@@ -125,10 +137,9 @@ Toàn bộ 8 tệp PDF trong thư mục `private/raw/vocabulary_books/` đã đ�
 
 ## 6. QUYẾT ĐỊNH NGHIỆM THU
 
-### **FINAL APPROVAL: TARGETED DEFECTS RESOLVED — READY FOR MERGE**
+### **FINAL APPROVAL: ALL TARGETED DEFECTS & ADAPTIVE ROADMAP VERIFIED — READY FOR MERGE**
 
-Toàn bộ 4 nhóm lỗi kỹ thuật đã được khắc phục hoàn toàn theo đúng tiêu chuẩn mã nguồn:
-1. Đã tổng quát hóa quy trình làm giàu từ vựng theo nhu cầu trên nền tảng ứng viên trích xuất từ sách gốc và năng lực sư phạm của Gia sư IELTS.
-2. Đã khôi phục hoàn chỉnh Hợp đồng Tiến độ Học tập PR #10 (Level 0–3, Stage 0–5, chu kỳ 1..30 ngày, chống thăng cấp trùng lặp và yêu cầu consent).
-3. Đã bảo đảm tính lũy tích, không phá hủy tri thức đã tích lũy và hủy cache lỗi thời.
-4. Đã chuẩn hóa định danh bài tập phức hợp, bảo mật đáp án và cách ly triệt để nội dung có bản quyền vào thư mục `private/`.
+Toàn bộ yêu cầu kỹ thuật và các lỗi xác nhận đã được khắc phục hoàn chỉnh trên kiến trúc sẵn có:
+1. Đã hoàn thiện Adaptive Vocabulary Roadmap & Progress Navigation với đầy đủ 6 nhóm lệnh tự nhiên, chuyển đổi luồng giáo trình độc lập và khôi phục bài học dở trong hội thoại mới.
+2. Đã sửa dứt điểm lỗi ôn tập sớm, lỗi vô hiệu hóa cache thiếu SHA-256, lỗi cache rỗng chặn làm giàu từ vựng và lỗi gán nhầm xuất xứ giáo trình cho mục từ không khớp.
+3. Đã khôi phục hoàn chỉnh Hợp đồng Tiến độ PR #10 và bảo đảm tính lũy tích, bảo mật bản quyền tuyệt đối.

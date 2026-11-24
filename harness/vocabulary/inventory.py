@@ -10,6 +10,7 @@ from harness.config import REPO_ROOT
 
 VOCAB_RAW_DIR = REPO_ROOT / "private" / "raw" / "vocabulary_books"
 VOCAB_KB_DIR = REPO_ROOT / "private" / "knowledge" / "vocabulary"
+PROCESSING_VERSION = "1.1.0"
 
 # Canonical metadata for the eight locked textbooks
 SOURCE_METADATA_CONFIG = {
@@ -238,6 +239,34 @@ def compute_sha256(path: Path) -> str:
         while chunk := f.read(65536):
             h.update(chunk)
     return h.hexdigest()
+
+
+def get_source_sha256(
+    source_id: str,
+    sources_file: Optional[Path] = None,
+    pdf_path: Optional[Path] = None,
+) -> Optional[str]:
+    """Resolves expected SHA-256 for a source from sources.json or by hashing pdf_path."""
+    s_file = sources_file or (VOCAB_KB_DIR / "sources.json")
+    if s_file.exists():
+        try:
+            with open(s_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            sha = data.get("sources", {}).get(source_id, {}).get("sha256")
+            if sha:
+                return sha
+        except Exception:
+            pass
+
+    target_pdf = pdf_path
+    if target_pdf is None and source_id in SOURCE_METADATA_CONFIG:
+        candidate = VOCAB_RAW_DIR / SOURCE_METADATA_CONFIG[source_id]["filename"]
+        if candidate.exists():
+            target_pdf = candidate
+
+    if target_pdf is not None and target_pdf.exists():
+        return compute_sha256(target_pdf)
+    return None
 
 
 def extract_outline_titles(pdf: pikepdf.Pdf) -> List[str]:

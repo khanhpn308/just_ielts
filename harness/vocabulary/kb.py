@@ -13,10 +13,13 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from harness.config import REPO_ROOT
-from harness.vocabulary.inventory import VOCAB_KB_DIR, VOCAB_RAW_DIR
+from harness.vocabulary.inventory import (
+    VOCAB_KB_DIR,
+    VOCAB_RAW_DIR,
+    PROCESSING_VERSION,
+    get_source_sha256,
+)
 from harness.vocabulary.parser import FamilyAParser, FamilyBParser, FamilyCParser, save_parsed_unit
-
-PROCESSING_VERSION = "1.1.0"
 
 KB_UNITS_DIR = VOCAB_KB_DIR / "units"
 KB_ENRICHED_DIR = VOCAB_KB_DIR / "enriched"
@@ -272,12 +275,37 @@ def build_knowledge_base() -> Dict[str, int]:
     return counts
 
 
-def get_unit_details(unit_key: str, force_reextract: bool = False) -> Optional[Dict[str, Any]]:
-    """Retrieves full details for a unit, invalidating stale caches using processing version."""
-    index_file = VOCAB_KB_DIR / "unit_index.json"
-    if not index_file.exists():
+def is_cache_valid(
+    cached_data: Dict[str, Any],
+    source_id: str,
+    expected_sha256: Optional[str],
+    processing_version: str = PROCESSING_VERSION,
+) -> bool:
+    """Checks cache validity against processing version, source_id, and source SHA-256."""
+    if not isinstance(cached_data, dict):
+        return False
+    if cached_data.get("processing_version") != processing_version:
+        return False
+    if cached_data.get("source_id") != source_id:
+        return False
+    if expected_sha256 is not None and cached_data.get("source_sha256") != expected_sha256:
+        return False
+    return True
+
+
+def get_unit_details(
+    unit_key: str,
+    force_reextract: bool = False,
+    units_dir: Optional[Path] = None,
+    index_file: Optional[Path] = None,
+    sources_file: Optional[Path] = None,
+    source_sha256: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Retrieves full details for a unit, invalidating stale caches using source SHA-256 and processing version."""
+    idx_path = index_file or (VOCAB_KB_DIR / "unit_index.json")
+    if not idx_path.exists():
         return None
-    with open(index_file, "r", encoding="utf-8") as f:
+    with open(idx_path, "r", encoding="utf-8") as f:
         unit_idx = json.load(f)
 
     unit_info = unit_idx.get(unit_key)
@@ -291,35 +319,41 @@ def get_unit_details(unit_key: str, force_reextract: bool = False) -> Optional[D
         return None
 
     source_id = unit_info["source_id"]
-    cached_path = KB_UNITS_DIR / source_id / f"{unit_key}.json"
+    expected_sha = source_sha256 or unit_info.get("source_sha256") or get_source_sha256(source_id, sources_file=sources_file)
+    target_units_dir = units_dir or KB_UNITS_DIR
+    cached_path = target_units_dir / source_id / f"{unit_key}.json"
 
     # Check cache validity
     if cached_path.exists() and not force_reextract:
         try:
             with open(cached_path, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
-                # Invalidate stale caches if processing version doesn't match
-                if cached_data.get("processing_version") == PROCESSING_VERSION and cached_data.get("source_id") == source_id:
+                if is_cache_valid(cached_data, source_id, expected_sha, PROCESSING_VERSION):
                     return cached_data
         except Exception:
             pass
 
     # Parse on demand
-    family = unit_info.get("source_id")
+    unit_payload = dict(unit_info)
+    if expected_sha:
+        unit_payload["source_sha256"] = expected_sha
+
     if source_id in ["EVU-B2", "EVU-ADV", "ECI-INT", "ECI-ADV", "AVU"]:
         parser = FamilyAParser(source_id)
-        parsed = parser.parse_unit(unit_info)
+        parsed = parser.parse_unit(unit_payload)
     elif source_id in ["IVU-60", "IVU-65"]:
         parser = FamilyBParser(source_id)
-        parsed = parser.parse_unit(unit_info)
+        parsed = parser.parse_unit(unit_payload)
     elif source_id == "NB-PARA":
         parser = FamilyCParser()
-        parsed = parser.parse_section(unit_info)
+        parsed = parser.parse_section(unit_payload)
     else:
         return unit_info
 
     parsed["processing_version"] = PROCESSING_VERSION
-    save_parsed_unit(parsed)
+    if expected_sha:
+        parsed["source_sha256"] = expected_sha
+    save_parsed_unit(parsed, output_base=target_units_dir)
     return parsed
 
 
