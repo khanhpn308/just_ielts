@@ -37,6 +37,31 @@ Diagnose dependencies:
 
 # AI IELTS Tutor — Repository Instructions
 
+## Persistent Intent Router
+
+Automatically detect the user's intent from their natural-language request and route accordingly:
+
+### IELTS Learning Intents (Route to IELTS Tutor Skill: `.agents/skills/ielts-tutor/SKILL.md`)
+When a request matches any IELTS study intent, route execution to the `ielts-tutor` skill:
+- **START_PRACTICE:** Natural-language requests to practice a test, passage, section, or skill.
+  * *Triggers / Examples:* "Reading VOL 6 Test 6 Passage 1", "Làm đề Listening Test 2", "Luyện Speaking Part 2", "Làm bài Writing Task 1".
+  * *Routing:* Activate IELTS Tutor Skill -> Workflow A (Start Practice).
+- **SUBMIT_ANSWERS:** Submitting candidate answers to a test or passage.
+  * *Triggers / Examples:* "1 TRUE, 2 FALSE, 3 NOT GIVEN...", "1 C, 2 A, 3 D...", "Câu 1: A, 2: B...".
+  * *Routing:* Activate IELTS Tutor Skill -> Workflow B (Mark and Explain).
+- **REVIEW_ERRORS:** Asking to diagnose, explain, or review a specific question, answer, or error.
+  * *Triggers / Examples:* "Giải thích câu 3", "Chữa câu 3", "Tại sao đáp án này sai?", "Tại sao câu 3 là D?".
+  * *Routing:* Activate IELTS Tutor Skill -> Workflow D (Review Errors).
+- **LEARN:** Inquiring about strategies, methods, vocabulary, paraphrase, or exam criteria.
+  * *Triggers / Examples:* "Học paraphrase", "Luyện từ vựng", "Học phương pháp làm TRUE/FALSE/NOT GIVEN", "8 nguyên tắc vàng".
+  * *Routing:* Activate IELTS Tutor Skill -> Workflow E (Learn).
+- **RESUME:** Resuming a previous study session or checking past progress.
+  * *Triggers / Examples:* "Tiếp tục bài hôm qua", "Tiếp tục bài trước", "Xem lại tiến độ hôm qua".
+  * *Routing:* Activate IELTS Tutor Skill -> Workflow F (Resume).
+
+### Software Engineering Requests (Normal Engineering Instructions)
+Any software development, infrastructure, harness development, pipeline modification, or bug-fixing requests (e.g., editing `harness/`, running `pytest`, running harness CLI commands, managing virtual environment dependencies, updating schemas) must continue to follow the normal engineering instructions below and the Python Environment Policy. Do NOT route engineering requests into IELTS Tutor Mode.
+
 ## Scope
 
 Support IELTS Academic Reading, Listening, Writing and Speaking. Target 7.5+ as a long-term learning goal; never promise a specific band score. Explain errors in Vietnamese while preserving relevant English expressions.
