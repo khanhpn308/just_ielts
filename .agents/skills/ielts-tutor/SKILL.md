@@ -1,6 +1,6 @@
 ---
 name: ielts-tutor
-description: Persistent IELTS Tutor mode for IELTS Academic Reading, Listening, Writing, and Speaking. Handles practice sessions, answer checking, error explanations using principles, vocabulary/paraphrase learning, and session tracking. Use when the user wants to practice IELTS tests, submit answers, ask for question explanations, learn IELTS skills/vocabulary/paraphrase, or resume a study session.
+description: Persistent IELTS Tutor mode for IELTS Academic Reading, Listening, Writing, and Speaking. Handles practice sessions, answer checking, error explanations using principles, vocabulary/paraphrase learning, active recall, due vocabulary reviews, and session tracking. Use when the user wants to practice IELTS tests, submit answers, ask for question explanations, learn IELTS skills/vocabulary/paraphrase/collocations, review previously learned vocabulary, or resume a study session.
 ---
 
 # IELTS Tutor Skill
@@ -21,6 +21,8 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 ---
 
 ## 2. Quy trình làm việc (Workflows)
+
+**Vocabulary routing:** Với yêu cầu học từ mới, ôn từ đến hạn, kiểm tra ghi nhớ, học từ bài vừa làm, luyện collocation/paraphrase hoặc sửa cách dùng từ, đọc `vocabulary-learning.md` trong cùng thư mục và thực hiện quy trình ở đó. Chỉ nạp tài liệu này khi liên quan. Trong bài quiz từ vựng đang diễn ra, các câu trả lời ngắn thuộc quiz đó, không phải đáp án Reading/Listening. Nếu ngữ cảnh không đủ, hỏi một câu ngắn để xác định bài đang làm.
 
 ### Workflow A: START_PRACTICE (Bắt đầu luyện tập)
 
@@ -84,7 +86,7 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 4. **Bài tập củng cố (Transfer Exercise):**
    - Đưa ra 1 câu hỏi tương tự thử thách cùng dạng bẫy/tư duy để học viên thực hành áp dụng ngay phương pháp vừa học.
 
-5. **Đề xuất lưu tiến độ (xem Workflow C).**
+5. **Đề xuất lưu tiến độ (xem Workflow C).** Nếu người học muốn học hoặc lưu các từ/cụm từ rút ra từ bài vừa chữa, áp dụng `vocabulary-learning.md`; ưu tiên những lỗ hổng từ vựng đã quan sát được, không suy đoán nguyên nhân lỗi.
 
 ---
 
@@ -125,7 +127,9 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 
 ### Workflow E: LEARN (Học kỹ năng, chiến lược, từ vựng)
 
-Áp dụng khi người học yêu cầu: *"Học paraphrase"*, *"Luyện từ vựng"*, *"Học phương pháp làm TRUE/FALSE/NOT GIVEN"*...
+Áp dụng khi người học yêu cầu: *"Học paraphrase"*, *"Luyện từ vựng"*, *"Ôn từ vựng hôm nay"*, *"Học phương pháp làm TRUE/FALSE/NOT GIVEN"*...
+
+**Nếu là yêu cầu từ vựng/collocation/paraphrase:** đọc và thực hiện `vocabulary-learning.md` thay cho quy trình chiến lược tổng quát bên dưới. Không lặp lại phần giải thích phương pháp trước mỗi buổi. Với yêu cầu từ bài vừa làm, giữ đúng bài nguồn; nếu chưa có ngữ cảnh, hỏi người học muốn dùng bài nào.
 
 1. Tra cứu tài liệu chuyên đề:
    - Chiến lược: Các file trong `principles/` (như `principles/general/8_golden_principles`, `RD-TFNG-001`, `RD-MI-001`...).

@@ -54,7 +54,7 @@ When a request matches any IELTS study intent, route execution to the `ielts-tut
   * *Routing:* Activate IELTS Tutor Skill -> Workflow D (Review Errors).
 - **LEARN:** Inquiring about strategies, methods, vocabulary, paraphrase, or exam criteria.
   * *Triggers / Examples:* "Học paraphrase", "Luyện từ vựng", "Học phương pháp làm TRUE/FALSE/NOT GIVEN", "8 nguyên tắc vàng".
-  * *Routing:* Activate IELTS Tutor Skill -> Workflow E (Learn).
+  * *Routing:* Activate IELTS Tutor Skill -> Workflow E (Learn). For vocabulary, collocations, paraphrase, due reviews, or word-use practice (e.g. "Học 10 từ mới", "Ôn từ vựng hôm nay", "Kiểm tra những từ tôi thường dùng sai"), read `.agents/skills/ielts-tutor/vocabulary-learning.md` and follow its session and private progress rules. Short answers in an active vocabulary exercise belong to that exercise, not an IELTS test answer submission.
 - **RESUME:** Resuming a previous study session or checking past progress.
   * *Triggers / Examples:* "Tiếp tục bài hôm qua", "Tiếp tục bài trước", "Xem lại tiến độ hôm qua".
   * *Routing:* Activate IELTS Tutor Skill -> Workflow F (Resume).
