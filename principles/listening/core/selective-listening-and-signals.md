@@ -1,5 +1,5 @@
 ---
-id: "LS-CORE-001"
+id: "LS-CORE-002"
 title: "Selective Listening and Signaling Keywords"
 type: "principle"
 skill: "listening"
@@ -7,7 +7,7 @@ question_types: ["note-completion","sentence-completion","summary-completion","t
 triggers: ["missed_signaling_keyword","lost_position","overfocused_on_irrelevant_detail"]
 dependencies: []
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 03:24–07:31; 11:42–14:52"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 03:24–07:31; 11:42–14:52"]
 ---
 
 # Selective Listening and Signaling Keywords
@@ -30,7 +30,7 @@ Không chờ cứng nhắc đúng từ hoặc đủ mọi mốc; đáp án có t
 Scope: Listening completion, primarily Part 4. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 03:24–07:31; 11:42–14:52. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 03:24–07:31; 11:42–14:52. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Ví dụ tự tạo: ghi chú về hồ Lake Amber, sau đó là water sampling. Hãy chọn mốc định vị và giải thích lúc cần tăng tập trung.

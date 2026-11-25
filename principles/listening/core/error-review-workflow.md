@@ -5,9 +5,9 @@ type: "workflow"
 skill: "listening"
 question_types: []
 triggers: ["listening_review","unresolved_listening_error","missed_paraphrase","distractor_selection","lost_position","spelling_error"]
-dependencies: ["LS-CORE-005","LS-P4-001"]
+dependencies: ["LS-CORE-006","LS-P4-001"]
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 01:34–03:24; 10:49–11:02; 21:44–22:26"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 01:34–03:24; 10:49–11:02; 21:44–22:26"]
 ---
 
 # Listening Error Diagnosis and Repair
@@ -33,7 +33,7 @@ Bước chữa, taxonomy, shadowing và retest là thiết kế bổ sung cho ag
 Scope: Listening review; completion-specific analysis only when applicable. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 01:34–03:24; 10:49–11:02; 21:44–22:26. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 01:34–03:24; 10:49–11:02; 21:44–22:26. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Cho đoạn audio mới cùng dạng lỗi sau khi dạy lại nguyên tắc; không tiết lộ đáp án trước lượt thử.

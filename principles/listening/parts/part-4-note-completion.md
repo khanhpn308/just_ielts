@@ -5,9 +5,9 @@ type: "workflow"
 skill: "listening"
 question_types: ["note-completion"]
 triggers: ["part4_note_completion","lost_position","missed_early_answer"]
-dependencies: ["LS-CORE-001","LS-CORE-002","LS-CORE-003","LS-CORE-004","LS-CORE-005"]
+dependencies: ["LS-CORE-002","LS-CORE-003","LS-CORE-004","LS-CORE-005","LS-CORE-006"]
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 03:24–11:02; 11:36–22:26"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 03:24–11:02; 11:36–22:26"]
 ---
 
 # Part 4 Note Completion Workflow
@@ -31,7 +31,7 @@ Phạm vi chính là note completion Part 4; chỉ chuyển giao sang dạng com
 Scope: Listening completion, primarily Part 4. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 03:24–11:02; 11:36–22:26. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 03:24–11:02; 11:36–22:26. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Dùng một câu tự tạo có mốc báo hiệu, paraphrase và đáp án xuất hiện trước từ khóa cuối; cho người học thử sau khi đã được minh họa.

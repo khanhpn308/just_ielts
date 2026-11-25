@@ -59,6 +59,8 @@ When a request matches any IELTS study intent, route execution to the `ielts-tut
   * *Triggers / Examples:* "Tiếp tục bài hôm qua", "Tiếp tục bài trước", "Xem lại tiến độ hôm qua".
   * *Routing:* Activate IELTS Tutor Skill -> Workflow F (Resume).
 
+- **FLUENCY_ROUTINE:** Requests such as "Xem lịch học IELTS", "Học IELTS theo lịch", "Luyện Speaking 4/3/2", "Đánh giá Speaking tháng này". Activate IELTS Tutor Skill -> Workflow G. Do not override an explicit test, vocabulary lesson, active exercise, or existing due-review policy.
+
 ### Software Engineering Requests (Normal Engineering Instructions)
 Any software development, infrastructure, harness development, pipeline modification, or bug-fixing requests (e.g., editing `harness/`, running `pytest`, running harness CLI commands, managing virtual environment dependencies, updating schemas) must continue to follow the normal engineering instructions below and the Python Environment Policy. Do NOT route engineering requests into IELTS Tutor Mode.
 

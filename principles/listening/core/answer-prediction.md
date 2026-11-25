@@ -1,5 +1,5 @@
 ---
-id: "LS-CORE-003"
+id: "LS-CORE-004"
 title: "Grammatical and Semantic Answer Prediction"
 type: "strategy"
 skill: "listening"
@@ -7,7 +7,7 @@ question_types: ["note-completion","sentence-completion","summary-completion","t
 triggers: ["wrong_word_class","wrong_semantic_category","wrong_number_or_form"]
 dependencies: []
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 08:25–08:39; 12:37–13:02; 15:50–16:19"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 08:25–08:39; 12:37–13:02; 15:50–16:19"]
 ---
 
 # Grammatical and Semantic Answer Prediction
@@ -30,7 +30,7 @@ Sau giới từ có thể là nhiều loại cấu trúc danh ngữ; không đo�
 Scope: Listening completion, primarily Part 4. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 08:25–08:39; 12:37–13:02; 15:50–16:19. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 08:25–08:39; 12:37–13:02; 15:50–16:19. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Ví dụ tự tạo: 'The device is powered by ___'. Dự đoán loại từ, nhóm nghĩa và giải thích vì sao chưa thể xác định một đáp án.

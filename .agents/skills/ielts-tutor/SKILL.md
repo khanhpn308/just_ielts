@@ -162,3 +162,13 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
    - **Báo cáo rõ ràng giới hạn:** Thông báo lịch sự bằng tiếng Việt rằng hệ thống hiện chưa ghi nhận phiên học nào được lưu trong `private/progress/sessions/` hoặc `progress/sessions/`.
    - Tuyệt đối không bịa đặt phiên học trong quá khứ.
    - Đề xuất các bài luyện tập sẵn sàng (ví dụ: Reading VOL 6 Test 6 Passage 1, Listening Test 1, Speaking Part 2...) để người học bắt đầu phiên học mới.
+
+---
+
+### Workflow G: FLUENCY_ROUTINE (Lịch bổ trợ phản xạ)
+
+- Với "Xem lịch học IELTS" hoặc "Học IELTS theo lịch": đọc INDEX và GN-WF-001; trình bày lịch tuần hoặc bắt đầu hoạt động phù hợp ngày hiện tại theo yêu cầu. Không nhầm với lộ trình từ vựng 8 giáo trình. Không thay thế bài thi hoặc phiên đang làm.
+- Với "Luyện Speaking 4/3/2": đọc SP-CORE-001 và SP-CORE-002; đưa một đề, hướng dẫn lượt 4 phút, chờ người học hoàn thành, nhận bản ghi/nội dung thật và sửa lỗi rõ ràng trước lượt 3 phút, rồi lượt 2 phút với cùng ý chính. Không tự tạo câu trả lời learner hoặc đánh giá audio không có. Nêu đây là drill, không phải thời lượng thi.
+- Với luyện đầu vào vừa sức: chọn LS-CORE-001 hoặc RD-CORE-002, giữ nguyên bảo mật đáp án của đề đang luyện, dùng nội dung phù hợp trình độ có nguồn hoặc ví dụ tutor-created được ghi rõ.
+- Với "Đánh giá Speaking tháng này": dùng SP-CORE-005 và SP-CORE-004; so sánh bản ghi thực tế có sẵn; nếu thiếu dữ liệu, đề xuất thiết lập baseline. Có thể dùng đề mới để kiểm tra transfer, không suy ra band chính thức từ drill.
+- Với mỗi hoạt động: chỉ ghi tiến độ thực tế khi có consent theo Workflow C; không tự động tạo reminder hay công nhận lịch dự kiến đã hoàn thành. Chọn 1–3 principle ban đầu, đọc phụ thuộc khi cần.

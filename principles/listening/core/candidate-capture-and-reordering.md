@@ -1,13 +1,13 @@
 ---
-id: "LS-CORE-004"
+id: "LS-CORE-005"
 title: "Candidate Capture and Information Reordering"
 type: "strategy"
 skill: "listening"
 question_types: ["note-completion","sentence-completion","summary-completion","table-completion","flow-chart-completion"]
 triggers: ["missed_early_answer","information_reordering","excessive_note_taking"]
-dependencies: ["LS-CORE-001","LS-CORE-002","LS-CORE-003"]
+dependencies: ["LS-CORE-002","LS-CORE-003","LS-CORE-004"]
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 09:30–10:24; 15:04–16:19; 21:44–22:07"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 09:30–10:24; 15:04–16:19; 21:44–22:07"]
 ---
 
 # Candidate Capture and Information Reordering
@@ -30,7 +30,7 @@ Video đề xuất ghi mọi từ cùng loại từ; điều chỉnh sư phạm:
 Scope: Listening completion, primarily Part 4. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 09:30–10:24; 15:04–16:19; 21:44–22:07. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 09:30–10:24; 15:04–16:19; 21:44–22:07. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Ví dụ tự tạo: 'Water reaches the ___ through a pipe.' Audio luyện tập: 'The tank is supplied with water through a pipe.' Hãy chỉ ra thời điểm cần bắt ứng viên.

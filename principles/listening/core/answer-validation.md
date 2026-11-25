@@ -1,13 +1,13 @@
 ---
-id: "LS-CORE-005"
+id: "LS-CORE-006"
 title: "Evidence-Based Candidate Validation"
 type: "principle"
 skill: "listening"
 question_types: ["note-completion","sentence-completion","summary-completion","table-completion","flow-chart-completion"]
 triggers: ["distractor_selection","semantic_relation_mismatch","missing_audio_evidence","spelling_error","word_limit_violation"]
-dependencies: ["LS-CORE-002","LS-CORE-003"]
+dependencies: ["LS-CORE-003","LS-CORE-004"]
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 17:19–18:10; 20:38–22:25"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 17:19–18:10; 20:38–22:25"]
 ---
 
 # Evidence-Based Candidate Validation
@@ -30,7 +30,7 @@ Không dùng khoảng cách từ làm tiêu chí quyết định. Transcript c�
 Scope: Listening completion, primarily Part 4. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 17:19–18:10; 20:38–22:25. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 17:19–18:10; 20:38–22:25. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Ví dụ tự tạo: 'The team used a mixture to paint the fence.' Với câu 'They painted the ___', giải thích vì sao loại mixture.

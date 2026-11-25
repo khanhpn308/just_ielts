@@ -1,13 +1,13 @@
 ---
-id: "LS-CORE-002"
+id: "LS-CORE-003"
 title: "Content Keywords and Paraphrase"
 type: "principle"
 skill: "listening"
 question_types: ["note-completion","sentence-completion","summary-completion","table-completion","flow-chart-completion"]
 triggers: ["missed_paraphrase","exact_keyword_dependency","misidentified_information_target"]
-dependencies: ["LS-CORE-001"]
+dependencies: ["LS-CORE-002"]
 status: "draft"
-source_refs: ["User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 07:33–08:22; 10:25–11:02; 16:47–18:02; 20:05–21:21"]
+source_refs: ["SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 07:33–08:22; 10:25–11:02; 16:47–18:02; 20:05–21:21"]
 ---
 
 # Content Keywords and Paraphrase
@@ -30,7 +30,7 @@ Không coi hai từ luôn đồng nghĩa trong mọi ngữ cảnh; không chọn
 Scope: Listening completion, primarily Part 4. Use original task instructions and verified evidence; these are learning notes, not official IELTS rules.
 
 ## Source provenance
-User-supplied listening_transcript.md (2026-11-25; instructional video transcript; original exam/audio/key not independently checked); 07:33–08:22; 10:25–11:02; 16:47–18:02; 20:05–21:21. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
+SRC-LEARN-20261125-02 (user-supplied listening_transcript.md; original exam/audio/key not independently checked); 07:33–08:22; 10:25–11:02; 16:47–18:02; 20:05–21:21. Timestamps refer to the teaching video, not the exam audio. The transcript contains ASR errors; examples are instructional, not verified Cambridge items. Procedures, labels, safeguards and transfer exercises are editorial synthesis; synthetic examples are not real IELTS questions.
 
 ## Transfer exercise
 Ví dụ tự tạo: 'The container was made of ___'; lời nói 'They used a glass container.' Giải thích cách ghép quan hệ, rồi tự tạo một paraphrase khác.

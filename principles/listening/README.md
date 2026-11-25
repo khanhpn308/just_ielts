@@ -1,6 +1,7 @@
 # Listening
 
-- [Core principles](../INDEX.md): LS-CORE-001–005 cover selective listening, content keywords, prediction, candidate capture and evidence-based validation.
+- [Accessible Listening](core/accessible-listening.md): LS-CORE-001, fluency input (distinct from exam practice).
+- [Core principles](../INDEX.md): LS-CORE-002–006 cover selective listening, content keywords, prediction, candidate capture and evidence-based validation.
 - [Part 4 note completion](parts/part-4-note-completion.md): LS-P4-001, before/during/after listening.
 - [Error review workflow](core/error-review-workflow.md): LS-REV-001, evidence-based diagnosis, targeted replay and transfer.
 
