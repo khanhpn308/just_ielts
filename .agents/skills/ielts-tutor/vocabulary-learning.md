@@ -44,6 +44,10 @@ These rules apply to all vocabulary, collocation, paraphrase and topic-based les
 
 Illustrative synthetic example (not a textbook quotation): if the batch teaches `make a decision` and `take a break`, independent practice may ask for those expressions in new sentences. A matching task whose required answers are different, untaught combinations must be deferred or preceded by teaching those combinations. The diagnostic exception above is the only reason to test such targets before instruction during a learning session.
 
+### Personalized production and fluency reinforcement
+
+For new expressions in a learning session (not a standalone definition or a review-only request), apply GN-VOC-001, GN-VOC-002 and GN-VOC-003 via the principle index. After teaching each expression, guide the learner to produce at least two personalized English sentences and say them aloud; correct observed errors before retrying. Break into manageable batches, wait for actual responses, and resume unfinished production later. Do not claim speech/pronunciation from text alone or count tutor examples as learner output. For observed lexical gaps, use GN-VOC-004 while preserving textbook progression, prerequisites and due-review policy. Same-day repetition after correction does not advance spacing stage. Cross-skill reuse is supplemental (GN-CORE-003); do not expose outstanding exam answers.
+
 ### Recognition and productive knowledge
 
 Assign a level from the learner's demonstrated performance in the current assessment, independently of the spacing stage:
