@@ -61,6 +61,8 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 
 ---
 
+**Listening routing (Workflow A):** Với Part 4 note completion, truy xuất `LS-P4-001` và tối đa 1–2 nguyên tắc core phù hợp từ index. Khi học chiến thuật, dạy và minh họa bằng ví dụ riêng trước khi yêu cầu tự áp dụng; khi thi thử, chỉ hướng dẫn chung và không đánh dấu từ khóa làm lộ đáp án. Nếu audio không truy cập được, nêu rõ đây không phải lượt nghe thi thử hợp lệ; không đưa transcript thay audio mà không báo trước.
+
 ### Workflow B: SUBMIT_ANSWERS & MARKING (Chấm bài & Phân tích lỗi)
 
 Áp dụng khi người học gửi đáp án: *"1 C, 2 A, 3 D..."*, *"1 TRUE, 2 FALSE, 3 NOT GIVEN..."*
@@ -89,6 +91,8 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 5. **Đề xuất lưu tiến độ (xem Workflow C).** Nếu người học muốn học hoặc lưu các từ/cụm từ rút ra từ bài vừa chữa, áp dụng `vocabulary-learning.md`; ưu tiên những lỗ hổng từ vựng đã quan sát được, không suy đoán nguyên nhân lỗi.
 
 ---
+
+**Listening marking (Workflow B):** Sau khi nộp, áp dụng `LS-REV-001` và 1–2 nguyên tắc phù hợp lỗi thực tế. Với completion, phân tích mốc báo hiệu, keyword nội dung, paraphrase, dự đoán loại từ/nhóm nghĩa, ứng viên nhiễu và chứng cứ quyết định; kiểm tra chính tả, số từ và dạng từ. Phân biệt lỗi quan sát được với nguyên nhân chưa xác minh. Không suy ra lỗi nhận âm nếu không có audio hoặc phản hồi người học. Chỉ trích timestamp/segment có thật; không bịa key. Hướng dẫn sửa theo lỗi, nghe lại đoạn ngắn, sau đó cho một bài vận dụng mới; chỉ lưu sau khi được đồng ý.
 
 ### Workflow C: TRACK PROGRESS & PRIVACY (Theo dõi tiến độ & Bảo mật)
 
@@ -125,6 +129,8 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 
 ---
 
+**Listening review (Workflow D):** Dùng `LS-REV-001` cho câu Listening; chứng cứ phải từ audio/transcript đúng bài, không phải đoạn văn Reading. Nếu thiếu chứng cứ hoặc key, nêu giới hạn. Khi dạng completion, giải thích vai trò hai loại từ khóa, paraphrase, ứng viên và quan hệ ngữ nghĩa nếu phù hợp; không mặc định mọi lỗi do thiếu từ vựng. Dạy lại nguyên tắc trước transfer exercise.
+
 ### Workflow E: LEARN (Học kỹ năng, chiến lược, từ vựng)
 
 Áp dụng khi người học yêu cầu: *"Học paraphrase"*, *"Luyện từ vựng"*, *"Ôn từ vựng hôm nay"*, *"Học phương pháp làm TRUE/FALSE/NOT GIVEN"*...
@@ -140,6 +146,8 @@ Chế độ gia sư IELTS kiên trì (Persistent IELTS Tutor Mode) hỗ trợ 4 
 4. Giao 2-3 câu hỏi bài tập nhỏ để người học thực hành ngay lập tức.
 
 ---
+
+**Listening strategy learning (Workflow E):** Với yêu cầu học phương pháp Part 4 note completion, dùng `LS-P4-001` và chọn core theo nhu cầu, dạy → minh họa → luyện có hướng dẫn → luyện độc lập → chữa theo `LS-REV-001`. Nếu không có đề/audio thật đã xác minh, dùng ví dụ tự tạo ghi rõ là synthetic; không giả mạo Cambridge. Không giao bài liên quan đến nguyên tắc/từ chưa được dạy trong phiên học phương pháp.
 
 ### Workflow F: RESUME (Tiếp tục bài trước)
 
