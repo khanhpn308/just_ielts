@@ -1,0 +1,30 @@
+Python 3.12.3
+pdfinfo version 24.02.0
+pytest 9.2.0
+..............                                                           [100%]
+14 passed in 0.06s
+.....................................................................    [100%]
+69 passed in 2.20s
+KILLED placeholder body checksum
+KILLED independently delimited DOCX block coverage
+KILLED printed rubric slot coverage
+KILLED cloze count from source
+KILLED native printed slot number
+KILLED frozen canonical target
+KILLED body coverage and field span order
+KILLED revision binding
+KILLED pinned review hash
+KILLED exact field values
+KILLED empty evidence
+KILLED reviewer independence
+KILLED source byte verification
+KILLED PDF page bounds
+KILLED native cell value
+KILLED canonical slot linkage
+KILLED restricted dependency closure
+KILLED cloze offsets
+KILLED asset digest
+KILLED multi-select uniqueness
+KILLED option normalization
+KILLED word and number limits
+22/22 code mutations killed
