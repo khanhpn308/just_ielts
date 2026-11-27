@@ -6,10 +6,25 @@ Legacy reference: [eight golden principles](general/8_golden_principles) (not ye
 
 | ID | Title | Skill | Question type(s) | Triggers | Status | File |
 | --- | --- | --- | --- | --- | --- | --- |
+| GN-CORE-001 | Direct Conceptual Association | general | — | word_by_word_translation, slow_lexical_retrieval | draft | [open](general/direct-conceptual-association.md) |
+| GN-CORE-002 | Knowledge to Automatic Skill | general | — | recognition_without_production, slow_grammar_retrieval | draft | [open](general/knowledge-to-automatic-skill.md) |
+| GN-CORE-003 | Input Output Integration | general | — | input_without_output, recognition_without_production | draft | [open](general/input-output-integration.md) |
+| GN-VOC-001 | First Language as Temporary Support | general | — | translation_only_vocabulary, abstract_word_confusion | draft | [open](general/first-language-support.md) |
+| GN-VOC-002 | Personalized Vocabulary Production | general | — | passive_vocabulary, new_word_without_usage | draft | [open](general/personalized-vocabulary-production.md) |
+| GN-VOC-003 | Reusable Language Chunks | general | — | word_by_word_assembly, limited_collocation_retrieval | draft | [open](general/reusable-language-chunks.md) |
+| GN-VOC-004 | Need Driven Vocabulary Learning | general | — | observed_lexical_gap, unable_to_express_idea | draft | [open](general/need-driven-vocabulary.md) |
+| GN-WF-001 | Weekly Fluency Practice Schedule | general | — | weekly_study_plan, daily_fluency_practice, monthly_fluency_review | draft | [open](general/weekly-fluency-schedule.md) |
+| LS-CORE-001 | Accessible Listening for Automatic Recognition | listening | — | slow_word_recognition, input_too_difficult, fluency_input | draft | [open](listening/core/accessible-listening.md) |
 | RD-CORE-001 | Evidence-Based Answering | reading | — | missing_textual_evidence, guessing_from_background_knowledge | draft | [open](reading/core/evidence-based-answering.md) |
+| RD-CORE-002 | Accessible Reading for Automatic Recognition | reading | — | slow_word_recognition, input_too_difficult, fluency_input | draft | [open](reading/core/accessible-reading.md) |
 | RD-MI-001 | Question Decomposition | reading | matching-information | searching_with_full_prompt, misidentifying_information_target | draft | [open](reading/question-types/matching-information/question-decomposition.md) |
 | RD-MI-002 | Semantic Anchor Identification | reading | matching-information | exact_keyword_dependency, unable_to_locate_candidate_paragraph | draft | [open](reading/question-types/matching-information/semantic-anchor-identification.md) |
 | RD-MI-003 | Exact Information Evidence Verification | reading | matching-information | choosing_paragraph_without_evidence, incomplete_question_match | draft | [open](reading/question-types/matching-information/evidence-verification.md) |
 | RD-MI-004 | Topic-Match Distractor Elimination | reading | matching-information | topic_match_not_information_match, premature_selection_on_keywords | draft | [open](reading/question-types/matching-information/distractor-elimination.md) |
 | RD-MI-005 | Paragraph Reuse and Instruction Checks | reading | matching-information | assuming_one_to_one_paragraph_mapping, ignoring_answer_reuse_instructions | draft | [open](reading/question-types/matching-information/paragraph-reuse-and-instructions.md) |
 | RD-TFNG-001 | Distinguish FALSE from NOT GIVEN | reading | true-false-not-given | confuse_false_not_given, unsupported_inference | draft | [open](reading/question-types/true-false-not-given/false-vs-not-given.md) |
+| SP-CORE-001 | Same Topic 4 3 2 Fluency Practice | speaking | — | speaking_hesitation, word_by_word_assembly, fluency_practice | draft | [open](speaking/core/4-3-2-fluency-practice.md) |
+| SP-CORE-002 | Correct Errors Before Repetition | speaking | — | repeated_grammar_error, repeated_collocation_error | draft | [open](speaking/core/correct-before-repetition.md) |
+| SP-CORE-003 | Daily Self Talk | speaking | — | limited_speaking_exposure, unable_to_express_idea | draft | [open](speaking/core/daily-self-talk.md) |
+| SP-CORE-004 | Fluency Stability Over Speed | speaking | — | long_pauses, uneven_speech, rushed_speech | draft | [open](speaking/core/fluency-stability.md) |
+| SP-CORE-005 | Monthly Speaking Progress Check | speaking | — | monthly_fluency_review, memorization_without_transfer | draft | [open](speaking/core/monthly-speaking-progress.md) |
