@@ -1,0 +1,201 @@
+{
+  "stage": "S06_CORPUS_CONSOLIDATION",
+  "generated_at_local": "2026-11-28",
+  "s05_verdict": "PASS_FOR_PRIVATE_PROVISIONAL_USE",
+  "s05_limitations": {
+    "independent_batch_review": "SKIPPED_BY_OPERATOR",
+    "approved_locks": 0,
+    "official_s04_scope": 0,
+    "automatic_grading_authorized": false,
+    "diagnostic_grading_authorized": false,
+    "official_answer_authority": false,
+    "publication_authorized": false,
+    "governance_flags": [
+      "INDEPENDENT_BATCH_REVIEW_SKIPPED",
+      "PUBLICATION_AUTHORIZATION_NOT_ESTABLISHED",
+      "CHATGPT_PROJECT_E2E_NOT_EXECUTED",
+      "RUNTIME_CONTAINMENT_NOT_ENFORCED"
+    ]
+  },
+  "summary": {
+    "ACTIVE_RUNTIME": {
+      "files": 20785,
+      "bytes": 396883693
+    },
+    "SOURCE_MATERIAL": {
+      "files": 214,
+      "bytes": 2210353728
+    },
+    "REQUIRED_EVIDENCE": {
+      "files": 202,
+      "bytes": 10972324
+    },
+    "git_metadata": {
+      "files": 934,
+      "bytes": 2035146
+    },
+    "total_required_remaining_bytes": 2620244891
+  },
+  "active_runtime_components": {
+    "tutor_skill": [
+      ".agents/skills/ielts-tutor/SKILL.md",
+      ".agents/skills/ielts-tutor/vocabulary-curriculum.md",
+      ".agents/skills/ielts-tutor/vocabulary-learning.md"
+    ],
+    "provisional_reading_pilot_s04": {
+      "root": "private/staging/reading_reconstruction/S04_pilot",
+      "tutor_entry": "private/staging/reading_reconstruction/S04_pilot/scratch-export/tutor.py",
+      "practice_corpus": "private/staging/reading_reconstruction/S04_pilot/corpus/practice",
+      "feedback_corpus": "private/staging/reading_reconstruction/S04_pilot/corpus/feedback",
+      "quarantine": "private/staging/reading_reconstruction/S04_pilot/corpus/quarantine",
+      "s03d_release": "private/staging/reading_reconstruction/S03C_parallel/integration/S03D-20261128-r01",
+      "frozen_gate": "private/staging/reading_reconstruction/S03C_parallel/gate",
+      "pinned_assets": [
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-01-RD01/r01/ASSET-REF-PASSAGE-VOL01-01-RD01-MANDARIN-FOOTNOTE.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-01-RD01/r01/ASSET-REF-PASSAGE-VOL01-01-RD01-SILK-ROAD-FOOTNOTE.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-01-RD02/r01/ASSET-REF-PASSAGE-VOL01-01-RD02-G02.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-01-RD02/r01/ASSET-REF-PASSAGE-VOL01-01-RD02-PLEISTOCENE-FOOTNOTE.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-01-RD03/r01/ASSET-REF-PASSAGE-VOL01-01-RD03-ABSOLUTE-PITCH-FOOTNOTE.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-01-RD03/r01/ASSET-REF-PASSAGE-VOL01-01-RD03-G03.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-02-RD02/r01/ASSET-REF-PASSAGE-VOL01-02-RD02-BIRD.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-02-RD03/r01/ASSET-REF-PASSAGE-VOL01-02-RD03-G02.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-05-RD01/r02/ASSET-REF-PASSAGE-VOL01-05-RD01-MAP.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-06-RD01/r01/ASSET-REF-PASSAGE-VOL01-06-RD01-TEA.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/REF-PASSAGE-VOL01-06-RD03/r02/ASSET-REF-PASSAGE-VOL01-06-RD03-G02.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL02/author/TEST03/PASSAGE01/r02/ASSET-REF-QG-VOL02-03-RD01-G01.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL02/author/TEST08/PASSAGE01/r01/ASSET-REF-QG-VOL02-08-RD01-G02.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL03/author/PASSAGE-VOL03-02-RD02/rev-01/assets/ASSET-VOL03-02-RD02-FIG1.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL03/author/PASSAGE-VOL03-03-RD02/rev-01/assets/ASSET-VOL03-03-RD02-G01.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL06/author/assets/VOL06-04-RD01-G02-flowchart.svg",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL06/author/assets/VOL06-06-RD01-G02-flowchart.svg",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL07/author/TEST12/PASSAGE02/rev_001/roller_coaster_diagram.png",
+        "private/staging/reading_reconstruction/S03C_parallel/VOL09/author/REF-PASSAGE-VOL09-01-RD03/r01/q27-33-answer-grid.json"
+      ],
+      "s05_acceptance": "private/staging/reading_reconstruction/S05_final_acceptance"
+    },
+    "harness_and_code": [
+      "harness/",
+      "harness/state/harness.db",
+      "scripts/",
+      "schemas/",
+      "templates/",
+      "sources/",
+      "progress/",
+      "tests/",
+      "docs/",
+      "AGENTS.md",
+      "README.md",
+      "requirements-harness.txt",
+      "requirements-dev.txt",
+      ".gitignore",
+      ".github/",
+      ".venv/"
+    ],
+    "principles": {
+      "index": "principles/INDEX.md",
+      "readme": "principles/README.md",
+      "directories": [
+        "principles/general/",
+        "principles/reading/",
+        "principles/listening/",
+        "principles/speaking/"
+      ]
+    },
+    "authorized_public_data": [
+      "data/README.md",
+      "data/answer-keys/authorized_reading_keys.json",
+      "data/answer-keys/authorized_vocab_keys.jsonl",
+      "data/collocations/authorized_collocations.jsonl",
+      "data/paraphrases/authorized_paraphrases.jsonl",
+      "data/questions/authorized_reading_passages.json",
+      "data/questions/authorized_reading_questions.json",
+      "data/questions/authorized_speaking_tasks.json",
+      "data/questions/authorized_vocab_exercises.jsonl",
+      "data/questions/authorized_writing_tasks.json",
+      "data/vocabulary/authorized_vocabulary.jsonl"
+    ],
+    "vocabulary_knowledge_base": {
+      "root": "private/knowledge/vocabulary",
+      "indexes": [
+        "private/knowledge/vocabulary/unit_index.json",
+        "private/knowledge/vocabulary/topic_index.json",
+        "private/knowledge/vocabulary/lexical_index.json",
+        "private/knowledge/vocabulary/collocation_index.json",
+        "private/knowledge/vocabulary/paraphrase_index.json",
+        "private/knowledge/vocabulary/exercise_index.json",
+        "private/knowledge/vocabulary/answer_key_index.json",
+        "private/knowledge/vocabulary/grammar_index.json"
+      ],
+      "units_count": 444
+    },
+    "non_reading_and_normalized_corpus": {
+      "root": "private/staging/normalized",
+      "corpus_index": "private/staging/normalized/indexes/corpus_index.json",
+      "listening_indexes": [
+        "private/staging/normalized/indexes/listening_index.json",
+        "private/staging/normalized/indexes/listening_tests.jsonl",
+        "private/staging/normalized/indexes/listening_sections.jsonl",
+        "private/staging/normalized/indexes/listening_questions.jsonl",
+        "private/staging/normalized/indexes/listening_answer_keys.jsonl",
+        "private/staging/normalized/indexes/listening_manifest.json"
+      ],
+      "writing_speaking_indexes": [
+        "private/staging/normalized/indexes/ngocbach_writing_index.json",
+        "private/staging/normalized/indexes/ngocbach_speaking_index.json",
+        "private/staging/normalized/indexes/ngocbach_material_index.json",
+        "private/staging/normalized/indexes/ngocbach_strategy_and_guide_index.json",
+        "private/staging/normalized/indexes/ngocbach_vol1_writing_index.json"
+      ]
+    },
+    "learner_progress_paths_gitignored": [
+      "private/progress/vocabulary.jsonl (created only on explicit learner consent)",
+      "private/progress/curriculum.json (created only on explicit learner consent)",
+      "private/progress/sessions/",
+      "private/progress/errors/"
+    ]
+  },
+  "source_material": [
+    "private/raw/"
+  ],
+  "required_evidence": {
+    "annotations": "private/annotations/",
+    "listening_source_data": "private/source_data/listening/",
+    "reports_and_inventory": "private/reports/",
+    "raw_extracted_pilots": "private/staging/raw_extracted/",
+    "lockfiles": [
+      "private/requirements-harness.lock",
+      "private/requirements-lock.txt"
+    ],
+    "s03d_pinned_inputs_and_lineage": [
+      "private/staging/parallel_processing/A09_independent_audit/remediation_r4_reaudit/EXECUTIVE_SUMMARY.md",
+      "private/staging/parallel_processing/A09_independent_audit/remediation_r4_reaudit/INDEPENDENT_REAUDIT_REPORT.md",
+      "private/staging/parallel_processing/A09_independent_audit/remediation_r4_reaudit/final_verdict.json",
+      "private/staging/parallel_processing/A09_independent_audit/remediation_r4_reaudit/unresolved_defect_register.csv",
+      "private/staging/reading_reconstruction/S01_freeze_containment/S01_BASELINE_MANIFEST.json",
+      "private/staging/reading_reconstruction/S01_freeze_containment/reading_entity_inventory.jsonl",
+      "private/staging/reading_reconstruction/S01_freeze_containment/source_inventory.jsonl",
+      "private/staging/reading_reconstruction/S02_ground_truth_candidate/passage_reference.jsonl",
+      "private/staging/reading_reconstruction/S02_ground_truth_candidate/population_reconciliation.json",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/answer_key_reconciliation.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/applied_reference_corrections.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/approved_reference_manifest.json",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/batch_execution_ledger.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/field_verification_ledger.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/multiselect_verification.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/new_corrections_pending_confirmation.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/passage_content_verification.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/reference_entity_status.jsonl",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/resume_manifest.json",
+      "private/staging/reading_reconstruction/S03C_parallel/COMMON_CONTRACT.md",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL01/author/progress.json",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL02/author/progress.json",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL03/author/progress.json",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL06/author/progress.json",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL07/author/orphan_key_census.json",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL07/author/progress.json",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL09/author/progress.json",
+      "private/staging/reading_reconstruction/S03C_parallel/ielts_s03c_workflow/10_S03D_INTEGRATION.md",
+      "private/staging/reading_reconstruction/S03_independent_ground_truth_verification/approved_reference_manifest.json"
+    ]
+  }
+}

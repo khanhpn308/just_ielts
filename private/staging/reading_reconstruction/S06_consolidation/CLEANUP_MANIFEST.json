@@ -1,0 +1,200 @@
+{
+  "stage": "S06_CORPUS_CONSOLIDATION",
+  "generated_at_local": "2026-11-28",
+  "policy": "Only confirmed regenerable caches with zero active dependencies were removed immediately. All other obsolete/historical/backup removals require explicit operator approval and are backed up in the verified external archive.",
+  "storage_summary": {
+    "pre_cleanup_total_bytes": 4609276178,
+    "pre_cleanup_total_mib": 4395.75,
+    "already_freed_cache_bytes": 66398176,
+    "already_freed_cache_mib": 63.32,
+    "current_post_cache_cleanup_bytes": 4542878002,
+    "current_post_cache_cleanup_mib": 4332.43,
+    "proposed_additional_recoverable_bytes": 1922633111,
+    "proposed_additional_recoverable_mib": 1833.57,
+    "total_recoverable_bytes_including_freed_caches": 1989031287,
+    "total_recoverable_mib_including_freed_caches": 1896.89,
+    "remaining_required_bytes": 2620244891,
+    "remaining_required_mib": 2498.86
+  },
+  "classification_totals": {
+    "ACTIVE_RUNTIME": {
+      "files": 20785,
+      "bytes": 396883693
+    },
+    "SOURCE_MATERIAL": {
+      "files": 214,
+      "bytes": 2210353728
+    },
+    "REQUIRED_EVIDENCE": {
+      "files": 202,
+      "bytes": 10972324
+    },
+    "HISTORICAL_ARCHIVE": {
+      "files": 29338,
+      "bytes": 1283478292
+    },
+    "REGENERABLE_CACHE_REMOVED": {
+      "files": 2417,
+      "bytes": 66398176
+    },
+    "SAFE_TO_DELETE": {
+      "files": 27206,
+      "bytes": 639154819
+    },
+    "GIT_METADATA": {
+      "files": 934,
+      "bytes": 2035146
+    }
+  },
+  "executed_removals_regenerable_caches": {
+    "status": "COMPLETED",
+    "files_removed": 2417,
+    "bytes_freed": 66398176,
+    "items": [
+      {
+        "path": ".pytest_cache",
+        "files": 5,
+        "bytes": 26930
+      },
+      {
+        "path": "private/staging/raw_extracted/ocr_cache",
+        "files": 45,
+        "bytes": 111911
+      },
+      {
+        "path": "private/private/staging/parallel_processing/A01_ivu/ocr_cache",
+        "files": 0,
+        "bytes": 0
+      },
+      {
+        "path": "private/staging/parallel_processing/A01_ivu/ocr_cache",
+        "files": 1302,
+        "bytes": 9736652
+      },
+      {
+        "path": "private/staging/parallel_processing/A01_ivu/remediation_r1/ocr_cache",
+        "files": 114,
+        "bytes": 104107
+      },
+      {
+        "path": "private/staging/parallel_processing/A05_reading/raw_cache",
+        "files": 534,
+        "bytes": 29435067
+      },
+      {
+        "path": "private/staging/parallel_processing/A05_reading/remediation_r1/raw_cache",
+        "files": 19,
+        "bytes": 24019
+      },
+      {
+        "path": "private/staging/parallel_processing/A06_listening/cache",
+        "files": 44,
+        "bytes": 19907612
+      },
+      {
+        "path": "private/staging/parallel_processing/A06_listening/ocr_cache",
+        "files": 138,
+        "bytes": 102278
+      },
+      {
+        "path": "**/__pycache__ (37 dirs outside .venv & .git)",
+        "files": 216,
+        "bytes": 6949600
+      }
+    ]
+  },
+  "proposed_removals_requiring_operator_approval": {
+    "status": "PENDING_OPERATOR_APPROVAL",
+    "operator_approval_required": true,
+    "archive_verified_at": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+    "archive_sha256": "987909712ae8625dbfba481242203b5f5f9fb146d45fdce3a962501dfea93e36",
+    "protected_exclusions_preserved": [
+      "private/raw/**",
+      "private/knowledge/**",
+      "private/staging/normalized/** (except .historical/)",
+      "private/staging/reading_reconstruction/S04_pilot/**",
+      "private/staging/reading_reconstruction/S03C_parallel/integration/**",
+      "private/staging/reading_reconstruction/S03C_parallel/gate/**",
+      "private/staging/reading_reconstruction/S05_final_acceptance/**",
+      "private/staging/reading_reconstruction/S06_consolidation/**",
+      "19 pinned S03D asset files under S03C_parallel/VOL*/author/**",
+      "All S03D input_pins, historical_s03b_lineage, volume_inputs progress.json, and orphan_key_census.json",
+      "A09 R4 verdict & defect register under remediation_r4_reaudit/",
+      "private/annotations/**, private/source_data/**, private/reports/**, private/staging/raw_extracted/SRC-*"
+    ],
+    "breakdown": [
+      {
+        "category": "HISTORICAL_ARCHIVE",
+        "subtree": "private/releases",
+        "files": 89,
+        "bytes": 475608,
+        "mib": 0.45,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      },
+      {
+        "category": "HISTORICAL_ARCHIVE",
+        "subtree": "private/staging/parallel_processing",
+        "files": 26123,
+        "bytes": 884423331,
+        "mib": 843.45,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      },
+      {
+        "category": "HISTORICAL_ARCHIVE",
+        "subtree": "private/staging/reading_reconstruction",
+        "files": 3124,
+        "bytes": 398461141,
+        "mib": 380.0,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      },
+      {
+        "category": "HISTORICAL_ARCHIVE",
+        "subtree": "private/staging/temp_audio",
+        "files": 1,
+        "bytes": 1031,
+        "mib": 0.0,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      },
+      {
+        "category": "HISTORICAL_ARCHIVE",
+        "subtree": "private/staging/temp_listening",
+        "files": 1,
+        "bytes": 117181,
+        "mib": 0.11,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      },
+      {
+        "category": "SAFE_TO_DELETE",
+        "subtree": "data",
+        "files": 2,
+        "bytes": 0,
+        "mib": 0.0,
+        "archived_in": null,
+        "requires_operator_approval": true
+      },
+      {
+        "category": "SAFE_TO_DELETE",
+        "subtree": "private/staging/normalized",
+        "files": 24,
+        "bytes": 30313,
+        "mib": 0.03,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      },
+      {
+        "category": "SAFE_TO_DELETE",
+        "subtree": "private/staging/parallel_processing",
+        "files": 27180,
+        "bytes": 639124506,
+        "mib": 609.52,
+        "archived_in": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+        "requires_operator_approval": true
+      }
+    ]
+  }
+}

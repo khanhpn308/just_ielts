@@ -1,0 +1,45 @@
+{
+  "stage": "S06_CORPUS_CONSOLIDATION",
+  "created_at_local": "2026-11-28",
+  "archive_path": "/home/khanh/projects/just_ielts_archives/S06_historical_archive_20261128.tar.gz",
+  "archive_location_note": "Outside the Git repository (/home/khanh/projects/just_ielts_archives/)",
+  "format": "tar.gz (gzip)",
+  "archive_size_bytes": 995675171,
+  "archive_size_mib": 949.55,
+  "archive_sha256": "987909712ae8625dbfba481242203b5f5f9fb146d45fdce3a962501dfea93e36",
+  "tar_entry_count": 58378,
+  "uncompressed_archived_source_bytes": 1922633111,
+  "included_roots": [
+    "private/staging/parallel_processing (post-cache-cleanup)",
+    "private/private",
+    "private/releases/learning-v1.0.0",
+    "private/staging/normalized/.historical",
+    "private/staging/reading_reconstruction/S01_freeze_containment",
+    "private/staging/reading_reconstruction/S02_ground_truth_candidate",
+    "private/staging/reading_reconstruction/S03_independent_ground_truth_verification",
+    "private/staging/reading_reconstruction/S03B_reference_finalization",
+    "private/staging/reading_reconstruction/S03C_parallel/VOL01..VOL09",
+    "private/staging/reading_reconstruction/S03C_parallel/COMMON_CONTRACT.md",
+    "private/staging/reading_reconstruction/S03C_parallel/ielts_s03c_workflow",
+    "VOCABULARY_KNOWLEDGE_BASE_V1.0_REPORT.md"
+  ],
+  "integrity_and_recoverability_verification": {
+    "sha256sum_verified": true,
+    "tar_listing_verified": true,
+    "sample_extraction_count": 11,
+    "sample_extraction_byte_identical": "11/11 PASS",
+    "verified_sample_paths": [
+      "VOCABULARY_KNOWLEDGE_BASE_V1.0_REPORT.md",
+      "private/staging/parallel_processing/A09_independent_audit/remediation_r4_reaudit/final_verdict.json",
+      "private/staging/parallel_processing/A08_integration/FULL_CORPUS_FINAL_REPORT.md",
+      "private/releases/learning-v1.0.0/manifest.json",
+      "private/staging/normalized/.historical/ANS-VOL06-05-RD-014-KEY.json",
+      "private/staging/reading_reconstruction/S01_freeze_containment/S01_BASELINE_MANIFEST.json",
+      "private/staging/reading_reconstruction/S02_ground_truth_candidate/population_reconciliation.json",
+      "private/staging/reading_reconstruction/S03_independent_ground_truth_verification/approved_reference_manifest.json",
+      "private/staging/reading_reconstruction/S03B_reference_finalization/approved_reference_manifest.json",
+      "private/staging/reading_reconstruction/S03C_parallel/COMMON_CONTRACT.md",
+      "private/staging/reading_reconstruction/S03C_parallel/VOL07/author/orphan_key_census.json"
+    ]
+  }
+}
