@@ -1,40 +1,42 @@
-# Local/private study material
-private/
+# Environment variables and secrets
 .env
 .env.*
 !.env.example
 
-# Generated databases and local runtime
+# Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local databases
 *.db
 *.sqlite
 *.sqlite3
 *.db-journal
 *.db-wal
 *.db-shm
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
+
+# IDE and operating system
 .DS_Store
 .vscode/
 
-# Keep copyrighted/unreviewed raw source files locally
-sources/raw/
-
-
-# Private source materials
+# Original source materials and all private local data
+/sources/raw/
 /private/
+/private/raw/
+
+# Learner progress
+/progress/
+/private/progress/
+/private/private/progress/
 
 # Harness runtime state
 /harness/state/
 
-# Generated files
-__pycache__/
-*.pyc
-*.db
-*.sqlite
-*.sqlite3
-
-# Temporary extraction files
+# Temporary processing files
+/private/staging/temp_*/
 *.tmp
 
+# Historical backups
+**/backups/
